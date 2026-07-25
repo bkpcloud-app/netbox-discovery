@@ -1,6 +1,39 @@
 #!/bin/bash
 set -euo pipefail
 
+# NETBOX-DISCOVERY V1.5.1 - DNS TOOLS
+# O discovery utiliza DNS reverso como enriquecimento. O comando dig é
+# instalado automaticamente, mas a ausência/falha de DNS não é fatal.
+ensure_dns_tools() {
+    if command -v dig >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "Instalando dependência DNS (dig)..."
+
+    if command -v dnf >/dev/null 2>&1; then
+        dnf install -y bind-utils
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y bind-utils
+    elif command -v apt-get >/dev/null 2>&1; then
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y dnsutils
+    else
+        echo "ERRO: não foi possível instalar o comando dig."
+        echo "Instale bind-utils (RHEL/CentOS) ou dnsutils (Debian/Ubuntu)."
+        exit 1
+    fi
+
+    if ! command -v dig >/dev/null 2>&1; then
+        echo "ERRO: dig continua indisponível após instalação."
+        exit 1
+    fi
+}
+
+ensure_dns_tools
+# /NETBOX-DISCOVERY V1.5.1 - DNS TOOLS
+
+
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 if [[ "$(id -u)" != "0" ]]; then

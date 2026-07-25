@@ -659,30 +659,29 @@ def discover_hosts(networks, communities, exclusions):
 
 
 def reverse_dns(ip):
-    command = [
-        "dig",
-        "+short",
-        "+time=1",
-        "+tries=1",
-        "-x",
-        ip,
-    ]
+    # Resolve PTR sem tornar DNS reverso requisito fatal do discovery.
+    try:
+        subprocess_mod = __import__("subprocess")
+        output = subprocess_mod.check_output(
+            ["dig", "+short", "-x", str(ip)],
+            stderr=subprocess_mod.DEVNULL,
+            universal_newlines=True,
+            timeout=5,
+        ).strip()
 
-    code, stdout, stderr = run_command(
-        command,
-        timeout=5,
-    )
+        if not output:
+            return ""
 
-    if code != 0:
+        for line in output.splitlines():
+            name = line.strip().rstrip(".")
+            if name:
+                return name
+
         return ""
-
-    names = [
-        item.strip().rstrip(".")
-        for item in stdout.splitlines()
-        if item.strip()
-    ]
-
-    return names[0] if names else ""
+    except Exception:
+        # Reverse DNS é somente enriquecimento. Falha/ausência de PTR,
+        # timeout ou ausência do binário não pode interromper DISCOVER.
+        return ""
 
 
 def _new_service_record(

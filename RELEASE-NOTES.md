@@ -1,3 +1,23 @@
+## V1.5.1 — Correção de DNS reverso
+
+Homologação em um proxy novo identificou uma dependência de DNS reverso
+não tratada pelo produto.
+
+Correções:
+
+- `dig` passa a ser instalado automaticamente pelo bootstrap;
+- RHEL/CentOS utiliza `bind-utils`;
+- Debian/Ubuntu utiliza `dnsutils`;
+- reverse DNS passa a ser enriquecimento não fatal;
+- ausência de PTR, timeout ou falha de resolução não interrompe `DISCOVER`;
+- upgrades preservam a configuração existente.
+
+Erro que originou a correção:
+
+```text
+FileNotFoundError: [Errno 2] No such file or directory: 'dig'
+```
+
 # netbox-discovery 1.5.0 — PRODUCT V1
 
 Consolida Evidence V4 + CLASSIFY + RECONCILE + PLAN + IMPORT 4.1 + AUDIT 5.1 e corrige a última inconsistência de identidade/contagem encontrada na homologação FBA.
