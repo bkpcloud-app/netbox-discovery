@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, classificação, reconciliação, planejamento, importação segura e auditoria de inventário no NetBox.
 
-**Versão atual:** 1.5.1 — PRODUCT V1
+**Versão atual:** 1.5.2 — PRODUCT V1
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`
 
 ## Pipeline
@@ -95,10 +95,10 @@ curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/
 
 A instalação preserva a configuração operacional existente.
 
-Para fixar explicitamente a versão 1.5.1:
+Para fixar explicitamente a versão 1.5.2:
 
 ```bash
-NETBOX_DISCOVERY_REF=v1.5.1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh)"
+NETBOX_DISCOVERY_REF=v1.5.2 bash -c "$(curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh)"
 ```
 
 ## Documentação

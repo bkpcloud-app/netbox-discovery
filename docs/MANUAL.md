@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery
-**Versão:** 1.5.1 — PRODUCT V1
+**Versão:** 1.5.2 — PRODUCT V1
 **Objetivo:** descobrir ativos de rede, identificar/classificar, reconciliar identidades, planejar alterações, importar com segurança no NetBox e auditar o resultado.
 **Distribuição oficial:** repositório público `bkpcloud-app/netbox-discovery` via HTTPS.
 
@@ -250,7 +250,7 @@ O comando global é:
 
 ## 4. Instalação em um Proxy novo
 
-A distribuição oficial da versão 1.5.1 é feita pelo repositório público:
+A distribuição oficial da versão 1.5.2 é feita pelo repositório público:
 
 ```text
 https://github.com/bkpcloud-app/netbox-discovery
@@ -291,7 +291,7 @@ Em um Proxy novo, a saída esperada termina semelhante a:
 
 ```text
 NETBOX-DISCOVERY PRODUCT V1 INSTALADO
-Versão: 1.5.1
+Versão: 1.5.2
 CONFIG: ainda não criada (comportamento esperado).
 PRÓXIMO PASSO: netbox-discovery init
 ```
@@ -507,7 +507,7 @@ Exemplo:
 
 ```text
 ===== NETBOX-DISCOVERY STATUS =====
-Versão: 1.5.1
+Versão: 1.5.2
 Tenant/Site: CLIENTE/SITE
 Último RUN: PASS_WITH_WARNINGS
 DISCOVER: 288 hosts
@@ -820,7 +820,7 @@ chaves privadas
 Para instalar uma release fixa em vez de `main`, use a variável `NETBOX_DISCOVERY_REF`. Exemplo:
 
 ```bash
-NETBOX_DISCOVERY_REF=v1.5.1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh)"
+NETBOX_DISCOVERY_REF=v1.5.2 bash -c "$(curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh)"
 ```
 
 ---
@@ -1113,7 +1113,7 @@ init
 
 ---
 
-## 27. Referência da versão 1.5.1
+## 27. Referência da versão 1.5.2
 
 A V1 consolidou as correções homologadas durante o piloto:
 
@@ -1179,4 +1179,4 @@ AUDIT = somente leitura.
 
 ---
 
-**Documento referente ao netbox-discovery PRODUCT V1 — versão 1.5.1.**
+**Documento referente ao netbox-discovery PRODUCT V1 — versão 1.5.2.**

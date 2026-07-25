@@ -1,3 +1,14 @@
+## V1.5.2 — Correção do instalador e sincronização de versão
+
+Correções identificadas durante a homologação de upgrade em proxy:
+
+- sincroniza `VERSION` da raiz e `netbox-discovery/VERSION`;
+- corrige o loop do `install.sh`: `config.ymbin` passa a ser `config.yml bin`;
+- o código novo em `bin`, `lib` e `modules` volta a ser instalado corretamente;
+- corrige a detecção de `/opt/netbox-discovery/config.yml` no `bootstrap.sh`;
+- mantém a configuração operacional existente durante upgrade;
+- preserva a correção de DNS reverso da V1.5.1.
+
 ## V1.5.1 — Correção de DNS reverso
 
 Homologação em um proxy novo identificou uma dependência de DNS reverso
