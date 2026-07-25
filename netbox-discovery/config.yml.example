@@ -1,0 +1,23 @@
+netbox:
+  url: https://netbox.example.local
+  token: CHANGE_ME
+  verify_ssl: true
+
+tenant: CLIENTE
+
+discovery:
+  site: SITE
+  networks_file: /opt/netbox-discovery/config/sites/SITE/networks.conf
+  exclusions_file: /opt/netbox-discovery/config/sites/SITE/exclusions.conf
+  communities_file: /opt/netbox-discovery/config/sites/SITE/snmp-communities.conf
+
+paths:
+  reports: /opt/netbox-discovery/reports
+  logs: /opt/netbox-discovery/logs
+  cache: /opt/netbox-discovery/cache
+  backups: /opt/netbox-discovery/backups
+
+automation:
+  enabled: false
+  apply: false
+  schedule: daily

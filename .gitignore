@@ -1,0 +1,14 @@
+# Nunca versionar configuração/segredos/runtime
+config.yml
+*.token
+*.secret
+*.key
+*.pem
+.env
+reports/
+logs/
+cache/
+backups/
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,167 @@
+#!/bin/bash
+set -euo pipefail
+
+BASE="${NETBOX_DISCOVERY_BASE:-/opt/netbox-discovery}"
+PYTHON="${PYTHON:-/usr/bin/python3}"
+COMMAND="${1:-help}"
+shift || true
+
+check_product() {
+  "$PYTHON" -m py_compile \
+    "$BASE/lib/config.py" \
+    "$BASE/lib/netbox.py" \
+    "$BASE/modules/discovery/network.py" \
+    "$BASE/modules/inventory/classifier.py" \
+    "$BASE/modules/inventory/reconciler.py" \
+    "$BASE/modules/inventory/planner.py" \
+    "$BASE/modules/inventory/pipeline.py" \
+    "$BASE/modules/importers/importer.py" \
+    "$BASE/modules/auditors/inventory.py" \
+    "$BASE/modules/product/configurator.py" \
+    "$BASE/modules/product/runner.py" \
+    "$BASE/modules/product/status.py"
+
+  for cmd in nmap snmpget snmpwalk; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      echo "ERRO: dependência ausente: $cmd" >&2
+      return 1
+    fi
+  done
+
+  "$PYTHON" - <<'PY'
+import os, sys
+base = os.environ.get('NETBOX_DISCOVERY_BASE', '/opt/netbox-discovery')
+sys.path.insert(0, base)
+from lib.config import load_config
+cfg = load_config()
+site = (cfg.get('discovery') or {}).get('site', '')
+print('CONFIG: OK')
+print('TENANT: {0}'.format(cfg.get('tenant', '')))
+print('SITE: {0}'.format(site))
+print('NETBOX URL: {0}'.format((cfg.get('netbox') or {}).get('url', '')))
+for name in ('networks_file', 'exclusions_file', 'communities_file'):
+    path = (cfg.get('discovery') or {}).get(name, '')
+    if path and not os.path.isfile(path):
+        raise RuntimeError('{0} não encontrado: {1}'.format(name, path))
+print('DISCOVER: OK')
+print('CLASSIFY: OK')
+print('RECONCILE: OK')
+print('PLAN: OK')
+print('IMPORT: OK')
+print('AUDIT: OK')
+PY
+}
+
+scheduler_enable() {
+  if [[ "$(id -u)" != "0" ]]; then
+    echo "ERRO: scheduler exige root." >&2
+    exit 1
+  fi
+  SCHEDULE=$("$PYTHON" - <<'PY'
+import os,sys
+base=os.environ.get('NETBOX_DISCOVERY_BASE','/opt/netbox-discovery')
+sys.path.insert(0,base)
+from lib.config import load_config
+cfg=load_config()
+print((cfg.get('automation') or {}).get('schedule') or 'daily')
+PY
+)
+  mkdir -p /etc/systemd/system/netbox-discovery.timer.d
+  cat > /etc/systemd/system/netbox-discovery.timer.d/schedule.conf <<EOF
+[Timer]
+OnCalendar=
+OnCalendar=$SCHEDULE
+EOF
+  systemctl daemon-reload
+  systemctl enable --now netbox-discovery.timer
+  echo "SCHEDULER: HABILITADO"
+  echo "OnCalendar: $SCHEDULE"
+  echo "A escrita automática depende de automation.apply no config.yml."
+}
+
+case "$COMMAND" in
+  version|--version|-V)
+    cat "$BASE/VERSION"
+    ;;
+  help|-h|--help)
+    cat <<'EOF'
+netbox-discovery - inventário de rede para NetBox
+
+Uso:
+  netbox-discovery init
+  netbox-discovery configure
+  netbox-discovery check
+  netbox-discovery discover
+  netbox-discovery classify
+  netbox-discovery reconcile
+  netbox-discovery plan
+  netbox-discovery inventory
+  netbox-discovery import [--apply]
+  netbox-discovery audit
+  netbox-discovery run [--apply]
+  netbox-discovery status
+  netbox-discovery scheduler {enable|disable|status}
+  netbox-discovery version
+
+Segurança:
+  run              = DISCOVER -> CLASSIFY -> RECONCILE -> PLAN, sem escrita
+  run --apply      = pipeline completo, com IMPORT READY e AUDIT
+  init/configure   = nunca iniciam varredura automaticamente
+EOF
+    ;;
+  init|configure)
+    exec "$PYTHON" "$BASE/modules/product/configurator.py" "$@"
+    ;;
+  check)
+    check_product
+    ;;
+  discover)
+    exec "$PYTHON" "$BASE/modules/discovery/network.py" "$@"
+    ;;
+  classify)
+    exec "$PYTHON" "$BASE/modules/inventory/classifier.py" "$@"
+    ;;
+  reconcile)
+    exec "$PYTHON" "$BASE/modules/inventory/reconciler.py" "$@"
+    ;;
+  plan)
+    exec "$PYTHON" "$BASE/modules/inventory/planner.py" "$@"
+    ;;
+  inventory|prepare)
+    exec "$PYTHON" "$BASE/modules/inventory/pipeline.py" "$@"
+    ;;
+  import)
+    exec "$PYTHON" "$BASE/modules/importers/importer.py" "$@"
+    ;;
+  audit)
+    exec "$PYTHON" "$BASE/modules/auditors/inventory.py" "$@"
+    ;;
+  run)
+    exec "$PYTHON" "$BASE/modules/product/runner.py" "$@"
+    ;;
+  scheduled-run)
+    exec "$PYTHON" "$BASE/modules/product/runner.py" --scheduled
+    ;;
+  status)
+    exec "$PYTHON" "$BASE/modules/product/status.py"
+    ;;
+  scheduler)
+    ACTION="${1:-status}"
+    case "$ACTION" in
+      enable) scheduler_enable ;;
+      disable)
+        systemctl disable --now netbox-discovery.timer
+        echo "SCHEDULER: DESABILITADO"
+        ;;
+      status)
+        systemctl status netbox-discovery.timer --no-pager || true
+        ;;
+      *) echo "Uso: netbox-discovery scheduler {enable|disable|status}" >&2; exit 2 ;;
+    esac
+    ;;
+  *)
+    echo "Comando inválido: $COMMAND" >&2
+    echo "Use: netbox-discovery help" >&2
+    exit 2
+    ;;
+esac

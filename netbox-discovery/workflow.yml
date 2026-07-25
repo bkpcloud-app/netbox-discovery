@@ -1,0 +1,43 @@
+product:
+  name: netbox-discovery
+  version: 1.5.0
+  release: PRODUCT-V1
+
+workflow:
+  - order: 10
+    stage: discover
+    mode: read-only
+    module: modules/discovery/network.py
+  - order: 20
+    stage: classify
+    mode: read-only
+    module: modules/inventory/classifier.py
+  - order: 30
+    stage: reconcile
+    mode: read-only
+    module: modules/inventory/reconciler.py
+  - order: 40
+    stage: plan
+    mode: read-only
+    module: modules/inventory/planner.py
+  - order: 50
+    stage: import
+    mode: explicit-apply
+    module: modules/importers/importer.py
+  - order: 60
+    stage: audit
+    mode: read-only
+    module: modules/auditors/inventory.py
+
+rules:
+  default_mode: read-only
+  require_explicit_apply_for_write: true
+  auto_write_only_ready_plan_records: true
+  skip_review_records: true
+  skip_blocked_records: true
+  replan_before_import: true
+  global_ip_preflight: true
+  idempotent_rerun: true
+  post_import_audit: required
+  existing_nonempty_drift: preserve
+  init_never_starts_discovery: true

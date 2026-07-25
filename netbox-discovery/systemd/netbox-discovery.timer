@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule netbox-discovery inventory pipeline
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+Unit=netbox-discovery.service
+
+[Install]
+WantedBy=timers.target
