@@ -15,7 +15,7 @@ from collections import Counter
 
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
-CLASSIFIER_VERSION = "2.0-product"
+CLASSIFIER_VERSION = "2.1-product"
 
 
 def clean(v):
@@ -24,9 +24,33 @@ def clean(v):
 
 def norm_mac(v):
     s = re.sub(r"[^0-9A-Fa-f]", "", clean(v)).upper()
-    if len(s) != 12 or s == "000000000000":
+    if len(s) != 12:
+        return ""
+    if s in ("000000000000", "FFFFFFFFFFFF"):
+        return ""
+    try:
+        first_octet = int(s[:2], 16)
+    except ValueError:
+        return ""
+    # Multicast/group addresses (including broadcast) are not device identity.
+    if first_octet & 1:
         return ""
     return ":".join(s[i:i+2] for i in range(0, 12, 2))
+
+
+def norm_serial(v):
+    s = re.sub(r"[^A-Za-z0-9]", "", clean(v)).upper()
+    invalid = {
+        "", "UNKNOWN", "NA", "NONE", "NULL", "DEFAULT",
+        "SVCTAG", "SERVICETAG", "SERIAL", "SERIALNUMBER",
+        "SYSTEMSERIALNUMBER", "CHASSISSERIALNUMBER",
+        "NOTAVAILABLE", "NOTAPPLICABLE", "TOBEFILLEDBYOEM",
+    }
+    if s in invalid:
+        return ""
+    if len(s) >= 6 and (set(s) == set("0") or set(s) == set("F")):
+        return ""
+    return s
 
 
 def ip_key(v):
@@ -104,6 +128,18 @@ def normalize_manufacturer(v):
     rules = [
         (("fortinet",), "Fortinet"),
         (("dell",), "Dell"),
+        (("hikvision", "hangzhou hikvision"), "Hikvision"),
+        (("dahua", "zhejiang dahua"), "Dahua"),
+        (("axis communications",), "Axis Communications"),
+        (("vivotek",), "Vivotek"),
+        (("hanwha", "hanwha vision", "hanwha techwin"), "Hanwha Vision"),
+        (("bosch security",), "Bosch Security Systems"),
+        (("pelco",), "Pelco"),
+        (("uniview", "zhejiang uniview"), "Uniview"),
+        (("reolink",), "Reolink"),
+        (("intelbras",), "Intelbras"),
+        (("avigilon",), "Avigilon"),
+        (("tp-link", "tplink"), "TP-Link"),
         (("hewlett packard enterprise", "hpe networking", "aruba"), "HPE Aruba"),
         (("hewlett packard", " hp "), "HPE"),
         (("ubiquiti", "ubnt"), "Ubiquiti"),
@@ -137,13 +173,13 @@ def entity_identity(d):
             candidates.append(e)
     # Prefer chassis/container entries with actual identity.
     candidates.sort(key=lambda e: (
-        0 if clean(e.get("serial")) else 1,
+        0 if norm_serial(e.get("serial")) else 1,
         0 if clean(e.get("manufacturer")) else 1,
         0 if clean(e.get("model")) else 1,
         0 if clean(e.get("class_id")) in ("3", "4") else 1,
     ))
     for e in candidates:
-        serial = clean(e.get("serial"))
+        serial = norm_serial(e.get("serial"))
         manufacturer = clean(e.get("manufacturer"))
         model = clean(e.get("model"))
         desc = clean(e.get("description"))
@@ -212,6 +248,18 @@ def infer_manufacturer(d, text, ent):
     sigs = [
         (("fortigate", "fortinet", "enterprises.12356"), "Fortinet"),
         (("idrac", "restgui/start.html", "integrated dell remote access controller"), "Dell"),
+        (("hikvision", "hangzhou hikvision"), "Hikvision"),
+        (("dahua", "zhejiang dahua"), "Dahua"),
+        (("axis communications", "axis network camera"), "Axis Communications"),
+        (("vivotek",), "Vivotek"),
+        (("hanwha vision", "hanwha techwin"), "Hanwha Vision"),
+        (("bosch security",), "Bosch Security Systems"),
+        (("pelco",), "Pelco"),
+        (("uniview", "zhejiang uniview"), "Uniview"),
+        (("reolink",), "Reolink"),
+        (("intelbras",), "Intelbras"),
+        (("avigilon",), "Avigilon"),
+        (("vigi camera", "tapo camera"), "TP-Link"),
         (("hpe networking instant on", "aruba instant on"), "HPE Aruba"),
         (("1920-", "v1910", "officeconnect switch"), "HPE"),
         (("ubiquiti", "ubnt", "u7-pro", "u6-lr", "uap-"), "Ubiquiti"),
@@ -242,6 +290,12 @@ def infer_model(d, text, ent, role):
     patterns = [
         r"(PowerEdge\s+[A-Za-z0-9-]+)",
         r"(FortiGate[-_ ]?[A-Za-z0-9-]+)", r"(FGT[_-][A-Za-z0-9_-]+)",
+        r"(DS-(?:2CD|2DE|2DF|76|77|96)[A-Za-z0-9-]+)",
+        r"(iDS-[A-Za-z0-9-]+)",
+        r"(DHI-(?:IPC|NVR|XVR|DVR)[A-Za-z0-9-]+)",
+        r"((?:IPC|NVR|XVR|DVR)[-_]?[A-Za-z0-9-]{3,})",
+        r"(VIP\s*[0-9A-Za-z-]+)", r"(NVD\s*[0-9A-Za-z-]+)", r"(MHDX\s*[0-9A-Za-z-]+)",
+        r"(RLC-[A-Za-z0-9-]+)", r"(UVC-G[0-9A-Za-z-]+)", r"(VIGI\s+[A-Za-z0-9-]+)",
         r"(U7-Pro|U6-LR|UAP-[A-Za-z0-9-]+)",
         r"(JL\d{3}[A-Z])", r"(1930\s+[A-Za-z0-9 +/.-]+Switch)",
         r"(TS-431K|TS-X41)", r"(EDS-40[58]A-[A-Za-z0-9-]+)",
@@ -300,6 +354,39 @@ def classify_role(d, text):
         return hit("INDUSTRIAL_POWER_METER", 98, "Siemens PAC4200 fingerprint")
     if any(t in text for t in ("cp1543-1", "cp 443-1", "simatic net")):
         return hit("INDUSTRIAL_COMMUNICATION", 96, "SIMATIC NET communication processor")
+
+    # CCTV / IP video. Exact recorder/camera signatures win before generic
+    # vendor+port evidence. This avoids calling every RTSP endpoint a camera.
+    cctv_vendor = any(t in text for t in (
+        "hikvision", "hangzhou hikvision", "dahua", "zhejiang dahua",
+        "axis communications", "vivotek", "hanwha vision", "hanwha techwin",
+        "bosch security", "pelco", "uniview", "zhejiang uniview",
+        "reolink", "intelbras", "avigilon", "vigi camera", "tapo camera",
+        "unifi protect", "ubiquiti protect",
+    ))
+    cctv_ports = bool({554, 8000, 8899, 34567, 37777} & tcp) or 3702 in udp
+
+    if re.search(r"network video recorder|\bnvr(?:[0-9]|[-_ ])|dhi[-_]?nvr|\bnvd\s*[0-9]", text):
+        return hit("NVR", 98 if cctv_vendor else 92, "NVR/network video recorder fingerprint")
+    if re.search(r"digital video recorder|\bdvr(?:[0-9]|[-_ ])|\bxvr(?:[0-9]|[-_ ])|\bmhdx\s*[0-9]", text):
+        return hit("DVR", 98 if cctv_vendor else 92, "DVR/XVR fingerprint")
+    if any(t in text for t in ("video encoder", "network video encoder")):
+        return hit("VIDEO_ENCODER", 94, "Video encoder fingerprint")
+
+    camera_signal = any(t in text for t in (
+        "network camera", "ip camera", "networkvideotransmitter",
+        "onvif network video transmitter", "onvif camera",
+    )) or bool(re.search(
+        r"\bds-(?:2cd|2de|2df)[a-z0-9-]+|\bipc[-_][a-z0-9-]+|"
+        r"\bvip\s*[0-9a-z-]+|\brlc-[a-z0-9-]+|\buvc-g[0-9a-z-]+|"
+        r"\bvigi\s+[a-z0-9-]+",
+        text,
+    ))
+    if camera_signal:
+        return hit("CAMERA", 97 if cctv_vendor else 92, "IP camera/ONVIF fingerprint")
+
+    if cctv_vendor and cctv_ports:
+        return hit("VIDEO_SURVEILLANCE_DEVICE", 78, "CCTV vendor with RTSP/SDK/WS-Discovery evidence; exact role unresolved")
 
     # Wireless vs switch distinction for Ubiquiti.
     if any(t in text for t in ("edgeswitch", "unifi switch", "usw-")):
@@ -400,7 +487,8 @@ def asset_class(d, role, text):
     if role in (
         "FIREWALL", "NETWORK_SWITCH", "WIRELESS_AP", "WIRELESS_BRIDGE", "WIRELESS_DEVICE", "STORAGE", "POWER_MANAGEMENT", "PRINTER",
         "INDUSTRIAL_SWITCH", "INDUSTRIAL_PLC", "INDUSTRIAL_IO", "INDUSTRIAL_POWER_METER",
-        "INDUSTRIAL_COMMUNICATION", "INDUSTRIAL_DEVICE", "CAMERA",
+        "INDUSTRIAL_COMMUNICATION", "INDUSTRIAL_DEVICE", "CAMERA", "NVR", "DVR",
+        "VIDEO_ENCODER", "VIDEO_SURVEILLANCE_DEVICE",
     ):
         return "PHYSICAL_DEVICE"
     return "HOST_OR_APPLIANCE"
@@ -416,7 +504,7 @@ def classify_device(d):
     names = hostname_candidates(d)
     hostname = names[0][0] if names else ""
     hostname_source = names[0][1] if names else ""
-    serial = clean(ent.get("serial"))
+    serial = norm_serial(ent.get("serial"))
     serial_source = "entity-mib" if serial else ""
     oob_serial = idrac_serial(d)
     if role == "OOB_MANAGEMENT" and oob_serial and not serial:

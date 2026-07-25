@@ -41,10 +41,10 @@ CORE_DISCOVERY_TCP_PORTS = [
 
 EXTENDED_DISCOVERY_TCP_PORTS = [
     # Infra / storage / virtualização
-    25, 110, 111, 143, 427, 541, 548, 554, 902, 903,
+    25, 81, 88, 110, 111, 143, 427, 541, 548, 554, 902, 903,
     1433, 1521, 1720, 1883, 2049, 2222, 3260, 3306,
     5000, 5001, 5060, 5061, 5432, 5480, 5672, 5989,
-    6379, 8081, 8883, 9200, 9443, 9600, 10000, 10443,
+    6379, 8000, 8081, 8883, 8899, 9200, 9443, 9600, 10000, 10443,
     27017, 34567, 37777,
 
     # Industrial / OT
@@ -52,18 +52,19 @@ EXTENDED_DISCOVERY_TCP_PORTS = [
 ]
 
 WEB_ENRICHMENT_PORTS = {
-    80, 443, 631, 5000, 5001, 5480, 5985, 8006,
+    80, 81, 88, 443, 631, 5000, 5001, 5480, 5985, 8006,
     8080, 8081, 8443, 9200, 9443, 10000, 10443,
 }
 
 UDP_EVIDENCE_PORTS = [
-    53, 69, 123, 137, 161, 500, 623, 1900,
+    53, 69, 123, 137, 161, 500, 623, 1900, 3702,
     2222, 4500, 5353, 47808, 44818,
 ]
 
 DISCOVERY_RESCUE_TCP_PORTS = [
-    22, 80, 102, 135, 139, 443, 445, 502, 554,
-    902, 3389, 8006, 8080, 8291, 8443, 9100,
+    22, 80, 81, 88, 102, 135, 139, 443, 445, 502, 554,
+    902, 3389, 8000, 8006, 8080, 8291, 8443, 8899, 9100,
+    34567, 37777,
 ]
 
 BROAD_TCP_TOP_PORTS = 100
@@ -353,6 +354,20 @@ def _merge_discovered_hosts(target, incoming):
                 sources.append(source)
 
 
+
+
+def _filter_discovered_hosts(hosts, candidates):
+    """Keep only usable host addresses from the configured prefixes.
+
+    Nmap can occasionally report IPv4 network/broadcast addresses as alive
+    when a device answers on behalf of them. _all_candidate_ips() is built
+    with ipaddress.network.hosts(), so it is the product source of truth for
+    addresses that may become inventory records.
+    """
+    allowed = set(candidates or [])
+    return dict((ip, data) for ip, data in hosts.items() if ip in allowed)
+
+
 def _primary_host_discovery(networks):
     command = [
         "nmap",
@@ -360,9 +375,9 @@ def _primary_host_discovery(networks):
         "-n",
         "-PE",
         "-PP",
-        "-PS22,80,443,445,3389,8006,8080,8443,8291,9100",
+        "-PS22,80,81,88,443,445,554,3389,8000,8006,8080,8443,8291,8899,9100,34567,37777",
         "-PA22,80,443,445,3389",
-        "-PU53,123,161,500,4500",
+        "-PU53,123,161,500,3702,4500",
         "--max-retries",
         "1",
         "--host-timeout",
@@ -596,19 +611,26 @@ def _snmp_rescue_hosts(ip_addresses, communities):
 
 
 def discover_hosts(networks, communities, exclusions):
+    # Build the allowed host set first. This excludes IPv4 network/broadcast
+    # addresses and configured exclusions before any evidence can enter the
+    # inventory pipeline.
+    candidates = _all_candidate_ips(
+        networks,
+        exclusions,
+    )
+
     hosts = _primary_host_discovery(
         networks
+    )
+    hosts = _filter_discovered_hosts(
+        hosts,
+        candidates,
     )
 
     print(
         "  Discovery primário: {0} hosts".format(
             len(hosts)
         )
-    )
-
-    candidates = _all_candidate_ips(
-        networks,
-        exclusions,
     )
 
     missing = [
@@ -1513,6 +1535,18 @@ def _scan_udp_evidence(
     _merge_service_results(
         results,
         basic_udp,
+    )
+
+    # Safe WS-Discovery probe. Nmap's wsdd-discover is category safe/discovery
+    # and is executed only when the script exists in the installed Nmap build.
+    _run_targeted_nse(
+        results,
+        ip_addresses,
+        [3702],
+        ["wsdd-discover"],
+        "WS-Discovery",
+        protocol="udp",
+        chunk_size=16,
     )
 
     _run_targeted_nse(

@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery
-**Versão:** 1.5.2 — PRODUCT V1
+**Versão:** 1.6.0 — PRODUCT V1
 **Objetivo:** descobrir ativos de rede, identificar/classificar, reconciliar identidades, planejar alterações, importar com segurança no NetBox e auditar o resultado.
 **Distribuição oficial:** repositório público `bkpcloud-app/netbox-discovery` via HTTPS.
 
@@ -291,7 +291,7 @@ Em um Proxy novo, a saída esperada termina semelhante a:
 
 ```text
 NETBOX-DISCOVERY PRODUCT V1 INSTALADO
-Versão: 1.5.2
+Versão: 1.6.0
 CONFIG: ainda não criada (comportamento esperado).
 PRÓXIMO PASSO: netbox-discovery init
 ```
@@ -1179,4 +1179,4 @@ AUDIT = somente leitura.
 
 ---
 
-**Documento referente ao netbox-discovery PRODUCT V1 — versão 1.5.2.**
+**Documento referente ao netbox-discovery PRODUCT V1 — versão 1.6.0.**

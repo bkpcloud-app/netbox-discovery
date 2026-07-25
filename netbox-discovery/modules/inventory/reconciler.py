@@ -16,7 +16,7 @@ from collections import Counter, defaultdict
 
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
-RECONCILER_VERSION = "2.1-product"
+RECONCILER_VERSION = "2.2-product"
 
 
 def clean(v): return "" if v is None else str(v).strip()
@@ -31,14 +31,54 @@ def ip_key(v):
 
 def norm_mac(v):
     s = re.sub(r"[^0-9A-Fa-f]", "", clean(v)).upper()
-    if len(s) != 12 or s == "000000000000": return ""
+    if len(s) != 12:
+        return ""
+    if s in ("000000000000", "FFFFFFFFFFFF"):
+        return ""
+    try:
+        first_octet = int(s[:2], 16)
+    except ValueError:
+        return ""
+    if first_octet & 1:
+        return ""
     return ":".join(s[i:i+2] for i in range(0, 12, 2))
 
 def norm_serial(v):
     s = re.sub(r"[^A-Za-z0-9]", "", clean(v)).upper()
-    if not s or s in ("UNKNOWN", "NA", "NONE", "00000000", "0000000000"):
+    invalid = {
+        "", "UNKNOWN", "NA", "NONE", "NULL", "DEFAULT",
+        "SVCTAG", "SERVICETAG", "SERIAL", "SERIALNUMBER",
+        "SYSTEMSERIALNUMBER", "CHASSISSERIALNUMBER",
+        "NOTAVAILABLE", "NOTAPPLICABLE", "TOBEFILLEDBYOEM",
+    }
+    if s in invalid:
+        return ""
+    if len(s) >= 6 and (set(s) == set("0") or set(s) == set("F")):
         return ""
     return s
+
+def norm_chassis(v):
+    raw = clean(v).strip()
+    if not raw:
+        return ""
+    # If LLDP chassis is a MAC, apply the same unicast/validity rules.
+    mac = norm_mac(raw)
+    if mac:
+        return "MAC:" + mac
+    try:
+        ipaddress.ip_address(raw)
+        return ""
+    except Exception:
+        pass
+    compact = re.sub(r"[^A-Za-z0-9]", "", raw).upper()
+    if compact in (
+        "", "UNKNOWN", "NONE", "NULL", "DEFAULT",
+        "000000000000", "FFFFFFFFFFFF",
+    ):
+        return ""
+    if len(compact) < 4:
+        return ""
+    return "LOCAL:" + compact
 
 def norm_name(v):
     s = clean(v).lower().rstrip(".")
@@ -67,7 +107,7 @@ def identity_sets(r):
         m = norm_mac(m)
         if m: macs.add(m)
     serial = norm_serial(r.get("serial"))
-    chassis = clean(r.get("snmp_lldp_chassis_id")).lower()
+    chassis = norm_chassis(r.get("snmp_lldp_chassis_id"))
     return serial, macs, chassis
 
 
@@ -109,7 +149,7 @@ def choose_primary(records):
         return (
             0 if r.get("role") == "OOB_MANAGEMENT" else 1,
             int(r.get("classification_score") or 0),
-            1 if r.get("serial") else 0,
+            1 if norm_serial(r.get("serial")) else 0,
             1 if r.get("snmp_name") else 0,
             -ip_key(r.get("ip")),
         )
@@ -135,6 +175,13 @@ def asset_id(records):
     macs = sorted(set(macs))
     if macs:
         return "MAC:{0}".format(macs[0])
+    chassis_ids = sorted(set(
+        identity_sets(r)[2]
+        for r in records
+        if identity_sets(r)[2]
+    ))
+    if chassis_ids:
+        return "CHASSIS:{0}".format(chassis_ids[0])
     primary = choose_primary(records)
     ip = clean(primary.get("ip"))
     name = norm_name(primary.get("snmp_name") or primary.get("hostname"))
@@ -185,7 +232,7 @@ def build_assets(records):
             "role": role,
             "manufacturer": primary.get("manufacturer") or "",
             "model": primary.get("model") or "",
-            "serial": serials[0] if serials else clean(primary.get("serial")),
+            "serial": serials[0] if serials else "",
             "platform": primary.get("platform") or "",
             "asset_class": primary.get("asset_class") or "",
             "confidence": conf,

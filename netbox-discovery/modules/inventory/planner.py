@@ -16,11 +16,13 @@ from collections import Counter, defaultdict
 
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
-PLANNER_VERSION = "3.2-product"
+PLANNER_VERSION = "3.3-product"
 
 # Classifier roles are product-internal. PLAN translates them into NetBox roles.
 ROLE_TARGETS = {
     "DOMAIN_CONTROLLER": "SERVER-WINDOWS",
+    "CAMERA": "CAMERA",
+    "DVR": "DVR",
     "FIREWALL": "FIREWALL",
     "HYPERVISOR": "HYPERVISOR",
     "INDUSTRIAL_COMMUNICATION": "INDUSTRIAL-DEVICE",
@@ -38,6 +40,9 @@ ROLE_TARGETS = {
     "SECURITY_APPLIANCE": "SECURITY APPLIANCE",
     "SMS_GATEWAY": "SMS GATEWAY",
     "STORAGE": "STORAGE",
+    "NVR": "NVR",
+    "VIDEO_ENCODER": "VIDEO ENCODER",
+    "VIDEO_SURVEILLANCE_DEVICE": "VIDEO SURVEILLANCE",
     "VMWARE_APPLIANCE": "MANAGEMENT APPLIANCE",
     "WEB_APPLIANCE": "SERVER-LINUX-OR-APPLIANCE",
     "WINDOWS_HOST": "SERVER-WINDOWS",
@@ -325,6 +330,16 @@ def fallback_model(asset):
         return rules[(manufacturer, role)]
     if role in ("WINDOWS_HOST", "DOMAIN_CONTROLLER", "LINUX_HOST", "WEB_APPLIANCE"):
         return "Unknown Server"
+    if role == "CAMERA":
+        return "Generic IP Camera"
+    if role == "NVR":
+        return "Generic NVR"
+    if role == "DVR":
+        return "Generic DVR"
+    if role == "VIDEO_ENCODER":
+        return "Generic Video Encoder"
+    if role == "VIDEO_SURVEILLANCE_DEVICE":
+        return "Generic Video Surveillance Device"
     if role == "PRINTER":
         return "Generic Printer"
     if role:

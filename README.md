@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, classificação, reconciliação, planejamento, importação segura e auditoria de inventário no NetBox.
 
-**Versão atual:** 1.5.2 — PRODUCT V1
+**Versão atual:** 1.6.0 — PRODUCT V1
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`
 
 ## Pipeline
