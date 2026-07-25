@@ -1,79 +1,64 @@
 # netbox-discovery V1.5.0 — Comandos rápidos
 
-## 1. Instalar em um Proxy novo
+## 1. Instalar em um Proxy zerado
 
-Copie o pacote:
-
-```text
-netbox-discovery-v1.5.0-PRODUCT-V1.zip
-```
-
-para `/root` e execute:
+Como `root`:
 
 ```bash
-cd /root
-
-rm -rf /tmp/netbox-product-v1
-mkdir -p /tmp/netbox-product-v1
-
-unzip -o \
-  /root/netbox-discovery-v1.5.0-PRODUCT-V1.zip \
-  -d /tmp/netbox-product-v1
-
-bash /tmp/netbox-product-v1/install.sh
+bash -lc '
+set -euo pipefail
+if ! command -v curl >/dev/null 2>&1; then
+    if command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates
+    elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates
+    elif command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y curl ca-certificates
+    else echo "ERRO: não encontrei dnf, yum ou apt-get"; exit 1
+    fi
+fi
+curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh | bash
+'
 ```
 
-## 2. Configurar um cliente/site novo
+Não precisa ZIP, Deploy Key ou autenticação GitHub.
+
+Em instalação nova é normal terminar com:
+
+```text
+CONFIG: ainda não criada (comportamento esperado).
+PRÓXIMO PASSO: netbox-discovery init
+```
+
+## 2. Configurar cliente/site
 
 ```bash
 netbox-discovery init
-```
-
-Depois:
-
-```bash
 netbox-discovery check
 ```
 
-O `init` configura o site, mas não inicia discovery automaticamente.
+O `init` salva a configuração e não inicia discovery.
 
-## 3. Primeira execução segura — sem gravar no NetBox
+## 3. Primeira execução segura
 
 ```bash
 netbox-discovery run
 ```
 
-Fluxo:
-
 ```text
-DISCOVER
-→ CLASSIFY
-→ RECONCILE
-→ PLAN
+DISCOVER → CLASSIFY → RECONCILE → PLAN
 ```
 
-Sem `--apply` não há escrita no NetBox.
+Sem `--apply`: sem escrita no NetBox.
 
-## 4. Execução completa com escrita real
+## 4. Execução completa com escrita
 
-Somente depois de validar o PLAN:
+Somente depois de revisar o PLAN:
 
 ```bash
 netbox-discovery run --apply
 ```
 
-Fluxo:
-
 ```text
-DISCOVER
-→ CLASSIFY
-→ RECONCILE
-→ PLAN
-→ IMPORT
-→ AUDIT
+DISCOVER → CLASSIFY → RECONCILE → PLAN → IMPORT → AUDIT
 ```
-
-Regras:
 
 ```text
 READY   → elegível para escrita
@@ -82,7 +67,7 @@ BLOCKED → nunca importa automaticamente
 NOOP    → não altera
 ```
 
-## 5. Ver estado atual
+## 5. Estado atual
 
 ```bash
 netbox-discovery status
@@ -96,12 +81,6 @@ netbox-discovery configure
 
 ## 7. Scheduler
 
-Configurar primeiro:
-
-```bash
-netbox-discovery configure
-```
-
 Recomendação inicial:
 
 ```text
@@ -110,25 +89,21 @@ Agenda: daily
 Import automático: NÃO
 ```
 
-Habilitar:
-
 ```bash
 netbox-discovery scheduler enable
-```
-
-Verificar:
-
-```bash
 netbox-discovery scheduler status
-```
-
-Desabilitar:
-
-```bash
 netbox-discovery scheduler disable
 ```
 
-## 8. Comandos úteis
+## 8. Atualizar produto
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh | bash
+```
+
+Configuração existente é preservada.
+
+## 9. Comandos úteis
 
 ```bash
 netbox-discovery help
@@ -147,7 +122,7 @@ netbox-discovery run --apply
 netbox-discovery status
 ```
 
-## 9. Caminhos principais
+## 10. Caminhos principais
 
 ```text
 Aplicação:     /opt/netbox-discovery
@@ -158,10 +133,10 @@ Logs:          /opt/netbox-discovery/logs
 Backups:       /opt/netbox-discovery/backups
 ```
 
-## 10. Regra de ouro para cliente novo
+## 11. Fluxo oficial para site novo
 
 ```text
-INSTALAR
+INSTALAR DO GITHUB
 → INIT
 → CHECK
 → RUN

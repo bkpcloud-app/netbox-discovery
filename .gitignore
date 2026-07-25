@@ -1,14 +1,24 @@
-# Nunca versionar configuração/segredos/runtime
+# Segredos/configuração real
 config.yml
+**/config.yml
+.env
+.env.*
 *.token
 *.secret
 *.key
 *.pem
-.env
+
+# Runtime/dados de clientes
 reports/
+**/reports/
 logs/
+**/logs/
 cache/
+**/cache/
 backups/
+**/backups/
+
+# Python/editor/SO
 __pycache__/
 *.pyc
 .DS_Store

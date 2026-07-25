@@ -2,7 +2,8 @@
 
 Produto BKPCLOUD para descoberta, classificação, reconciliação, planejamento, importação segura e auditoria de inventário no NetBox.
 
-**Versão atual:** 1.5.0
+**Versão atual:** 1.5.0 — PRODUCT V1
+**Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`
 
 ## Pipeline
 
@@ -15,19 +16,38 @@ DISCOVER
 → AUDIT
 ```
 
-## Instalação
+## Instalação em Proxy zerado
 
-Este repositório deve permanecer **privado**.
+O fluxo oficial não usa ZIP, Deploy Key, GitHub App ou credencial do GitHub.
 
-Em um Proxy com acesso SSH de leitura ao repositório:
+Cole como `root`:
 
 ```bash
-rm -rf /tmp/netbox-discovery-install && \
-git clone --depth 1 git@github.com:bkpcloud-app/netbox-discovery.git /tmp/netbox-discovery-install && \
-sudo bash /tmp/netbox-discovery-install/bootstrap.sh
+bash -lc '
+set -euo pipefail
+if ! command -v curl >/dev/null 2>&1; then
+    if command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates
+    elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates
+    elif command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y curl ca-certificates
+    else echo "ERRO: não encontrei dnf, yum ou apt-get"; exit 1
+    fi
+fi
+curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh | bash
+'
 ```
 
-Depois, em uma instalação nova:
+O instalador de origem:
+
+- instala `git` caso esteja ausente;
+- clona o repositório público por HTTPS;
+- executa o `bootstrap.sh`;
+- instala Python/Nmap/SNMP quando necessário;
+- preserva configuração existente em upgrade;
+- não executa discovery;
+- não habilita scheduler;
+- em instalação nova termina pedindo `netbox-discovery init`.
+
+## Primeiro uso
 
 ```bash
 netbox-discovery init
@@ -35,42 +55,64 @@ netbox-discovery check
 netbox-discovery run
 ```
 
-Somente depois de validar o PLAN:
+Revise o PLAN. Somente depois:
 
 ```bash
 netbox-discovery run --apply
+netbox-discovery status
 ```
 
-## Segurança
+## Segurança operacional
 
 - `run` sem `--apply` não grava no NetBox.
 - `REVIEW` não é importado automaticamente.
 - `BLOCKED` nunca é importado automaticamente.
+- `NOOP` não altera o objeto.
 - `AUDIT` é somente leitura.
 - O instalador não habilita scheduler automaticamente.
-- Configuração real, tokens, SNMP communities, relatórios e logs de clientes não pertencem ao Git.
+- `init` e `configure` não iniciam varredura.
+
+## Segurança do repositório público
+
+Este repositório contém somente produto e documentação.
+
+**Nunca versionar:**
+
+- `config.yml` real;
+- token do NetBox;
+- community SNMP real;
+- senhas/chaves privadas;
+- `.pem`;
+- relatórios, logs ou backups de clientes.
 
 ## Atualização
 
-No Proxy:
+Execute novamente o instalador oficial:
 
 ```bash
-cd /tmp/netbox-discovery-install
-git pull --ff-only
-sudo bash bootstrap.sh
+curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh | bash
 ```
 
-O instalador preserva a configuração operacional existente.
+A instalação preserva a configuração operacional existente.
+
+Para fixar explicitamente a versão 1.5.0:
+
+```bash
+NETBOX_DISCOVERY_REF=v1.5.0 bash -c "$(curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh)"
+```
 
 ## Documentação
 
 - [Manual completo](docs/MANUAL.md)
 - [Comandos rápidos](docs/COMANDOS-RAPIDOS.md)
+- [Notas da release](RELEASE-NOTES.md)
+- [Política de segurança](SECURITY.md)
 
 ## Operação
 
 ```bash
 netbox-discovery help
+netbox-discovery version
 netbox-discovery status
 netbox-discovery configure
 netbox-discovery run

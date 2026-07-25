@@ -38,13 +38,16 @@ echo "===== INSTALANDO NETBOX-DISCOVERY ====="
 bash "$ROOT/install.sh"
 
 echo
-echo "===== STATUS ====="
-netbox-discovery status 2>/dev/null || true
-
-echo
-if [[ ! -f /opt/netbox-discovery/config.yml ]]; then
-  echo "PRÓXIMO PASSO: netbox-discovery init"
-else
+if [[ -f /opt/netbox-discovery/config.yml ]]; then
+  echo "===== STATUS ====="
+  netbox-discovery status || true
+  echo
   echo "CONFIG EXISTENTE PRESERVADA."
   echo "PRÓXIMO PASSO: netbox-discovery check"
+else
+  echo "===== INSTALAÇÃO NOVA ====="
+  echo "CONFIG: ainda não criada (comportamento esperado)."
+  echo "Nenhuma varredura foi iniciada."
+  echo "Scheduler permanece desabilitado."
+  echo "PRÓXIMO PASSO: netbox-discovery init"
 fi

@@ -1,8 +1,9 @@
 # Manual Operacional — netbox-discovery
 
-**Produto:** netbox-discovery  
-**Versão:** 1.5.0 — PRODUCT V1  
+**Produto:** netbox-discovery
+**Versão:** 1.5.0 — PRODUCT V1
 **Objetivo:** descobrir ativos de rede, identificar/classificar, reconciliar identidades, planejar alterações, importar com segurança no NetBox e auditar o resultado.
+**Distribuição oficial:** repositório público `bkpcloud-app/netbox-discovery` via HTTPS.
 
 ---
 
@@ -212,16 +213,26 @@ Apenas `READY` é elegível para import automático.
 
 ## 3. Requisitos
 
-O instalador exige:
+Para instalação por GitHub público, o Proxy precisa inicialmente de:
 
 ```text
 root
+acesso HTTPS à Internet/GitHub
+curl (o comando oficial instala se estiver ausente)
+dnf, yum ou apt-get
+```
+
+O instalador oficial cuida das dependências do produto:
+
+```text
+git
 Python 3.6 ou superior
 nmap
 snmpget
 snmpwalk
-systemd para scheduler
 ```
+
+O scheduler utiliza systemd quando habilitado.
 
 O caminho padrão da aplicação é:
 
@@ -239,41 +250,53 @@ O comando global é:
 
 ## 4. Instalação em um Proxy novo
 
-Copie o ZIP do produto para `/root`.
-
-Exemplo da versão atual:
+A distribuição oficial da versão 1.5.0 é feita pelo repositório público:
 
 ```text
-/root/netbox-discovery-v1.5.0-PRODUCT-V1.zip
+https://github.com/bkpcloud-app/netbox-discovery
 ```
 
-Instale:
+Não é necessário copiar ZIP, cadastrar Deploy Key ou autenticar o Proxy no GitHub.
+
+### Instalação recomendada — Proxy zerado
+
+Execute como `root`:
 
 ```bash
-cd /root
-
-rm -rf /tmp/netbox-product-v1
-mkdir -p /tmp/netbox-product-v1
-
-unzip -o \
-  /root/netbox-discovery-v1.5.0-PRODUCT-V1.zip \
-  -d /tmp/netbox-product-v1
-
-bash /tmp/netbox-product-v1/install.sh
+bash -lc '
+set -euo pipefail
+if ! command -v curl >/dev/null 2>&1; then
+    if command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates
+    elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates
+    elif command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y curl ca-certificates
+    else echo "ERRO: não encontrei dnf, yum ou apt-get"; exit 1
+    fi
+fi
+curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh | bash
+'
 ```
 
-O instalador:
+O `install-from-github.sh`:
 
-- valida Python;
-- valida dependências;
-- instala em `/opt/netbox-discovery`;
-- cria o comando global `netbox-discovery`;
-- instala os units do systemd;
-- faz backup da versão anterior;
-- preserva configuração existente;
-- preserva relatórios/logs/cache;
-- **não habilita o scheduler**;
-- **não inicia discovery**.
+- instala `git` caso esteja ausente;
+- clona `bkpcloud-app/netbox-discovery` por HTTPS;
+- executa o `bootstrap.sh`;
+- instala as dependências de discovery/SNMP;
+- chama o instalador do produto;
+- preserva configuração de instalação anterior;
+- não inicia discovery;
+- não habilita scheduler.
+
+Em um Proxy novo, a saída esperada termina semelhante a:
+
+```text
+NETBOX-DISCOVERY PRODUCT V1 INSTALADO
+Versão: 1.5.0
+CONFIG: ainda não criada (comportamento esperado).
+PRÓXIMO PASSO: netbox-discovery init
+```
+
+A ausência de `/opt/netbox-discovery/config.yml` imediatamente após uma instalação nova **não é falha**. A configuração é criada pelo `init`.
 
 Em instalação nova, o próximo comando é:
 
@@ -766,34 +789,39 @@ O `status` lê os relatórios mais recentes.
 
 ## 16. Backup e upgrade
 
-Durante instalação/upgrade, o instalador cria automaticamente:
+A atualização oficial utiliza o mesmo instalador do GitHub público:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh | bash
+```
+
+O processo baixa a versão atual do repositório e executa novamente o instalador.
+
+Durante instalação/upgrade, o produto cria automaticamente um backup semelhante a:
 
 ```text
 /opt/netbox-discovery/backups/pre-product-v1-AAAAmmdd-HHMMSS
 ```
 
-São preservados:
+A configuração operacional existente é preservada. O pacote do produto não contém `config.yml` ativo e não deve sobrescrever credenciais/configuração do cliente.
+
+Também permanecem fora do Git público:
 
 ```text
-config.yml
-config/
-VERSION
-workflow.yml
-bin/
-lib/
-modules/
-systemd/
+tokens
+communities SNMP reais
+relatórios
+logs
+cache
+backups de clientes
+chaves privadas
 ```
 
-O instalador **não duplica**:
+Para instalar uma release fixa em vez de `main`, use a variável `NETBOX_DISCOVERY_REF`. Exemplo:
 
-```text
-reports/
-logs/
-cache/
+```bash
+NETBOX_DISCOVERY_REF=v1.5.0 bash -c "$(curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh)"
 ```
-
-O pacote de produto não contém `config.yml` ativo, justamente para não sobrescrever as credenciais/configuração do cliente em upgrades.
 
 ---
 
@@ -1113,10 +1141,22 @@ A V1 consolidou as correções homologadas durante o piloto:
 
 ### Novo site
 
+```text
+INSTALAR DO GITHUB
+→ INIT
+→ CHECK
+→ RUN
+→ REVISAR PLAN
+→ RUN --APPLY
+→ STATUS
+→ SCHEDULER
+```
+
 ```bash
 netbox-discovery init
 netbox-discovery check
 netbox-discovery run
+# revisar PLAN antes da escrita
 netbox-discovery run --apply
 netbox-discovery status
 ```
