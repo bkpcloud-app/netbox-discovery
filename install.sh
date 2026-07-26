@@ -54,6 +54,8 @@ ln -sfn "$TARGET/bin/netbox-discovery" /usr/local/bin/netbox-discovery
 
 install -m 0644 "$TARGET/systemd/netbox-discovery.service" /etc/systemd/system/netbox-discovery.service
 install -m 0644 "$TARGET/systemd/netbox-discovery.timer" /etc/systemd/system/netbox-discovery.timer
+install -m 0644 "$TARGET/systemd/netbox-discovery-hypervisor.service" /etc/systemd/system/netbox-discovery-hypervisor.service
+install -m 0644 "$TARGET/systemd/netbox-discovery-hypervisor.timer" /etc/systemd/system/netbox-discovery-hypervisor.timer
 systemctl daemon-reload
 # Safety: installer never enables or starts the timer.
 
@@ -69,12 +71,19 @@ systemctl daemon-reload
   "$TARGET/modules/auditors/inventory.py" \
   "$TARGET/modules/product/configurator.py" \
   "$TARGET/modules/product/runner.py" \
-  "$TARGET/modules/product/status.py"
+  "$TARGET/modules/product/status.py" \
+  "$TARGET/modules/hypervisor/config.py" \
+  "$TARGET/modules/hypervisor/collectors.py" \
+  "$TARGET/modules/hypervisor/engine.py" \
+  "$TARGET/modules/hypervisor/configurator.py" \
+  "$TARGET/modules/hypervisor/checker.py" \
+  "$TARGET/modules/hypervisor/runner.py" \
+  "$TARGET/modules/hypervisor/status.py"
 
 printf '\nNETBOX-DISCOVERY PRODUCT V1 INSTALADO\n'
 printf 'Versão: %s\n' "$(cat "$TARGET/VERSION")"
 printf 'Backup: %s\n' "$BACKUP"
-printf 'Scheduler: NÃO HABILITADO pelo instalador\n'
+printf 'Schedulers network/hypervisor: NÃO HABILITADOS pelo instalador\n'
 
 if [[ -f "$TARGET/config.yml" ]]; then
   "$TARGET/bin/netbox-discovery" check

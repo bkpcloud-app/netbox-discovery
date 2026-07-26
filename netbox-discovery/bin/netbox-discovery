@@ -19,7 +19,14 @@ check_product() {
     "$BASE/modules/auditors/inventory.py" \
     "$BASE/modules/product/configurator.py" \
     "$BASE/modules/product/runner.py" \
-    "$BASE/modules/product/status.py"
+    "$BASE/modules/product/status.py" \
+    "$BASE/modules/hypervisor/config.py" \
+    "$BASE/modules/hypervisor/collectors.py" \
+    "$BASE/modules/hypervisor/engine.py" \
+    "$BASE/modules/hypervisor/configurator.py" \
+    "$BASE/modules/hypervisor/checker.py" \
+    "$BASE/modules/hypervisor/runner.py" \
+    "$BASE/modules/hypervisor/status.py"
 
   for cmd in nmap snmpget snmpwalk; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -79,6 +86,213 @@ EOF
   echo "A escrita automática depende de automation.apply no config.yml."
 }
 
+
+hypervisor_deps_install() {
+  if [[ "$(id -u)" != "0" ]]; then
+    echo "ERRO: instalação de dependências Hypervisor exige root." >&2
+    return 1
+  fi
+
+  local need_external=0 type
+  for type in "$@"; do
+    case "$type" in
+      vmware|hyperv|all) need_external=1 ;;
+      proxmox|'') ;;
+      *) echo "ERRO: tipo de conector Hypervisor inválido: $type" >&2; return 1 ;;
+    esac
+  done
+  if [[ "$need_external" -eq 0 ]]; then
+    return 0
+  fi
+
+  # VMware + Hyper-V são instalados juntos no vendor isolado. Isso evita
+  # substituir o vendor ao adicionar o segundo tipo de source mais tarde.
+  local vendor="$BASE/vendor"
+  local marker="$vendor/.netbox-discovery-hypervisor-deps-v2"
+  if [[ -f "$marker" ]]; then
+    if PYTHONPATH="$vendor${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" - <<'PYDEPS' >/dev/null 2>&1
+import pyVmomi
+import winrm
+PYDEPS
+    then
+      return 0
+    fi
+  fi
+
+  if ! "$PYTHON" -m pip --version >/dev/null 2>&1; then
+    echo "Instalando python3-pip para conectores Hypervisor..."
+    if command -v dnf >/dev/null 2>&1; then
+      dnf install -y python3-pip
+    elif command -v yum >/dev/null 2>&1; then
+      yum install -y python3-pip
+    elif command -v apt-get >/dev/null 2>&1; then
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip
+    else
+      echo "ERRO: não foi possível instalar python3-pip." >&2
+      return 1
+    fi
+  fi
+
+  local tmp
+  tmp="$(mktemp -d "$BASE/vendor.tmp.XXXXXX")"
+  echo "Preparando dependências Hypervisor isoladas..."
+
+  local packages=(
+    'requests==2.27.1'
+    'urllib3==1.26.18'
+    'charset-normalizer==2.0.12'
+    'idna==3.6'
+    'certifi==2024.2.2'
+    'six==1.16.0'
+    'pyvmomi==7.0.3'
+    'pywinrm==0.4.3'
+    'requests-ntlm==1.1.0'
+    'ntlm-auth==1.5.0'
+    'xmltodict==0.13.0'
+  )
+
+  if ! "$PYTHON" -m pip install --disable-pip-version-check --no-cache-dir --target "$tmp" "${packages[@]}"; then
+    rm -rf "$tmp"
+    echo "ERRO: falha ao instalar dependências Hypervisor; vendor atual foi preservado." >&2
+    return 1
+  fi
+  if ! PYTHONPATH="$tmp${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" - <<'PYDEPS'
+import pyVmomi
+import winrm
+print('HYPERVISOR DEPS: OK')
+PYDEPS
+  then
+    rm -rf "$tmp"
+    echo "ERRO: validação das dependências Hypervisor falhou; vendor atual foi preservado." >&2
+    return 1
+  fi
+
+  : > "$tmp/.netbox-discovery-hypervisor-deps-v2"
+  rm -rf "$vendor.old"
+  if [[ -d "$vendor" ]]; then
+    mv "$vendor" "$vendor.old"
+  fi
+  if ! mv "$tmp" "$vendor"; then
+    [[ -d "$vendor.old" ]] && mv "$vendor.old" "$vendor"
+    rm -rf "$tmp"
+    echo "ERRO: não foi possível ativar vendor Hypervisor." >&2
+    return 1
+  fi
+  rm -rf "$vendor.old"
+}
+
+hypervisor_deps_from_config() {
+  local types
+  types=$("$PYTHON" - <<'PYTYPES'
+import os,sys
+base=os.environ.get('NETBOX_DISCOVERY_BASE','/opt/netbox-discovery')
+sys.path.insert(0,base)
+from modules.hypervisor.config import load_hypervisor_config, enabled_sources
+cfg=load_hypervisor_config(required=True)
+print(' '.join(sorted(set(str(x.get('type') or '').lower() for x in enabled_sources(cfg)))))
+PYTYPES
+)
+  # shellcheck disable=SC2086
+  hypervisor_deps_install $types
+}
+
+hypervisor_scheduler_enable() {
+  if [[ "$(id -u)" != "0" ]]; then
+    echo "ERRO: scheduler exige root." >&2
+    exit 1
+  fi
+  SCHEDULE=$("$PYTHON" - <<'PYSCHED'
+import os,sys
+base=os.environ.get('NETBOX_DISCOVERY_BASE','/opt/netbox-discovery')
+sys.path.insert(0,base)
+from modules.hypervisor.config import load_hypervisor_config
+cfg=load_hypervisor_config(required=True)
+print((cfg.get('automation') or {}).get('schedule') or 'daily')
+PYSCHED
+)
+  mkdir -p /etc/systemd/system/netbox-discovery-hypervisor.timer.d
+  cat > /etc/systemd/system/netbox-discovery-hypervisor.timer.d/schedule.conf <<EOF
+[Timer]
+OnCalendar=
+OnCalendar=$SCHEDULE
+EOF
+  systemctl daemon-reload
+  systemctl enable --now netbox-discovery-hypervisor.timer
+  echo "HYPERVISOR SCHEDULER: HABILITADO"
+  echo "OnCalendar: $SCHEDULE"
+  echo "A escrita automática depende de hypervisors.json automation.apply."
+}
+
+hypervisor_dispatch() {
+  local ACTION="${1:-help}"
+  shift || true
+  case "$ACTION" in
+    help|-h|--help)
+      cat <<'EOF'
+netbox-discovery hypervisor - inventário de virtualização
+
+Uso:
+  netbox-discovery hypervisor configure
+  netbox-discovery hypervisor check
+  netbox-discovery hypervisor run [--apply]
+  netbox-discovery hypervisor status
+  netbox-discovery hypervisor scheduler {enable|disable|status}
+
+Plataformas:
+  VMware vCenter/ESXi
+  Proxmox VE
+  Microsoft Hyper-V
+
+Segurança:
+  hypervisor run         = coleta + PLAN, sem escrita
+  hypervisor run --apply = coleta + PLAN + IMPORT + AUDIT
+  nunca renomeia objetos existentes e nunca apaga automaticamente
+EOF
+      ;;
+    configure|init)
+      exec "$PYTHON" "$BASE/modules/hypervisor/configurator.py" "$@"
+      ;;
+    check)
+      hypervisor_deps_from_config
+      exec "$PYTHON" "$BASE/modules/hypervisor/checker.py" "$@"
+      ;;
+    run)
+      hypervisor_deps_from_config
+      exec "$PYTHON" "$BASE/modules/hypervisor/runner.py" "$@"
+      ;;
+    scheduled-run)
+      hypervisor_deps_from_config
+      exec "$PYTHON" "$BASE/modules/hypervisor/runner.py" --scheduled
+      ;;
+    _ensure-deps)
+      hypervisor_deps_install "${1:-all}"
+      ;;
+    status)
+      exec "$PYTHON" "$BASE/modules/hypervisor/status.py" "$@"
+      ;;
+    scheduler)
+      local SCHED_ACTION="${1:-status}"
+      case "$SCHED_ACTION" in
+        enable) hypervisor_scheduler_enable ;;
+        disable)
+          systemctl disable --now netbox-discovery-hypervisor.timer
+          echo "HYPERVISOR SCHEDULER: DESABILITADO"
+          ;;
+        status)
+          systemctl status netbox-discovery-hypervisor.timer --no-pager || true
+          ;;
+        *) echo "Uso: netbox-discovery hypervisor scheduler {enable|disable|status}" >&2; exit 2 ;;
+      esac
+      ;;
+    *)
+      echo "Comando hypervisor inválido: $ACTION" >&2
+      echo "Use: netbox-discovery hypervisor help" >&2
+      exit 2
+      ;;
+  esac
+}
+
 case "$COMMAND" in
   version|--version|-V)
     cat "$BASE/VERSION"
@@ -101,6 +315,7 @@ Uso:
   netbox-discovery run [--apply]
   netbox-discovery status
   netbox-discovery scheduler {enable|disable|status}
+  netbox-discovery hypervisor {configure|check|run|status|scheduler}
   netbox-discovery version
 
 Segurança:
@@ -144,6 +359,9 @@ EOF
     ;;
   status)
     exec "$PYTHON" "$BASE/modules/product/status.py"
+    ;;
+  hypervisor)
+    hypervisor_dispatch "$@"
     ;;
   scheduler)
     ACTION="${1:-status}"

@@ -10,6 +10,7 @@ import sys
 
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 CONFIG_FILE = os.path.join(BASE, "config.yml")
+LOCKED_NETBOX_URL = "https://inventory.bkpcloud.app.br:8080"
 
 
 def clean(v):
@@ -171,7 +172,7 @@ def current_defaults():
     site = clean(disc.get("site"))
     site_dir = os.path.join(BASE, "config", "sites", site) if site else ""
     return {
-        "url": clean((cfg.get("netbox") or {}).get("url")),
+        "url": LOCKED_NETBOX_URL,
         "token": clean((cfg.get("netbox") or {}).get("token")),
         "verify_ssl": bool((cfg.get("netbox") or {}).get("verify_ssl", True)),
         "tenant": clean(cfg.get("tenant")),
@@ -190,7 +191,8 @@ def interactive_configure():
     print("===== NETBOX-DISCOVERY CONFIGURAÇÃO =====")
     tenant = ask("Cliente/Tenant", cur["tenant"], True)
     site = ask("Site", cur["site"], True)
-    url = ask("URL do NetBox", cur["url"], True)
+    url = LOCKED_NETBOX_URL
+    print("NetBox fixo: {0}".format(url))
     token_prompt = "Token do NetBox (ENTER preserva o atual)" if cur["token"] else "Token do NetBox"
     token = getpass.getpass(token_prompt + ": ").strip()
     if not token:
@@ -254,7 +256,7 @@ def noninteractive(args):
     values = {
         "tenant": args.tenant or cur["tenant"],
         "site": args.site or cur["site"],
-        "url": args.netbox_url or cur["url"],
+        "url": LOCKED_NETBOX_URL,
         "token": args.netbox_token or cur["token"],
         "verify_ssl": cur["verify_ssl"] if args.verify_ssl is None else args.verify_ssl,
         "networks": args.network or cur["networks"],
@@ -264,6 +266,8 @@ def noninteractive(args):
         "automation_apply": cur["automation_apply"] if args.auto_apply is None else args.auto_apply,
         "schedule": args.schedule or cur["schedule"] or "daily",
     }
+    if args.netbox_url and args.netbox_url.rstrip("/").lower() != LOCKED_NETBOX_URL.rstrip("/").lower():
+        raise RuntimeError("--netbox-url não permitido. Endpoint fixo: {0}".format(LOCKED_NETBOX_URL))
     for key in ("tenant", "site", "url", "token"):
         if not clean(values[key]):
             raise RuntimeError("Campo obrigatório ausente: {0}".format(key))
@@ -283,7 +287,7 @@ def main(argv=None):
     ap.add_argument("--non-interactive", action="store_true")
     ap.add_argument("--tenant")
     ap.add_argument("--site")
-    ap.add_argument("--netbox-url")
+    ap.add_argument("--netbox-url", help="compatibilidade: deve corresponder ao endpoint fixo BKPCLOUD")
     ap.add_argument("--netbox-token")
     ap.add_argument("--network", action="append")
     ap.add_argument("--exclude", action="append")

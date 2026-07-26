@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery
-**Versão:** 1.6.0 — PRODUCT V1
+**Versão:** 1.8.0 — PRODUCT V1
 **Objetivo:** descobrir ativos de rede, identificar/classificar, reconciliar identidades, planejar alterações, importar com segurança no NetBox e auditar o resultado.
 **Distribuição oficial:** repositório público `bkpcloud-app/netbox-discovery` via HTTPS.
 
@@ -211,7 +211,73 @@ Apenas `READY` é elegível para import automático.
 
 ---
 
-## 3. Requisitos
+## 3. Pipeline Hypervisor — V1.8.0
+
+O módulo de virtualização pertence ao mesmo executável, mas é operacionalmente independente do discovery de rede.
+
+```bash
+netbox-discovery hypervisor configure
+netbox-discovery hypervisor check
+netbox-discovery hypervisor run
+netbox-discovery hypervisor run --apply
+netbox-discovery hypervisor status
+```
+
+Plataformas suportadas:
+
+- VMware vCenter e ESXi standalone via vSphere API/pyVmomi;
+- Proxmox VE via API REST, com API Token preferencial;
+- Microsoft Hyper-V via WinRM/NTLM.
+
+### Escopo
+
+Por padrão uma source central (por exemplo um vCenter atendendo várias filiais) é filtrada pelas redes CIDR configuradas para o Site. Um host entra quando seu IP de gerenciamento pertence ao Site; uma VM entra quando está em host incluído ou possui IP pertencente às redes do Site. `scope_mode=all` pode ser escolhido explicitamente no configure.
+
+### Objetos
+
+O PLAN Hypervisor contempla:
+
+- Prefixes das redes explicitamente configuradas para o Site;
+- Cluster Types e Clusters;
+- Devices físicos com role `HYPERVISOR`;
+- Virtual Machines e containers;
+- interfaces físicas/virtuais;
+- MACAddress;
+- IPAddress;
+- Primary IP quando a origem fornece indicação segura.
+
+Portgroups/bridges/switches virtuais são evidência de relacionamento; o produto não inventa Prefixes a partir somente do nome de uma rede virtual.
+
+### Preservação e reconciliação
+
+O produto identifica objetos existentes por serial/UUID, IP e outros vínculos fortes. O `name` já existente no NetBox não é atualizado automaticamente. Isso permite, por exemplo, renomear manualmente um Device ou VM no NetBox sem o scheduler desfazer a alteração. O mesmo princípio preserva interfaces já vinculadas ao mesmo IP/MAC.
+
+VMs em cluster podem ter a associação ao host físico atualizada quando uma migração é comprovada pela API.
+
+Nenhuma rotina Hypervisor executa DELETE. Ausência temporária em uma coleta não remove objeto do NetBox.
+
+### Credenciais
+
+As sources ficam em:
+
+```text
+/etc/netbox-discovery/hypervisors.json
+```
+
+O arquivo é exigido com modo `0600` e, quando executado como root, proprietário root. Segredos não entram em relatórios. Dependências VMware/Hyper-V são instaladas juntas e isoladas em `/opt/netbox-discovery/vendor` no primeiro uso de um desses conectores; Proxmox não exige pacote Python adicional.
+
+### Schedulers separados
+
+```bash
+netbox-discovery hypervisor scheduler enable
+netbox-discovery scheduler enable
+```
+
+Não existe `full-run`. A recomendação é agendar Hypervisor primeiro e Network depois, com horários independentes.
+
+---
+
+## 4. Requisitos
 
 Para instalação por GitHub público, o Proxy precisa inicialmente de:
 
@@ -248,9 +314,9 @@ O comando global é:
 
 ---
 
-## 4. Instalação em um Proxy novo
+## 5. Instalação em um Proxy novo
 
-A distribuição oficial da versão 1.5.2 é feita pelo repositório público:
+A distribuição oficial é feita pelo repositório público:
 
 ```text
 https://github.com/bkpcloud-app/netbox-discovery
@@ -291,7 +357,7 @@ Em um Proxy novo, a saída esperada termina semelhante a:
 
 ```text
 NETBOX-DISCOVERY PRODUCT V1 INSTALADO
-Versão: 1.7.0
+Versão: 1.8.0
 CONFIG: ainda não criada (comportamento esperado).
 PRÓXIMO PASSO: netbox-discovery init
 ```
@@ -306,7 +372,7 @@ netbox-discovery init
 
 ---
 
-## 5. Configuração inicial de um novo cliente/site
+## 6. Configuração inicial de um novo cliente/site
 
 Execute:
 
@@ -319,7 +385,7 @@ O assistente solicita:
 ```text
 Cliente/Tenant
 Site
-URL do NetBox
+NetBox fixo BKPCLOUD (somente exibição)
 Token do NetBox
 Validação SSL
 Redes CIDR
@@ -347,7 +413,7 @@ Resultado esperado:
 CONFIG: OK
 TENANT: ...
 SITE: ...
-NETBOX URL: ...
+NETBOX URL: https://inventory.bkpcloud.app.br:8080
 DISCOVER: OK
 CLASSIFY: OK
 RECONCILE: OK
@@ -358,7 +424,7 @@ AUDIT: OK
 
 ---
 
-## 6. Alterar uma configuração
+## 7. Alterar uma configuração
 
 Use:
 
@@ -372,7 +438,7 @@ Também não inicia discovery.
 
 ---
 
-## 7. Primeira execução em um site novo
+## 8. Primeira execução em um site novo
 
 ### Passo 1 — modo seguro
 
@@ -411,7 +477,7 @@ netbox-discovery status
 
 ---
 
-## 8. Comandos principais
+## 9. Comandos principais
 
 ### Ajuda
 
@@ -501,13 +567,13 @@ netbox-discovery status
 
 ---
 
-## 9. Entendendo o `status`
+## 10. Entendendo o `status`
 
 Exemplo:
 
 ```text
 ===== NETBOX-DISCOVERY STATUS =====
-Versão: 1.5.2
+Versão: 1.8.0
 Tenant/Site: CLIENTE/SITE
 Último RUN: PASS_WITH_WARNINGS
 DISCOVER: 288 hosts
@@ -536,7 +602,7 @@ Interpretação:
 
 ---
 
-## 10. Scheduler / execução automática
+## 11. Scheduler / execução automática
 
 O produto usa:
 
@@ -589,7 +655,7 @@ netbox-discovery scheduler disable
 
 ---
 
-## 11. Automação segura x automação com escrita
+## 12. Automação segura x automação com escrita
 
 Existem **dois controles diferentes**:
 
@@ -647,7 +713,7 @@ netbox-discovery configure
 
 ---
 
-## 12. Exemplos de agenda
+## 13. Exemplos de agenda
 
 O campo utiliza sintaxe `OnCalendar` do systemd.
 
@@ -677,7 +743,7 @@ netbox-discovery scheduler enable
 
 ---
 
-## 13. Execução sem depender da sessão SSH
+## 14. Execução sem depender da sessão SSH
 
 Uma execução manual:
 
@@ -699,7 +765,7 @@ O timer possui `Persistent=true`, portanto o systemd pode executar uma ocorrênc
 
 ---
 
-## 14. Arquivos e diretórios importantes
+## 15. Arquivos e diretórios importantes
 
 Raiz:
 
@@ -753,7 +819,7 @@ Backups:
 
 ---
 
-## 15. Relatórios gerados
+## 16. Relatórios gerados
 
 Para um site chamado `SITE`, são gerados arquivos como:
 
@@ -787,7 +853,7 @@ O `status` lê os relatórios mais recentes.
 
 ---
 
-## 16. Backup e upgrade
+## 17. Backup e upgrade
 
 A atualização oficial utiliza o mesmo instalador do GitHub público:
 
@@ -820,12 +886,12 @@ chaves privadas
 Para instalar uma release fixa em vez de `main`, use a variável `NETBOX_DISCOVERY_REF`. Exemplo:
 
 ```bash
-NETBOX_DISCOVERY_REF=v1.5.2 bash -c "$(curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh)"
+NETBOX_DISCOVERY_REF=v1.8.0 bash -c "$(curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh)"
 ```
 
 ---
 
-## 17. Concorrência
+## 18. Concorrência
 
 O `run` utiliza lock:
 
@@ -839,7 +905,7 @@ Isso evita dois pipelines completos concorrentes escrevendo ou coletando ao mesm
 
 ---
 
-## 18. O que fazer quando der erro
+## 19. O que fazer quando der erro
 
 ### Primeiro
 
@@ -875,7 +941,7 @@ Quando um `run --apply` falhar, investigue a causa antes de apagar qualquer obje
 
 ---
 
-## 19. Quando NÃO usar `--apply`
+## 20. Quando NÃO usar `--apply`
 
 Não use escrita automática quando:
 
@@ -896,7 +962,7 @@ primeiro.
 
 ---
 
-## 20. Processo recomendado para novo cliente/site
+## 21. Processo recomendado para novo cliente/site
 
 Fluxo operacional padrão:
 
@@ -916,7 +982,7 @@ Depois disso, a operação normal deve ser automática.
 
 ---
 
-## 21. Configuração não interativa
+## 22. Configuração não interativa
 
 A V1 também possui configuração não interativa, útil para automação de implantação.
 
@@ -954,7 +1020,7 @@ Também existem:
 
 ---
 
-## 22. Configuração ativa por Proxy
+## 23. Configuração ativa por Proxy
 
 A configuração principal possui um único:
 
@@ -975,7 +1041,7 @@ Na arquitetura atual, a forma mais simples e segura é tratar cada Proxy/site co
 
 ---
 
-## 23. Significado das principais situações
+## 24. Significado das principais situações
 
 ### `READY`
 
@@ -1011,7 +1077,7 @@ Falha que impede considerar o resultado homologado.
 
 ---
 
-## 24. Política operacional recomendada
+## 25. Política operacional recomendada
 
 ### Durante implantação de um site novo
 
@@ -1049,7 +1115,7 @@ automation.apply = true
 
 ---
 
-## 25. Comandos de bolso
+## 26. Comandos de bolso
 
 ```bash
 # ajuda
@@ -1088,7 +1154,7 @@ netbox-discovery scheduler disable
 
 ---
 
-## 26. Regra de ouro
+## 27. Regra de ouro
 
 Para um cliente/site novo:
 
@@ -1113,7 +1179,7 @@ init
 
 ---
 
-## 27. Referência da versão 1.5.2
+## 28. Referência da versão 1.5.2
 
 A V1 consolidou as correções homologadas durante o piloto:
 
@@ -1179,4 +1245,4 @@ AUDIT = somente leitura.
 
 ---
 
-**Documento referente ao netbox-discovery PRODUCT V1 — versão 1.7.0.**
+**Documento referente ao netbox-discovery PRODUCT V1 — versão 1.8.0.**

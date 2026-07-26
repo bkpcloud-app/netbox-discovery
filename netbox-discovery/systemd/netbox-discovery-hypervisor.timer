@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule netbox-discovery hypervisor inventory pipeline
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+Unit=netbox-discovery-hypervisor.service
+
+[Install]
+WantedBy=timers.target

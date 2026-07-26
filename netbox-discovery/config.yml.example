@@ -1,5 +1,5 @@
 netbox:
-  url: https://netbox.example.local
+  url: https://inventory.bkpcloud.app.br:8080
   token: CHANGE_ME
   verify_ssl: true
 

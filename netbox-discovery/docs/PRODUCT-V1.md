@@ -1,39 +1,47 @@
-# netbox-discovery Product V1
+# netbox-discovery Product V1 — 1.8.0
 
-Versão consolidada do produto. Não é um pacote de Stage/hotfix.
+Produto único com dois pipelines independentes.
 
-## Pipeline
+## Network
 
-DISCOVER -> CLASSIFY -> RECONCILE -> PLAN -> IMPORT -> AUDIT
+Comandos existentes, preservados:
 
-## Comandos principais
+- `netbox-discovery run`
+- `netbox-discovery run --apply`
+- `netbox-discovery status`
+- `netbox-discovery scheduler ...`
 
-- `netbox-discovery init`: configuração inicial; nunca inicia scan.
-- `netbox-discovery configure`: altera a configuração; nunca inicia scan.
-- `netbox-discovery check`: valida produto/config/dependências.
-- `netbox-discovery run`: pipeline até PLAN, sem escrita.
-- `netbox-discovery run --apply`: pipeline completo com escrita somente READY e AUDIT.
-- `netbox-discovery status`: resumo operacional do último ciclo.
-- `netbox-discovery scheduler enable`: habilita timer systemd de acordo com `automation.schedule`.
-- `netbox-discovery scheduler disable`: desabilita timer.
+Pipeline: `DISCOVER -> CLASSIFY -> RECONCILE -> PLAN -> IMPORT -> AUDIT`.
+
+## Hypervisor
+
+- `netbox-discovery hypervisor configure`
+- `netbox-discovery hypervisor check`
+- `netbox-discovery hypervisor run`
+- `netbox-discovery hypervisor run --apply`
+- `netbox-discovery hypervisor status`
+- `netbox-discovery hypervisor scheduler ...`
+
+Conectores: VMware vCenter/ESXi, Proxmox VE e Microsoft Hyper-V.
+
+O Hypervisor cria/reconcilia a base de Prefixes configurados, Clusters, hosts físicos, VMs/containers, interfaces, MACs e IPs quando a evidência permite. Não apaga automaticamente.
+
+## Ordem operacional recomendada
+
+`Hypervisor` primeiro, `Network` depois. Não existe comando `full-run`; falhas e agendas permanecem isoladas.
+
+## Endpoint
+
+O endpoint NetBox é fixo em `https://inventory.bkpcloud.app.br:8080`. Configuração divergente é recusada.
 
 ## Política de segurança
 
-- IMPORT exige `--apply` ou `automation.apply: true` em execução agendada.
-- REVIEW não é importado automaticamente.
-- BLOCKED nunca é importado.
-- O PLAN consulta IPs globais antes da escrita.
-- Import é idempotente e replaneja antes de escrever.
-- AUDIT é read-only.
-- Installer não habilita scheduler.
-- `init`/`configure` não iniciam discovery.
-
-## Correções consolidadas
-
-- Preflight global de IP para evitar POST duplicado.
-- Retomada idempotente após falha parcial.
-- Preservação conservadora de inventário preexistente.
-- Primary IPv4 preexistente preservado gera WARN, não falso FAIL.
-- IDs de assets sem serial/MAC não colidem por nomes SNMP genéricos repetidos.
-- Contagem de AUDIT usa registros READY reais e não agrupa assets distintos pelo mesmo nome genérico.
-- Idempotency preview usa chave composta por asset/name/IP, inclusive para relatórios legados.
+- escrita exige `--apply` ou automação explicitamente configurada;
+- `REVIEW`/`BLOCKED` não são escritos;
+- preflight ocorre antes da primeira escrita;
+- identidade por serial/UUID/IP/MAC evita duplicidade;
+- nomes existentes no NetBox são autoritativos e não são sobrescritos;
+- bindings existentes de interface por IP/MAC são preservados;
+- Hypervisor não executa DELETE;
+- credenciais Hypervisor ficam em arquivo root-only fora do repositório;
+- timers não são habilitados pelo instalador.

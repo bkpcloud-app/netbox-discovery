@@ -1,26 +1,59 @@
 # netbox-discovery
 
-Produto BKPCLOUD para descoberta, classificação, reconciliação, planejamento, importação segura e auditoria de inventário no NetBox.
+Produto BKPCLOUD para inventário de infraestrutura no NetBox.
 
-**Versão atual:** 1.6.0 — PRODUCT V1
+**Versão atual:** 1.8.0 — PRODUCT V1
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`
 
-## Pipeline
+## Dois pipelines independentes
+
+### Rede — comando original
 
 ```text
-DISCOVER
-→ CLASSIFY
-→ RECONCILE
-→ PLAN
-→ IMPORT
-→ AUDIT
+netbox-discovery run
+DISCOVER → CLASSIFY → RECONCILE → PLAN
 ```
+
+Com escrita explícita:
+
+```text
+netbox-discovery run --apply
+DISCOVER → CLASSIFY → RECONCILE → PLAN → IMPORT → AUDIT
+```
+
+### Hypervisor — V1.8.0
+
+```text
+netbox-discovery hypervisor configure
+netbox-discovery hypervisor check
+netbox-discovery hypervisor run
+netbox-discovery hypervisor run --apply
+netbox-discovery hypervisor status
+```
+
+Conectores:
+
+- VMware vCenter ou ESXi standalone;
+- Proxmox VE (API Token preferencial ou usuário/senha);
+- Microsoft Hyper-V via WinRM/NTLM.
+
+O pipeline Hypervisor é independente do discovery de rede. Não existe `full-run`.
+A recomendação operacional é executar Hypervisor primeiro e Rede depois, em agendas separadas.
+
+## NetBox fixo BKPCLOUD
+
+O produto V1.8.0 usa somente:
+
+```text
+https://inventory.bkpcloud.app.br:8080
+```
+
+`init`/`configure` não perguntam mais a URL. Uma URL diferente no `config.yml` é rejeitada em runtime.
+Essa trava evita uso acidental do produto contra outro NetBox; como o código é público, não é um mecanismo de licenciamento criptográfico.
 
 ## Instalação em Proxy zerado
 
-O fluxo oficial não usa ZIP, Deploy Key, GitHub App ou credencial do GitHub.
-
-Cole como `root`:
+Como `root`:
 
 ```bash
 bash -lc '
@@ -36,86 +69,69 @@ curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/
 '
 ```
 
-O instalador de origem:
+O instalador preserva configurações existentes e não habilita scheduler.
+Dependências de VMware/Hyper-V são instaladas juntas sob `/opt/netbox-discovery/vendor` somente no primeiro uso de um desses conectores; Proxmox usa a biblioteca padrão do Python.
 
-- instala `git` caso esteja ausente;
-- clona o repositório público por HTTPS;
-- executa o `bootstrap.sh`;
-- instala Python/Nmap/SNMP quando necessário;
-- preserva configuração existente em upgrade;
-- não executa discovery;
-- não habilita scheduler;
-- em instalação nova termina pedindo `netbox-discovery init`.
-
-## Primeiro uso
+## Primeiro uso de um site
 
 ```bash
 netbox-discovery init
 netbox-discovery check
-netbox-discovery run
 ```
 
-Revise o PLAN. Somente depois:
+Para ambientes virtualizados, prepare primeiro a base de virtualização:
 
 ```bash
+netbox-discovery hypervisor configure
+netbox-discovery hypervisor check
+netbox-discovery hypervisor run
+```
+
+Revise o PLAN Hypervisor. Somente depois:
+
+```bash
+netbox-discovery hypervisor run --apply
+```
+
+Depois execute o inventário de rede normal:
+
+```bash
+netbox-discovery run
+# revisar PLAN
 netbox-discovery run --apply
-netbox-discovery status
 ```
 
 ## Segurança operacional
 
-- `run` sem `--apply` não grava no NetBox.
-- `REVIEW` não é importado automaticamente.
-- `BLOCKED` nunca é importado automaticamente.
-- `NOOP` não altera o objeto.
-- `AUDIT` é somente leitura.
-- O instalador não habilita scheduler automaticamente.
-- `init` e `configure` não iniciam varredura.
+- `run` e `hypervisor run` sem `--apply` não gravam no NetBox;
+- `REVIEW` e `BLOCKED` não entram na escrita automática;
+- os pipelines replanejam antes da primeira escrita;
+- IPs e MACs conflitantes são protegidos;
+- reexecução é idempotente;
+- nomes existentes de Devices/VMs e interfaces vinculadas são preservados;
+- o pipeline Hypervisor nunca apaga objetos automaticamente;
+- instalador nunca habilita os timers;
+- schedulers de rede e Hypervisor são independentes.
 
-## Segurança do repositório público
+## Credenciais
 
-Este repositório contém somente produto e documentação.
+Configuração principal:
 
-**Nunca versionar:**
-
-- `config.yml` real;
-- token do NetBox;
-- community SNMP real;
-- senhas/chaves privadas;
-- `.pem`;
-- relatórios, logs ou backups de clientes.
-
-## Atualização
-
-Execute novamente o instalador oficial:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh | bash
+```text
+/opt/netbox-discovery/config.yml
 ```
 
-A instalação preserva a configuração operacional existente.
+Credenciais/sources Hypervisor:
 
-Para fixar explicitamente a versão 1.5.2:
-
-```bash
-NETBOX_DISCOVERY_REF=v1.5.2 bash -c "$(curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh)"
+```text
+/etc/netbox-discovery/hypervisors.json
 ```
+
+O arquivo Hypervisor é exigido com permissão `0600` e proprietário `root` quando executado como root. Segredos nunca devem ser versionados.
 
 ## Documentação
 
-- [Manual completo](docs/MANUAL.md)
-- [Comandos rápidos](docs/COMANDOS-RAPIDOS.md)
-- [Notas da release](RELEASE-NOTES.md)
-- [Política de segurança](SECURITY.md)
-
-## Operação
-
-```bash
-netbox-discovery help
-netbox-discovery version
-netbox-discovery status
-netbox-discovery configure
-netbox-discovery run
-netbox-discovery run --apply
-netbox-discovery scheduler status
-```
+- `docs/MANUAL.md`
+- `docs/COMANDOS-RAPIDOS.md`
+- `RELEASE-NOTES.md`
+- `SECURITY.md`

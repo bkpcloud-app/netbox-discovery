@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 CONFIG_FILE = "/opt/netbox-discovery/config.yml"
+LOCKED_NETBOX_URL = "https://inventory.bkpcloud.app.br:8080"
 
 
 def _convert(value):
@@ -14,6 +15,10 @@ def _convert(value):
         return None
 
     return value
+
+
+def _normalized_url(value):
+    return str(value or "").strip().rstrip("/").lower()
 
 
 def load_config(path=CONFIG_FILE):
@@ -46,8 +51,18 @@ def load_config(path=CONFIG_FILE):
                 config[key] = value
                 section = None
 
+    if "netbox" not in config or not isinstance(config.get("netbox"), dict):
+        config["netbox"] = {}
+
+    configured_url = config["netbox"].get("url")
+    if configured_url and _normalized_url(configured_url) != _normalized_url(LOCKED_NETBOX_URL):
+        raise RuntimeError(
+            "Endpoint NetBox não autorizado: %s. Este produto usa somente %s"
+            % (configured_url, LOCKED_NETBOX_URL)
+        )
+    config["netbox"]["url"] = LOCKED_NETBOX_URL
+
     required = [
-        ("netbox", "url"),
         ("netbox", "token"),
         ("netbox", "verify_ssl"),
     ]

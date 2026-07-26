@@ -1,0 +1,1 @@
+# netbox-discovery hypervisor package

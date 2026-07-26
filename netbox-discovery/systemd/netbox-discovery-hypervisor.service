@@ -1,0 +1,11 @@
+[Unit]
+Description=netbox-discovery hypervisor inventory pipeline
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/netbox-discovery hypervisor scheduled-run
+TimeoutStartSec=0
+Nice=10

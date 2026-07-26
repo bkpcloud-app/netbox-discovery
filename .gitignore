@@ -22,3 +22,7 @@ backups/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Dependências runtime dos conectores Hypervisor
+vendor/
+**/vendor/

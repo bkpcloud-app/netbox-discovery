@@ -27,3 +27,14 @@ O `.gitignore` deve permanecer alinhado com essa política.
 - `BLOCKED` nunca é importado automaticamente.
 - `AUDIT` é somente leitura.
 - O instalador não habilita scheduler automaticamente.
+
+## V1.8.0 — Hypervisor e endpoint
+
+- o endpoint NetBox do produto é fixo em `https://inventory.bkpcloud.app.br:8080`;
+- uma URL diferente no `config.yml` é recusada;
+- `/etc/netbox-discovery/hypervisors.json` contém credenciais e deve permanecer `0600`, root-only;
+- relatórios mascaram o campo de segredo das sources;
+- dependências Python de VMware/Hyper-V ficam isoladas em `/opt/netbox-discovery/vendor`;
+- `hypervisor run` é read-only; escrita exige `--apply`;
+- o pipeline Hypervisor não executa exclusão automática;
+- nunca versionar `hypervisors.json` nem cópias das credenciais.

@@ -1,3 +1,36 @@
+## V1.8.0 — Hypervisor integrado e endpoint BKPCLOUD
+
+Release de produto que adiciona inventário de virtualização sem alterar o pipeline de rede existente.
+
+### Endpoint
+
+- fixa o NetBox em `https://inventory.bkpcloud.app.br:8080`;
+- `init`/`configure` deixam de pedir a URL;
+- runtime recusa `config.yml` apontando para outro NetBox.
+
+### Hypervisor
+
+- adiciona `netbox-discovery hypervisor`;
+- conectores VMware vCenter/ESXi, Proxmox VE e Hyper-V WinRM/NTLM;
+- comandos `configure`, `check`, `run`, `run --apply`, `status` e `scheduler`;
+- scheduler independente do pipeline de rede;
+- não existe `full-run`;
+- escopo padrão por redes configuradas do Site, permitindo vCenter/manager central;
+- cria/reconcilia Prefixes explícitos do Site, Clusters, hosts, VMs/containers, interfaces, MACs e IPs;
+- Proxmox usa UUID quando disponível e identidade estável baseada em source/VMID como fallback;
+- disco de VM é convertido corretamente para MB no modelo NetBox.
+
+### Segurança e idempotência
+
+- dry-run por padrão;
+- replanejamento/preflight antes da primeira escrita;
+- conflitos de IP, MAC, identidade, Role e Cluster Type viram REVIEW/bloqueio antes da escrita;
+- preserva nomes manuais de Devices, VMs e interfaces já vinculadas;
+- atualiza pinning de VM migrada entre hosts do mesmo cluster;
+- não executa DELETE;
+- credenciais Hypervisor ficam em `/etc/netbox-discovery/hypervisors.json` com proteção root-only;
+- dependências de VMware/Hyper-V são instaladas juntas sob `/opt/netbox-discovery/vendor` somente quando um desses conectores é necessário.
+
 ## V1.7.0 — Estabilização de classificação e inventário
 
 Release consolidada após a homologação do FFT, sem alteração da política de escrita: somente itens `READY` podem ser aplicados.
