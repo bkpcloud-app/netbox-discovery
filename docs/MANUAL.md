@@ -291,7 +291,7 @@ Em um Proxy novo, a saída esperada termina semelhante a:
 
 ```text
 NETBOX-DISCOVERY PRODUCT V1 INSTALADO
-Versão: 1.6.0
+Versão: 1.7.0
 CONFIG: ainda não criada (comportamento esperado).
 PRÓXIMO PASSO: netbox-discovery init
 ```
@@ -1179,4 +1179,4 @@ AUDIT = somente leitura.
 
 ---
 
-**Documento referente ao netbox-discovery PRODUCT V1 — versão 1.6.0.**
+**Documento referente ao netbox-discovery PRODUCT V1 — versão 1.7.0.**

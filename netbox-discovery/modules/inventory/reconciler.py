@@ -16,7 +16,7 @@ from collections import Counter, defaultdict
 
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
-RECONCILER_VERSION = "2.2-product"
+RECONCILER_VERSION = "2.3-product"
 
 
 def clean(v): return "" if v is None else str(v).strip()

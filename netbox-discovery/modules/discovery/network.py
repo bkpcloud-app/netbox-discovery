@@ -69,6 +69,7 @@ DISCOVERY_RESCUE_TCP_PORTS = [
 
 BROAD_TCP_TOP_PORTS = 100
 RESIDUAL_TCP_TOP_PORTS = 1000
+CCTV_TARGET_TCP_PORTS = [80, 443, 554, 8000, 8443, 8899, 34567, 37777]
 
 SYSNAME_OID = ".1.3.6.1.2.1.1.5.0"
 SYSDESCR_OID = ".1.3.6.1.2.1.1.1.0"
@@ -1783,6 +1784,61 @@ def scan_services(ip_addresses):
     return results
 
 
+def _scan_cctv_targeted(ip_addresses):
+    """Focused CCTV probe used before the expensive residual top-1000 scan.
+
+    Some video endpoints respond too slowly for the broad mixed-port pass. A
+    small version scan with a longer per-host budget is both cheaper and more
+    reliable than immediately scanning 1000 ports.
+    """
+    results = {}
+    if not ip_addresses:
+        return results
+    port_text = ",".join(str(x) for x in CCTV_TARGET_TCP_PORTS)
+    chunk_size = 10
+    total_chunks = (len(ip_addresses) + chunk_size - 1) // chunk_size
+    for chunk_number, position in enumerate(range(0, len(ip_addresses), chunk_size), 1):
+        chunk = ip_addresses[position:position + chunk_size]
+        print("  CFTV direcionado: lote {0}/{1} ({2} hosts)...".format(
+            chunk_number, total_chunks, len(chunk)), flush=True)
+        command = [
+            "nmap", "-sT", "-sV", "--version-intensity", "3", "-Pn", "-n", "-T3",
+            "--max-retries", "2", "--host-timeout", "35s", "--open",
+            "-p", port_text, "-oX", "-",
+        ] + chunk
+        code, stdout, stderr = run_command(command, timeout=300)
+        parsed = _parse_nmap_service_xml(stdout, "cctv-targeted")
+        _merge_service_results(results, parsed)
+    _enrich_web_services(results)
+    return results
+
+
+def _strong_cctv_service_signature(services):
+    tcp = set()
+    text_parts = []
+    for service in services or []:
+        if service.get("protocol") == "tcp":
+            try:
+                tcp.add(int(service.get("port") or 0))
+            except Exception:
+                pass
+        for key in ("service", "product", "version", "extrainfo"):
+            if service.get(key):
+                text_parts.append(str(service.get(key)))
+        for key, value in (service.get("scripts") or {}).items():
+            text_parts.append(str(key))
+            text_parts.append(str(value))
+    text = " ".join(text_parts).lower()
+    hik_ui = 554 in tcp and 8000 in tcp and (
+        "doc/page/login.asp" in text or "doc/index.html" in text
+    )
+    named_vendor = any(x in text for x in (
+        "hikvision", "dahua", "axis communications", "vivotek", "hanwha",
+        "bosch security", "pelco", "uniview", "reolink", "intelbras", "avigilon",
+    )) and 554 in tcp
+    return hik_ui or named_vendor
+
+
 def deep_scan_residual(ip_addresses):
     if not ip_addresses:
         return {}, {}
@@ -3257,6 +3313,18 @@ def main():
     deep_os_results = {}
 
     if residual_ips:
+        # Try a focused CCTV probe before paying the cost of a top-1000 scan.
+        cctv_services = _scan_cctv_targeted(residual_ips)
+        _merge_service_results(service_results, cctv_services)
+        cctv_identified = [
+            ip for ip in residual_ips
+            if _strong_cctv_service_signature(service_results.get(ip, []))
+        ]
+        if cctv_identified:
+            print("CFTV identificado antes do deep scan: {0}".format(len(cctv_identified)))
+        residual_ips = [ip for ip in residual_ips if ip not in set(cctv_identified)]
+
+    if residual_ips:
         deep_services, deep_os_results = deep_scan_residual(
             residual_ips
         )
@@ -3470,7 +3538,7 @@ def main():
 
         records.append(record)
 
-    timestamp = datetime.datetime.now().strftime(
+    timestamp = datetime.datetime.utcnow().strftime(
         "%Y%m%d-%H%M%S"
     )
 

@@ -1,4 +1,4 @@
-# netbox-discovery V1.6.0 — Comandos rápidos
+# netbox-discovery V1.7.0 — Comandos rápidos
 
 ## 1. Instalar em um Proxy zerado
 

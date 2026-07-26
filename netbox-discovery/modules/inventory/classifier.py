@@ -15,7 +15,7 @@ from collections import Counter
 
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
-CLASSIFIER_VERSION = "2.1-product"
+CLASSIFIER_VERSION = "2.2-product"
 
 
 def clean(v):
@@ -87,6 +87,43 @@ def all_text(d):
     # Nmap OS guesses are intentionally excluded from strong classification text.
     # A deep scan may return several mutually incompatible matches with similar accuracy.
     return " ".join(clean(x) for x in parts if clean(x)).lower()
+
+
+def hardware_text(d):
+    """Evidence tied to the managed hardware, excluding application/TLS banners.
+
+    This prevents software vendors (for example a Siemens web application on a
+    Windows VM) from becoming the physical device manufacturer.
+    """
+    parts = [
+        d.get("mac_vendor"), d.get("snmp_name"), d.get("snmp_description"),
+        d.get("snmp_object_id"), d.get("snmp_lldp_name"),
+        d.get("snmp_lldp_description"), d.get("snmp_lldp_chassis_id"),
+    ]
+    ep = d.get("snmp_entity_primary") or {}
+    for k in ("description", "name", "manufacturer", "model", "serial", "software_rev"):
+        parts.append(ep.get(k))
+    for e in d.get("snmp_entity_inventory") or []:
+        for k in ("description", "name", "manufacturer", "model", "serial", "software_rev"):
+            parts.append(e.get(k))
+    return " ".join(clean(x) for x in parts if clean(x)).lower()
+
+
+def hikvision_ui_signature(d, text=None):
+    t = text if text is not None else all_text(d)
+    tcp = ports(d, "tcp")
+    return (
+        554 in tcp and 8000 in tcp and
+        ("doc/page/login.asp" in t or "doc/index.html" in t)
+    )
+
+
+def aruba_ui_signature(d, text=None):
+    t = text if text is not None else all_text(d)
+    return (
+        normalize_manufacturer(d.get("mac_vendor")) == "HPE Aruba" and
+        ("aruba - login form" in t or "/hpe/config/" in t)
+    )
 
 
 def ports(d, proto=None):
@@ -171,27 +208,39 @@ def entity_identity(d):
     for e in d.get("snmp_entity_inventory") or []:
         if e not in candidates:
             candidates.append(e)
-    # Prefer chassis/container entries with actual identity.
+
+    # A chassis/backplane describes the managed device. Prefer it over a
+    # pluggable module merely because the module happens to expose a model.
+    def class_rank(e):
+        cls = clean(e.get("class_id"))
+        if cls == "3":
+            return 0
+        if cls == "4":
+            return 1
+        return 2
+
     candidates.sort(key=lambda e: (
+        class_rank(e),
         0 if norm_serial(e.get("serial")) else 1,
         0 if clean(e.get("manufacturer")) else 1,
-        0 if clean(e.get("model")) else 1,
-        0 if clean(e.get("class_id")) in ("3", "4") else 1,
+        0 if clean(e.get("model") or e.get("name")) else 1,
     ))
     for e in candidates:
         serial = norm_serial(e.get("serial"))
         manufacturer = clean(e.get("manufacturer"))
         model = clean(e.get("model"))
+        name = clean(e.get("name"))
         desc = clean(e.get("description"))
-        if serial or manufacturer or model:
+        cls = clean(e.get("class_id"))
+        identity_model = model or (name if cls in ("3", "4") else "") or desc
+        if serial or manufacturer or identity_model:
             return {
                 "serial": serial,
                 "manufacturer": normalize_manufacturer(manufacturer),
-                "model": model or desc,
+                "model": identity_model,
                 "description": desc,
             }
     return {"serial": "", "manufacturer": "", "model": "", "description": ""}
-
 
 def certificate_common_names(d):
     out = []
@@ -208,7 +257,10 @@ def hostname_candidates(d):
     c = []
     def add(value, source, score):
         v = clean(value).strip(".")
-        if not v or v.lower() in ("localhost", "localhost.localdomain", "unknown", "sem nome", "nil", "none"):
+        if not v or v.lower() in (
+                "localhost", "localhost.localdomain", "unknown", "sem nome",
+                "nil", "none", "sysname not set", "sysname_not_set",
+                "sysname-not-set", "not configured"):
             return
         # Ignore IP-as-hostname.
         try:
@@ -239,15 +291,79 @@ def hostname_candidates(d):
 
 
 def idrac_serial(d):
-    text = " ".join(certificate_common_names(d))
-    return first_match([r"idrac[-_]?([a-z0-9]+)"], text)
+    # TLS on factory iDRAC can expose only the placeholder "SVCTAG".
+    # Prefer an explicit service tag from any valid iDRAC identity, including
+    # the observed SNMP sysName (iDRAC-H5RXJF3).
+    values = certificate_common_names(d) + [clean(d.get("snmp_name")), clean(d.get("snmp_lldp_name"))]
+    for value in values:
+        m = re.search(r"idrac[-_]?([a-z0-9-]+)", clean(value), re.I)
+        if not m:
+            continue
+        serial = norm_serial(m.group(1))
+        if serial:
+            return serial
+    return ""
+
+def explicit_serial(d, role):
+    # Protocol/banner serials are accepted only when their syntax is explicit.
+    if role == "INDUSTRIAL_PLC":
+        for txt in script_values(d, "s7-info"):
+            value = first_match([r"Serial Number:\s*([^\r\n]+)"], txt)
+            serial = norm_serial(value)
+            if serial:
+                return serial, "s7-info"
+    if role == "POWER_MANAGEMENT":
+        desc = clean(d.get("snmp_description"))
+        value = first_match([r"\bSN:\s*([A-Za-z0-9-]+)"], desc)
+        serial = norm_serial(value)
+        if serial:
+            return serial, "snmp-description"
+    return "", ""
 
 
-def infer_manufacturer(d, text, ent):
-    # High-confidence signatures before ENTITY/MAC vendor because some devices put part numbers in entPhysicalMfgName.
-    sigs = [
-        (("fortigate", "fortinet", "enterprises.12356"), "Fortinet"),
-        (("idrac", "restgui/start.html", "integrated dell remote access controller"), "Dell"),
+def infer_manufacturer(d, text, ent, role):
+    hw = hardware_text(d)
+
+    # Device-specific management fingerprints are safe even when routed L2
+    # identity is unavailable.
+    if any(t in text for t in ("fortigate", "fortinet", "enterprises.12356")):
+        return "Fortinet", "device-fingerprint"
+    if any(t in text for t in ("idrac", "restgui/start.html", "integrated dell remote access controller")):
+        return "Dell", "device-fingerprint"
+    if hikvision_ui_signature(d, text):
+        return "Hikvision", "device-ui-fingerprint"
+    if aruba_ui_signature(d, text):
+        return "HPE Aruba", "device-ui-fingerprint"
+
+    # ENTITY-MIB and OUI are physical identity and outrank application/TLS data.
+    if ent.get("manufacturer"):
+        em = clean(ent.get("manufacturer"))
+        if re.search(r"[A-Za-z]{3,}", em):
+            return normalize_manufacturer(em), "entity-mib"
+    mv = normalize_manufacturer(d.get("mac_vendor"))
+    if mv and mv not in ("VMware", "Microsoft", "Linux"):
+        return mv, "mac-oui"
+
+    # Hardware/SNMP fingerprints. Keep application vendors out of this list.
+    hw_sigs = [
+        (("srw01.eth",), "WEG"),
+        (("scalance ", "simatic s7", "pac3220", "pac4200", "simatic net"), "Siemens"),
+        (("ytek snmp agent", "enterprises.36582"), "YTEK"),
+        (("moxa eds-", "eds-405", "eds-408"), "Moxa"),
+        (("westermo lynx",), "Westermo"),
+        (("apc web/snmp", "network management card", "smart-ups"), "APC by Schneider Electric"),
+        (("hpe networking instant on", "aruba instant on"), "HPE Aruba"),
+        (("ubiquiti", "ubnt", "u7-pro", "u6-lr", "uap-"), "Ubiquiti"),
+        (("qnap", "ts-431", "ts-x41"), "QNAP"),
+        (("seagate", "nas-ba"), "Seagate"),
+    ]
+    for terms, target in hw_sigs:
+        if any(t in hw for t in terms):
+            return target, "hardware-fingerprint"
+
+    # Explicit camera/recorder brands in protocol or management banners remain
+    # useful when ENTITY/OUI is not visible across routed networks.
+    service_sigs = [
         (("hikvision", "hangzhou hikvision"), "Hikvision"),
         (("dahua", "zhejiang dahua"), "Dahua"),
         (("axis communications", "axis network camera"), "Axis Communications"),
@@ -260,36 +376,31 @@ def infer_manufacturer(d, text, ent):
         (("intelbras",), "Intelbras"),
         (("avigilon",), "Avigilon"),
         (("vigi camera", "tapo camera"), "TP-Link"),
-        (("hpe networking instant on", "aruba instant on"), "HPE Aruba"),
-        (("1920-", "v1910", "officeconnect switch"), "HPE"),
-        (("ubiquiti", "ubnt", "u7-pro", "u6-lr", "uap-"), "Ubiquiti"),
-        (("qnap", "ts-431", "ts-x41"), "QNAP"),
-        (("seagate", "nas-ba02"), "Seagate"),
-        (("siemens", "simatic", "pac4200"), "Siemens"),
-        (("moxa", "eds-405", "eds-408"), "Moxa"),
-        (("westermo", "westermo lynx"), "Westermo"),
-        (("apc", "network management card"), "APC by Schneider Electric"),
-        (("brother",), "Brother"), (("pantum",), "Pantum"), (("samsung",), "Samsung"),
     ]
-    for terms, target in sigs:
+    for terms, target in service_sigs:
         if any(t in text for t in terms):
-            return target, "fingerprint"
-    if ent.get("manufacturer"):
-        em = clean(ent.get("manufacturer"))
-        if re.search(r"[A-Za-z]{3,}", em):
-            return normalize_manufacturer(em), "entity-mib"
-    mv = normalize_manufacturer(d.get("mac_vendor"))
-    if mv and mv not in ("VMware", "Microsoft", "Linux"):
-        return mv, "mac-oui"
+            return target, "service-fingerprint"
     return "", ""
 
-
 def infer_model(d, text, ent, role):
+    hw = hardware_text(d)
+    if "srw01.eth" in hw:
+        return "SRW01-ETH", "snmp-fingerprint"
+    if "pac3220" in hw:
+        return "PAC3220", "snmp-fingerprint"
+    if "ytek snmp agent" in hw or "enterprises.36582" in hw:
+        return "Monitory", "snmp-fingerprint"
+    if role == "POWER_MANAGEMENT":
+        apc_model = first_match([r"\bMN:\s*([A-Za-z0-9-]+)"], clean(d.get("snmp_description")))
+        if apc_model:
+            return apc_model[:120], "snmp-description"
     if ent.get("model"):
         return clean(ent["model"])[:120], "entity-mib"
     patterns = [
         r"(PowerEdge\s+[A-Za-z0-9-]+)",
         r"(FortiGate[-_ ]?[A-Za-z0-9-]+)", r"(FGT[_-][A-Za-z0-9_-]+)",
+        r"(SCALANCE\s+XM[0-9A-Za-z-]+)",
+        r"(CPU\s*[0-9A-Za-z-]+(?:\s+[0-9A-Za-z-]+)*\s+PN)",
         r"(DS-(?:2CD|2DE|2DF|76|77|96)[A-Za-z0-9-]+)",
         r"(iDS-[A-Za-z0-9-]+)",
         r"(DHI-(?:IPC|NVR|XVR|DVR)[A-Za-z0-9-]+)",
@@ -300,12 +411,11 @@ def infer_model(d, text, ent, role):
         r"(JL\d{3}[A-Z])", r"(1930\s+[A-Za-z0-9 +/.-]+Switch)",
         r"(TS-431K|TS-X41)", r"(EDS-40[58]A-[A-Za-z0-9-]+)",
         r"(CP\s*1543-1|CP\s*443-1)", r"(CPU\s*412-2\s*PN/DP)",
-        r"(IM153-4PN)", r"(PAC4200)",
+        r"(IM153-4PN)", r"(PAC(?:3220|4200))",
     ]
-    raw = " ".join([clean(d.get("snmp_description")), text])
+    raw = " ".join([clean(d.get("snmp_description")), hw, text])
     m = first_match(patterns, raw)
     return (m[:120], "fingerprint") if m else ("", "")
-
 
 def platform_for(role, text, d):
     if role == "FIREWALL": return "FortiOS"
@@ -323,7 +433,7 @@ def platform_for(role, text, d):
 def classify_role(d, text):
     tcp = ports(d, "tcp")
     udp = ports(d, "udp")
-    evidence = []
+    hw = hardware_text(d)
 
     def hit(role, score, reason):
         return role, score, [reason]
@@ -338,26 +448,32 @@ def classify_role(d, text):
         return hit("HYPERVISOR", 98, "VMware ESXi fingerprint/services")
     if 902 in tcp and ("organizationname=vmware" in text or "vmware installer" in text):
         return hit("VMWARE_APPLIANCE", 82, "VMware service/TLS fingerprint without ESXi proof")
-
-    # Dell BMC/iDRAC can answer RMCP even when the HTTPS interface is unavailable.
-    if 623 in udp and ("dell" in text or normalize_manufacturer(d.get("mac_vendor")) == "Dell"):
+    if 623 in udp and ("dell" in hw or normalize_manufacturer(d.get("mac_vendor")) == "Dell"):
         return hit("OOB_MANAGEMENT", 78, "Dell management controller via RMCP/623")
 
-    # OT/network-specific signatures first.
-    if any(t in text for t in ("moxa eds-", "eds-405", "eds-408", "westermo lynx")):
+    # OT/network-specific signatures before generic protocols/web UI.
+    if "scalance xm416-4c" in hw or "6gk5 416-4gs00-2am2" in hw:
+        return hit("INDUSTRIAL_SWITCH", 99, "Siemens SCALANCE XM416-4C fingerprint")
+    if "srw01.eth" in hw:
+        return hit("INDUSTRIAL_DEVICE", 98, "WEG SRW01 Ethernet motor-management fingerprint")
+    if any(t in hw for t in ("moxa eds-", "eds-405", "eds-408", "westermo lynx")):
         return hit("INDUSTRIAL_SWITCH", 98, "Industrial Ethernet switch fingerprint")
     if any(t in text for t in ("simatic s7 cpu", "cpu 412-2", "s7-info")):
         return hit("INDUSTRIAL_PLC", 99, "SIMATIC S7 CPU fingerprint")
     if any(t in text for t in ("hw-type: io-device", "im153-4pn", "io-device")):
         return hit("INDUSTRIAL_IO", 96, "Industrial I/O fingerprint")
-    if "pac4200" in text:
-        return hit("INDUSTRIAL_POWER_METER", 98, "Siemens PAC4200 fingerprint")
+    if "pac3220" in hw or "pac4200" in hw:
+        return hit("INDUSTRIAL_POWER_METER", 98, "Siemens PAC power-meter fingerprint")
     if any(t in text for t in ("cp1543-1", "cp 443-1", "simatic net")):
         return hit("INDUSTRIAL_COMMUNICATION", 96, "SIMATIC NET communication processor")
+    if "ytek snmp agent" in hw or "enterprises.36582" in hw:
+        return hit("POWER_MANAGEMENT", 96, "YTEK Monitory SNMP fingerprint")
 
-    # CCTV / IP video. Exact recorder/camera signatures win before generic
-    # vendor+port evidence. This avoids calling every RTSP endpoint a camera.
-    cctv_vendor = any(t in text for t in (
+    # CCTV / IP video. Exact roles require explicit model/type evidence. The
+    # observed Hikvision management UI + RTSP + server port is enough to know
+    # it is a surveillance endpoint, but not whether it is a camera or NVR.
+    hik_ui = hikvision_ui_signature(d, text)
+    cctv_vendor = hik_ui or any(t in text for t in (
         "hikvision", "hangzhou hikvision", "dahua", "zhejiang dahua",
         "axis communications", "vivotek", "hanwha vision", "hanwha techwin",
         "bosch security", "pelco", "uniview", "zhejiang uniview",
@@ -384,9 +500,10 @@ def classify_role(d, text):
     ))
     if camera_signal:
         return hit("CAMERA", 97 if cctv_vendor else 92, "IP camera/ONVIF fingerprint")
-
+    if hik_ui:
+        return hit("VIDEO_SURVEILLANCE_DEVICE", 93, "Hikvision-style management UI with RTSP/8000; exact video role unresolved")
     if cctv_vendor and cctv_ports:
-        return hit("VIDEO_SURVEILLANCE_DEVICE", 78, "CCTV vendor with RTSP/SDK/WS-Discovery evidence; exact role unresolved")
+        return hit("VIDEO_SURVEILLANCE_DEVICE", 86, "CCTV vendor with RTSP/SDK/WS-Discovery evidence; exact role unresolved")
 
     # Wireless vs switch distinction for Ubiquiti.
     if any(t in text for t in ("edgeswitch", "unifi switch", "usw-")):
@@ -403,23 +520,22 @@ def classify_role(d, text):
             return hit("WIRELESS_AP", 88, "Ubiquiti Wi-Fi identity")
         return hit("WIRELESS_DEVICE", 72, "Ubiquiti wireless device; exact function unresolved")
 
-    if any(t in text for t in (
+    if aruba_ui_signature(d, text) or any(t in text for t in (
         "hpe networking instant on switch", "aruba instant on", "officeconnect switch",
         "1920-48g switch", "v1910-", "3com switch", "comware switch", "device: switch",
     )):
-        return hit("NETWORK_SWITCH", 98, "Managed switch fingerprint")
+        return hit("NETWORK_SWITCH", 98 if not aruba_ui_signature(d, text) else 95, "Managed switch fingerprint")
 
     if any(t in text for t in ("qnap", "turbo nas", "ts-x41", "ts-431", "nas-ba")):
         return hit("STORAGE", 98, "NAS/storage fingerprint")
     if "seagate" in text and "nas" in text:
         return hit("STORAGE", 96, "Seagate NAS fingerprint")
 
-    if any(t in text for t in ("network management card", "apc web/snmp", "apc", "smart-ups")) and not "apache" in text:
+    if any(t in hw for t in ("network management card", "apc web/snmp", "smart-ups")):
         return hit("POWER_MANAGEMENT", 94, "UPS/power-management fingerprint")
 
     if any(t in text for t in ("brother", "pantum", "samsung sl-", "samsung printer", "laserjet", "jetdirect", "printer")):
         return hit("PRINTER", 94, "Printer fingerprint")
-
     if any(t in text for t in ("home | netbox", "ubuntu-netbox", "netbox")):
         return hit("MANAGEMENT_APPLIANCE", 96, "NetBox fingerprint")
     if any(t in text for t in ("wazuh", "srv-syslog")):
@@ -427,7 +543,6 @@ def classify_role(d, text):
     if any(t in text for t in ("agente http - sms", "microchip libraries")):
         return hit("SMS_GATEWAY", 92, "SMS gateway fingerprint")
 
-    # AD/DC before generic Windows.
     if ((88 in tcp or 88 in udp) and 389 in tcp and (445 in tcp or 636 in tcp)) or "active directory ldap" in text:
         return hit("DOMAIN_CONTROLLER", 97, "Kerberos/LDAP/AD services")
 
@@ -448,17 +563,12 @@ def classify_role(d, text):
     if linux_score >= 50:
         return hit("LINUX_HOST", min(92, linux_score), "Linux/SSH fingerprint")
 
-    # Generic OT protocol only after strong host fingerprints have had a chance to classify.
     if 102 in tcp or 502 in tcp or 44818 in tcp or 2404 in tcp or 20000 in tcp:
         return hit("INDUSTRIAL_DEVICE", 62, "Industrial protocol detected; exact function unresolved")
-
     if (9100 in tcp or 515 in tcp) and not ({135, 445} & tcp):
         return hit("PRINTER", 78, "Printing service ports")
-
-    # Camera only with actual camera/vendor signal. RTSP alone is insufficient.
     if any(t in text for t in ("hikvision", "dahua", "axis communications", "network camera", "ip camera")):
         return hit("CAMERA", 92, "Camera fingerprint")
-
     web = bool({80, 443, 8080, 8081, 8443, 9443, 10443} & tcp)
     if web:
         return hit("WEB_APPLIANCE", 52, "Web management/service detected without stronger identity")
@@ -467,7 +577,6 @@ def classify_role(d, text):
     if tcp or udp:
         return hit("UNKNOWN", 25, "Services detected but role unresolved")
     return hit("UNKNOWN", 5, "Host active with insufficient identity evidence")
-
 
 def confidence(score):
     if score >= 85: return "HIGH"
@@ -498,7 +607,7 @@ def classify_device(d):
     text = all_text(d)
     ent = entity_identity(d)
     role, score, evidence = classify_role(d, text)
-    manufacturer, manufacturer_source = infer_manufacturer(d, text, ent)
+    manufacturer, manufacturer_source = infer_manufacturer(d, text, ent, role)
     model, model_source = infer_model(d, text, ent, role)
     platform = platform_for(role, text, d)
     names = hostname_candidates(d)
@@ -508,8 +617,10 @@ def classify_device(d):
     serial_source = "entity-mib" if serial else ""
     oob_serial = idrac_serial(d)
     if role == "OOB_MANAGEMENT" and oob_serial and not serial:
-        serial = oob_serial.upper()
-        serial_source = "idrac-tls-name"
+        serial = oob_serial
+        serial_source = "idrac-identity"
+    if not serial:
+        serial, serial_source = explicit_serial(d, role)
     if manufacturer_source: evidence.append("manufacturer:{0}".format(manufacturer_source))
     if model_source: evidence.append("model:{0}".format(model_source))
     if serial_source: evidence.append("serial:{0}".format(serial_source))

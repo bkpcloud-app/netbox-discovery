@@ -1,3 +1,31 @@
+## V1.7.0 — Estabilização de classificação e inventário
+
+Release consolidada após a homologação do FFT, sem alteração da política de escrita: somente itens `READY` podem ser aplicados.
+
+### Classificação e identidade
+
+- reconhece WEG SRW01-ETH com evidência industrial forte;
+- reconhece Siemens PAC3220 e SCALANCE XM416-4C;
+- reconhece YTEK Monitory e interface web Aruba/HPE;
+- reconhece o footprint CFTV observado (RTSP 554 + server port 8000 + UI Hikvision) como `VIDEO_SURVEILLANCE_DEVICE` HIGH sem inventar CAMERA/NVR/DVR;
+- prioriza identidade física (ENTITY-MIB, SNMP e OUI) sobre banners de aplicação/TLS para fabricante;
+- ignora nomes genéricos como `sysName Not Set`;
+- aproveita modelo/serial explícitos de APC e Siemens S7;
+- aproveita service tag válido do iDRAC quando o certificado contém apenas `SVCTAG`.
+
+### Discovery e operação
+
+- adiciona probe CFTV direcionado antes do Deep TCP 1000;
+- mantém o Deep TCP 1000 como fallback;
+- padroniza o timestamp do DISCOVER em UTC;
+- PLAN passa a destacar ações realmente elegíveis para escrita (`READY`).
+
+### Segurança
+
+- preserva as proteções da V1.6.0 para MAC inválido, serial genérico, rede/broadcast e identidade LLDP;
+- IP já atribuído a objeto externo do NetBox continua em `REVIEW`;
+- nenhuma rotina de descoberta autentica em câmeras ou tenta credenciais padrão.
+
 ## V1.6.0 — Reconciliação segura e descoberta CFTV
 
 Release de produto com correções de identidade observadas na homologação FFT e

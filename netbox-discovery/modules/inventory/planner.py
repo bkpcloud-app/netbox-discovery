@@ -16,7 +16,7 @@ from collections import Counter, defaultdict
 
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
-PLANNER_VERSION = "3.3-product"
+PLANNER_VERSION = "3.4-product"
 
 # Classifier roles are product-internal. PLAN translates them into NetBox roles.
 ROLE_TARGETS = {
@@ -96,16 +96,18 @@ def latest(pattern):
 
 def canonical_name(asset):
     h = clean(asset.get("hostname")).strip(".")
-    if h:
+    generic = {
+        "", "localhost", "localhost.localdomain", "unknown", "sem nome", "nil", "none",
+        "sysname not set", "sysname_not_set", "sysname-not-set", "not configured",
+    }
+    if h and norm(h) not in generic:
         try:
             ipaddress.ip_address(h)
         except Exception:
-            # NetBox device names should be stable; use the host label from an FQDN.
             return h.split(".")[0][:64]
     role = clean(asset.get("role")) or "DEVICE"
     ip = norm_ip(asset.get("primary_ip")) or (asset.get("ips") or ["0.0.0.0"])[0]
     return (role + "-" + ip.replace(".", "-").replace(":", "-"))[:64]
-
 
 def prefix_length(netmask):
     try:
@@ -649,6 +651,7 @@ def main(argv=None):
 
     summary = Counter(x["decision"] for x in plan)
     actions = Counter(x["action"] for x in plan)
+    ready_actions = Counter(x["action"] for x in plan if x.get("decision") == "READY")
     ip_actions = Counter(i["action"] for x in plan for i in x.get("ip_intents") or [])
     stamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     if not os.path.isdir(args.output_dir):
@@ -665,7 +668,8 @@ def main(argv=None):
             "devices_at_site": len(state["devices"]), "tenant_ip_addresses": len(state["ips"]),
         },
         "total_assets": len(plan), "decision_summary": dict(summary),
-        "action_summary": dict(actions), "ip_action_summary": dict(ip_actions),
+        "action_summary": dict(actions), "ready_action_summary": dict(ready_actions),
+        "ip_action_summary": dict(ip_actions),
         "prerequisites": prereq, "records": plan, "netbox_write": False,
         "policy": {
             "automatic_write_eligibility": "READY only",
@@ -701,9 +705,14 @@ def main(argv=None):
     print("READY: {0}".format(summary.get("READY", 0)))
     print("REVIEW: {0}".format(summary.get("REVIEW", 0)))
     print("BLOCKED: {0}".format(summary.get("BLOCKED", 0)))
-    print("CREATE: {0}".format(actions.get("CREATE", 0)))
-    print("UPDATE_SAFE: {0}".format(actions.get("UPDATE_SAFE", 0)))
-    print("NOOP: {0}".format(actions.get("NOOP", 0)))
+    print("Ações totais (incluem REVIEW/BLOCKED):")
+    print("  CREATE: {0}".format(actions.get("CREATE", 0)))
+    print("  UPDATE_SAFE: {0}".format(actions.get("UPDATE_SAFE", 0)))
+    print("  NOOP: {0}".format(actions.get("NOOP", 0)))
+    print("ELEGÍVEIS PARA ESCRITA (READY): {0}".format(summary.get("READY", 0)))
+    print("  READY/CREATE: {0}".format(ready_actions.get("CREATE", 0)))
+    print("  READY/UPDATE_SAFE: {0}".format(ready_actions.get("UPDATE_SAFE", 0)))
+    print("  READY/NOOP: {0}".format(ready_actions.get("NOOP", 0)))
     print("JSON: {0}".format(jpath))
     print("CSV:  {0}".format(cpath))
     print("NetBox write: NÃO")
