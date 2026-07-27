@@ -1,3 +1,67 @@
+## V1.10.8 — VM acompanha Tenant/Site do Host/Cluster
+
+Hotfix criado a partir da evidência do APPLY multi-contexto real em 27/07/2026, depois que a 1.10.7 concluiu DCM/FAB/FBA/FBE/FFT/FIB/FMN/FMO/FPA/FSO/FVI e chegou ao contexto `PXMETAIS/MAC`.
+
+### Evidência do erro
+
+O Host `10.36.1.21` já havia sido reclassificado de `MIZU/DCM` para `PXMETAIS/MAC`. Na primeira VM, o NetBox recusou:
+
+```text
+HTTP 400 /api/virtualization/virtual-machines/467/
+{"site":["The selected device (10.36.1.21) is not assigned to this site (DCM)."]}
+```
+
+### Causa raiz
+
+A rotina histórica de `RECLASSIFY_SAFE` de VM fazia PATCH apenas de `tenant` quando a VM estava vinculada a Host/Device ou Cluster.
+
+Isso deixava um estado transitório inválido:
+
+```text
+Device: Site MAC
+VM:     Site DCM
+```
+
+Ao receber um PATCH de Tenant, o NetBox revalidava a relação VM ↔ Device e bloqueava.
+
+### Correção genérica
+
+A 1.10.8 trata VMs vinculadas como dependentes do contexto autoritativo do Parent:
+
+```text
+Host/Cluster já migrado
+→ revalidar identidade forte da VM
+→ reler Device/Cluster atual
+→ VM PARENT PREFLIGHT
+→ confirmar Parent no Site alvo
+→ PATCH VM tenant + site no mesmo request
+→ ajustar Tenant dos IPs vinculados
+```
+
+Proteções:
+
+- VM ligada a Device exige Device no Site alvo;
+- VM ligada a Cluster bloqueia se o Cluster ainda estiver scoped em outro Site;
+- identidade forte é revalidada novamente depois da migração do Parent;
+- `existing_id` é preservado;
+- Tenant dos IPs vinculados acompanha a VM;
+- nenhuma rotina executa DELETE automático.
+
+A implementação é genérica e não contém hardcode de PXMETAIS, MAC, MIZU, DCM ou IP específico.
+
+### Regressões
+
+- reproduz VM `site=DCM` ligada a Device já movido para `MAC`;
+- exige PATCH atômico `tenant + site`;
+- confirma ajuste do Tenant do IP vinculado;
+- bloqueia VM se o Device ainda estiver no Site antigo.
+
+### Estado de homologação
+
+Na publicação inicial da 1.10.8: `CI PASS / NOT LIVE` até novo compare/dry-run/APPLY no estado parcial de PXMETAIS/MAC.
+
+---
+
 ## V1.10.7 — Migração coordenada de Cluster/Site e compare read-only
 
 Hotfix criado a partir da evidência do primeiro APPLY multi-contexto real em 27/07/2026.
