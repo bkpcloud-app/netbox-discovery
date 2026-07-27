@@ -3,11 +3,13 @@
 from __future__ import print_function
 
 import ipaddress
+import json
 
 from modules.hypervisor import engine as base
 
 ENGINE_VERSION = "2.0-product"
 _ACTIVE_NETWORKS = []
+NetBox = base.NetBox
 
 
 def _authoritative_ip(iprow, ip):
@@ -25,8 +27,8 @@ def desired_ip_specs(item):
 
     Discovery keeps every guest IP for audit. The plan intentionally ignores
     secondary IPs outside the Site networks because container/bridge addresses
-    (for example Docker 172.18.0.1) are commonly repeated across unrelated VMs.
-    A primary IP is always eligible, even when it is outside the Site networks.
+    are commonly repeated across unrelated VMs. A primary IP is always
+    eligible, even when it is outside the Site networks.
     """
     rows = []
     for interface in item.get("interfaces") or []:
@@ -57,9 +59,12 @@ def build_plan(discovery, nb=None):
     _ACTIVE_NETWORKS = [ipaddress.ip_network(x, strict=False) for x in discovery.get("networks") or []]
     base.desired_ip_specs = desired_ip_specs
     try:
-        plan, path = base.build_plan(discovery, nb)
+        active_nb = nb or NetBox()
+        plan, path = base.build_plan(discovery, active_nb)
         plan["engine_version"] = ENGINE_VERSION
         plan["ip_policy"] = "primary_or_site_network"
+        with open(path, "w") as handle:
+            json.dump(plan, handle, indent=2, sort_keys=True)
         return plan, path
     finally:
         base.desired_ip_specs = previous_specs
