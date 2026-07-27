@@ -8,6 +8,7 @@ sys.path.insert(0, BASE)
 
 from modules.hypervisor import resolver
 from modules.hypervisor import config as hv_config
+from modules.hypervisor import configurator as hv_configurator
 
 
 def host(name, ip, prefix=24, cluster="", datacenter="", extra_management=None):
@@ -69,6 +70,18 @@ def test_live_shape_four_hosts_eleven_management_networks_collapse_to_one_datace
     assert len(group["networks"]) == 11
     assert "10.1.1.0/24" in group["networks"]
     assert "10.1.11.0/24" in group["networks"]
+
+
+def test_network_subgroups_preserve_per_network_hosts():
+    raw = {"hosts": [
+        host("ESX01", "10.1.1.21", cluster="Cluster", datacenter="DCM", extra_management=[("10.1.2.21", 24)]),
+        host("ESX02", "10.1.1.22", cluster="Cluster", datacenter="DCM"),
+    ]}
+    group = resolver.management_placement_groups(raw)[0]
+    rows = hv_configurator._network_subgroups(group)
+    by_network = dict((x["label"], x) for x in rows)
+    assert by_network["10.1.1.0/24"]["hosts"] == ["ESX01", "ESX02"]
+    assert by_network["10.1.2.0/24"]["hosts"] == ["ESX01"]
 
 
 def test_management_placement_groups_keep_datacenters_separate():
@@ -177,6 +190,7 @@ def main():
         test_management_network_grouping,
         test_management_placement_groups_collapse_same_datacenter,
         test_live_shape_four_hosts_eleven_management_networks_collapse_to_one_datacenter,
+        test_network_subgroups_preserve_per_network_hosts,
         test_management_placement_groups_keep_datacenters_separate,
         test_management_placement_group_does_not_merge_ambiguous_network,
         test_vm_inherits_host_context,
