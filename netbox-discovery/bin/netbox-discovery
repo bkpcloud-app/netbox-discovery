@@ -349,7 +349,7 @@ EOF
   plan) exec "$PYTHON" "$BASE/modules/inventory/planner_v2.py" "$@" ;;
   inventory|prepare) exec "$PYTHON" "$BASE/modules/inventory/pipeline.py" "$@" ;;
   import) exec "$PYTHON" "$BASE/modules/importers/importer_v2.py" "$@" ;;
-  audit) exec "$PYTHON" "$BASE/modules/auditors/inventory.py" "$@" ;;
+  audit) exec "$PYTHON" "$BASE/modules/auditors/auditor_v2.py" "$@" ;;
   run) exec "$PYTHON" "$BASE/modules/product/runner.py" "$@" ;;
   scheduled-run) exec "$PYTHON" "$BASE/modules/product/runner.py" --scheduled ;;
   status) exec "$PYTHON" "$BASE/modules/product/status.py" ;;
