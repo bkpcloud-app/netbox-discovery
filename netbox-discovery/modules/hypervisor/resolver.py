@@ -3,6 +3,7 @@
 from __future__ import print_function
 
 import ipaddress
+import socket
 
 from modules.hypervisor.config import clean
 
@@ -26,30 +27,133 @@ def valid_ip(value):
         return ""
 
 
+def _interface_ip_networks(interface):
+    rows = []
+    for iprow in interface.get("ips") or []:
+        ip = valid_ip(iprow.get("address"))
+        prefix = iprow.get("prefix_length")
+        if not ip or prefix is None:
+            continue
+        try:
+            network = ipaddress.ip_network("{0}/{1}".format(ip, int(prefix)), strict=False)
+        except Exception:
+            continue
+        rows.append((ip, str(network)))
+    return rows
+
+
 def interface_networks(record, management_only=False):
     rows = []
     for interface in record.get("interfaces") or []:
         if management_only and not bool(interface.get("management")):
             continue
-        for iprow in interface.get("ips") or []:
-            ip = valid_ip(iprow.get("address"))
-            prefix = iprow.get("prefix_length")
-            if not ip or prefix is None:
-                continue
-            try:
-                network = ipaddress.ip_network("{0}/{1}".format(ip, int(prefix)), strict=False)
-            except Exception:
-                continue
-            text = str(network)
-            if text not in rows:
-                rows.append(text)
+        for _ip, network in _interface_ip_networks(interface):
+            if network not in rows:
+                rows.append(network)
+    return rows
+
+
+def _looks_like_vmware_host(record):
+    if clean(record.get("provider")).lower() == "vmware":
+        return True
+    return any(clean(x.get("name")).lower().startswith("vmk") for x in (record.get("interfaces") or []))
+
+
+def _resolved_name_ips(record):
+    name = clean(record.get("name"))
+    if not name:
+        return []
+    direct = valid_ip(name)
+    if direct:
+        return [direct]
+    rows = []
+    try:
+        for item in socket.getaddrinfo(name, None):
+            sockaddr = item[4] if len(item) > 4 else None
+            address = sockaddr[0] if sockaddr else ""
+            ip = valid_ip(address)
+            if ip and ip not in rows:
+                rows.append(ip)
+    except Exception:
+        pass
+    return rows
+
+
+def authoritative_management_interfaces(record):
+    """Return only interfaces safe to use for Tenant/Site placement.
+
+    VMware can mark several vmkernel NICs with the management service. Those
+    interfaces remain useful inventory evidence, but they must not all become
+    Site mappings. For VMware hosts, choose an authoritative management path
+    conservatively:
+
+    1. vmkernel IP matching the ESXi hostname/FQDN resolution;
+    2. management vmk0;
+    3. the only remaining management network;
+    4. otherwise unresolved (empty list).
+
+    Non-VMware providers preserve the previous behavior: explicitly marked
+    management interfaces first, otherwise any interface carrying an IP.
+    """
+    interfaces = list(record.get("interfaces") or [])
+    with_ip = [x for x in interfaces if _interface_ip_networks(x)]
+    marked = [x for x in with_ip if bool(x.get("management"))]
+
+    if not _looks_like_vmware_host(record):
+        return marked or with_ip
+
+    candidates = marked
+    if not candidates:
+        vmk0 = [x for x in with_ip if clean(x.get("name")).lower() == "vmk0"]
+        return vmk0 if len(vmk0) == 1 else []
+
+    resolved = set(_resolved_name_ips(record))
+    if resolved:
+        matched = []
+        for interface in candidates:
+            if any(ip in resolved for ip, _network in _interface_ip_networks(interface)):
+                matched.append(interface)
+        matched_networks = set(
+            network for interface in matched for _ip, network in _interface_ip_networks(interface)
+        )
+        if matched and len(matched_networks) == 1:
+            return matched
+
+    vmk0 = [x for x in candidates if clean(x.get("name")).lower() == "vmk0"]
+    if len(vmk0) == 1:
+        return vmk0
+
+    candidate_networks = set(
+        network for interface in candidates for _ip, network in _interface_ip_networks(interface)
+    )
+    if len(candidate_networks) == 1:
+        return candidates
+
+    return []
+
+
+def authoritative_management_networks(record):
+    rows = []
+    for interface in authoritative_management_interfaces(record):
+        for _ip, network in _interface_ip_networks(interface):
+            if network not in rows:
+                rows.append(network)
+    return rows
+
+
+def authoritative_management_ips(record):
+    rows = []
+    for interface in authoritative_management_interfaces(record):
+        for ip, _network in _interface_ip_networks(interface):
+            if ip not in rows:
+                rows.append(ip)
     return rows
 
 
 def management_network_groups(raw):
     groups = {}
     for host in raw.get("hosts") or []:
-        nets = interface_networks(host, management_only=True) or interface_networks(host, management_only=False)
+        nets = authoritative_management_networks(host)
         for network in nets:
             row = groups.setdefault(network, {"network": network, "hosts": [], "datacenters": [], "clusters": []})
             name = clean(host.get("name"))
@@ -74,17 +178,12 @@ def _network_detail(row):
 
 
 def management_placement_groups(raw):
-    """Collapse management networks that clearly belong to one VMware Datacenter.
+    """Group authoritative management networks by unambiguous Datacenter.
 
-    ESXi can expose several vmkernel NICs with the VMware 'management' service
-    enabled. Asking Tenant/Site once per vmkernel network is noisy and can lead
-    to accidental inconsistent mappings. When a management network is observed
-    only inside one Datacenter, group those networks by Datacenter and ask once.
-    Ambiguous networks (no Datacenter or shared by multiple Datacenters) remain
-    individual groups and therefore still require explicit mapping.
-
-    Per-network evidence is retained so that opening a Datacenter group for
-    detailed review shows only the Hosts/Clusters actually observed on each CIDR.
+    Only the authoritative management network selected for each host participates
+    in Tenant/Site placement. Auxiliary vmkernel networks remain in discovery but
+    are not promoted to Site mappings merely because VMware has the management
+    service enabled on them.
     """
     network_groups = management_network_groups(raw)
     by_dc = {}
@@ -199,7 +298,7 @@ def resolve_host(host, source, default_tenant, default_site, default_group=""):
     if mode == "single_site":
         return {"tenant_group": clean(default_group), "tenant": clean(default_tenant), "site": clean(default_site), "network": ""}
     mappings = source.get("mappings") or []
-    for ip in record_ips(host, management_first=True):
+    for ip in authoritative_management_ips(host):
         ctx = resolve_ip(ip, mappings, default_tenant if mode == "multi_site" else "", default_group)
         if ctx:
             return ctx
