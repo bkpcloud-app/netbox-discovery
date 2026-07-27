@@ -145,8 +145,19 @@ def _prompt_target(mode, group, old, defaults):
     return tenant_group, tenant, site
 
 
+def _detail_for_network(group, network):
+    details = group.get("network_details") or {}
+    detail = details.get(network) or {}
+    return {
+        "hosts": list(detail.get("hosts") or group.get("hosts") or []),
+        "datacenters": list(detail.get("datacenters") or group.get("datacenters") or []),
+        "clusters": list(detail.get("clusters") or group.get("clusters") or []),
+    }
+
+
 def _append_group_mappings(mappings, group, tenant_group, tenant, site):
     for network in group.get("networks") or []:
+        detail = _detail_for_network(group, network)
         mappings.append({
             "network": network,
             "tenant_group": tenant_group,
@@ -155,9 +166,9 @@ def _append_group_mappings(mappings, group, tenant_group, tenant, site):
             "evidence": {
                 "placement_kind": group.get("kind"),
                 "placement_label": group.get("label"),
-                "hosts": list(group.get("hosts") or []),
-                "datacenters": list(group.get("datacenters") or []),
-                "clusters": list(group.get("clusters") or []),
+                "hosts": detail["hosts"],
+                "datacenters": detail["datacenters"],
+                "clusters": detail["clusters"],
             },
         })
 
@@ -165,13 +176,20 @@ def _append_group_mappings(mappings, group, tenant_group, tenant, site):
 def _network_subgroups(group):
     rows = []
     for network in group.get("networks") or []:
+        detail = _detail_for_network(group, network)
         rows.append({
             "kind": "network",
             "label": network,
             "networks": [network],
-            "hosts": list(group.get("hosts") or []),
-            "datacenters": list(group.get("datacenters") or []),
-            "clusters": list(group.get("clusters") or []),
+            "hosts": detail["hosts"],
+            "datacenters": detail["datacenters"],
+            "clusters": detail["clusters"],
+            "network_details": {network: {
+                "network": network,
+                "hosts": detail["hosts"],
+                "datacenters": detail["datacenters"],
+                "clusters": detail["clusters"],
+            }},
         })
     return rows
 
