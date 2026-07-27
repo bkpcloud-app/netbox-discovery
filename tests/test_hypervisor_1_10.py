@@ -11,7 +11,7 @@ from modules.hypervisor import config as hv_config
 from modules.hypervisor import configurator as hv_configurator
 
 
-def host(name, ip, prefix=24, cluster="", datacenter="", extra_management=None):
+def host(name, ip, prefix=24, cluster="", datacenter="", extra_management=None, provider="vmware"):
     interfaces = [{
         "name": "vmk0", "management": True, "mac": "",
         "ips": [{"address": ip, "prefix_length": prefix, "primary": True}],
@@ -23,6 +23,7 @@ def host(name, ip, prefix=24, cluster="", datacenter="", extra_management=None):
             "ips": [{"address": address, "prefix_length": item_prefix, "primary": True}],
         })
     return {
+        "provider": provider,
         "name": name,
         "cluster": cluster,
         "datacenter": datacenter,
@@ -41,10 +42,51 @@ def test_management_network_grouping():
     assert [x["network"] for x in groups] == ["10.1.1.0/24", "10.2.1.0/24"]
 
 
+def test_authoritative_management_prefers_vmk0_over_auxiliary_service_networks():
+    h = host(
+        "ESX-DCM",
+        "10.1.1.21",
+        datacenter="DCM",
+        extra_management=[("192.168.140.21", 24), ("192.168.160.21", 24), ("192.168.180.21", 24)],
+    )
+    assert resolver.authoritative_management_networks(h) == ["10.1.1.0/24"]
+    groups = resolver.management_network_groups({"hosts": [h]})
+    assert [x["network"] for x in groups] == ["10.1.1.0/24"]
+
+
+def test_authoritative_management_dns_match_can_select_non_vmk0():
+    h = {
+        "provider": "vmware",
+        "name": "esx-dns.example.local",
+        "interfaces": [
+            {"name": "vmk0", "management": True, "ips": [{"address": "192.168.200.21", "prefix_length": 24}]},
+            {"name": "vmk2", "management": True, "ips": [{"address": "10.20.1.21", "prefix_length": 24}]},
+        ],
+    }
+    old = resolver.socket.getaddrinfo
+    try:
+        resolver.socket.getaddrinfo = lambda name, port: [(2, 1, 6, "", ("10.20.1.21", 0))]
+        assert resolver.authoritative_management_networks(h) == ["10.20.1.0/24"]
+    finally:
+        resolver.socket.getaddrinfo = old
+
+
+def test_authoritative_management_ambiguous_without_dns_or_vmk0_is_unresolved():
+    h = {
+        "provider": "vmware",
+        "name": "",
+        "interfaces": [
+            {"name": "vmk1", "management": True, "ips": [{"address": "10.10.1.21", "prefix_length": 24}]},
+            {"name": "vmk2", "management": True, "ips": [{"address": "10.20.1.21", "prefix_length": 24}]},
+        ],
+    }
+    assert resolver.authoritative_management_networks(h) == []
+
+
 def test_management_placement_groups_collapse_same_datacenter():
     raw = {"hosts": [
-        host("ESX01", "10.1.1.21", cluster="Cluster", datacenter="DCM", extra_management=[("10.1.2.21", 24), ("10.1.3.21", 24)]),
-        host("ESX02", "10.1.1.22", cluster="Cluster", datacenter="DCM", extra_management=[("10.1.2.22", 24), ("10.1.3.22", 24)]),
+        host("ESX01", "10.1.1.21", cluster="Cluster", datacenter="DCM", extra_management=[("192.168.140.21", 24)]),
+        host("ESX02", "10.1.1.22", cluster="Cluster", datacenter="DCM", extra_management=[("192.168.140.22", 24)]),
     ]}
     groups = resolver.management_placement_groups(raw)
     assert len(groups) == 1
@@ -52,14 +94,15 @@ def test_management_placement_groups_collapse_same_datacenter():
     assert group["kind"] == "datacenter"
     assert group["label"] == "DCM"
     assert group["hosts"] == ["ESX01", "ESX02"]
-    assert group["networks"] == ["10.1.1.0/24", "10.1.2.0/24", "10.1.3.0/24"]
+    assert group["networks"] == ["10.1.1.0/24"]
 
 
-def test_live_shape_four_hosts_eleven_management_networks_collapse_to_one_datacenter():
+def test_live_shape_four_hosts_eleven_management_service_networks_use_one_authoritative_network():
     names = ["vm-ae01.mizu.local", "vm-ae02.mizu.local", "vm-ae03.mizu.local", "vm-ae04.mizu.local"]
     rows = []
+    auxiliary_networks = [140, 141, 142, 143, 160, 161, 180, 181, 190, 191]
     for idx, name in enumerate(names, 21):
-        extras = [("10.1.{0}.{1}".format(net, idx), 24) for net in range(2, 12)]
+        extras = [("192.168.{0}.{1}".format(net, idx), 24) for net in auxiliary_networks]
         rows.append(host(name, "10.1.1.{0}".format(idx), cluster="Cluster", datacenter="DCM", extra_management=extras))
     groups = resolver.management_placement_groups({"hosts": rows})
     assert len(groups) == 1
@@ -67,21 +110,19 @@ def test_live_shape_four_hosts_eleven_management_networks_collapse_to_one_datace
     assert group["kind"] == "datacenter"
     assert group["label"] == "DCM"
     assert len(group["hosts"]) == 4
-    assert len(group["networks"]) == 11
-    assert "10.1.1.0/24" in group["networks"]
-    assert "10.1.11.0/24" in group["networks"]
+    assert group["networks"] == ["10.1.1.0/24"]
 
 
 def test_network_subgroups_preserve_per_network_hosts():
     raw = {"hosts": [
-        host("ESX01", "10.1.1.21", cluster="Cluster", datacenter="DCM", extra_management=[("10.1.2.21", 24)]),
-        host("ESX02", "10.1.1.22", cluster="Cluster", datacenter="DCM"),
+        host("ESX01", "10.1.1.21", cluster="Cluster", datacenter="DCM"),
+        host("ESX02", "10.2.1.22", cluster="Cluster", datacenter="DCM"),
     ]}
     group = resolver.management_placement_groups(raw)[0]
     rows = hv_configurator._network_subgroups(group)
     by_network = dict((x["label"], x) for x in rows)
-    assert by_network["10.1.1.0/24"]["hosts"] == ["ESX01", "ESX02"]
-    assert by_network["10.1.2.0/24"]["hosts"] == ["ESX01"]
+    assert by_network["10.1.1.0/24"]["hosts"] == ["ESX01"]
+    assert by_network["10.2.1.0/24"]["hosts"] == ["ESX02"]
 
 
 def test_management_placement_groups_keep_datacenters_separate():
@@ -188,8 +229,11 @@ def test_global_identity_guard_blocks_duplicate_create():
 def main():
     tests = [
         test_management_network_grouping,
+        test_authoritative_management_prefers_vmk0_over_auxiliary_service_networks,
+        test_authoritative_management_dns_match_can_select_non_vmk0,
+        test_authoritative_management_ambiguous_without_dns_or_vmk0_is_unresolved,
         test_management_placement_groups_collapse_same_datacenter,
-        test_live_shape_four_hosts_eleven_management_networks_collapse_to_one_datacenter,
+        test_live_shape_four_hosts_eleven_management_service_networks_use_one_authoritative_network,
         test_network_subgroups_preserve_per_network_hosts,
         test_management_placement_groups_keep_datacenters_separate,
         test_management_placement_group_does_not_merge_ambiguous_network,
