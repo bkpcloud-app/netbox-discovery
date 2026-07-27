@@ -20,6 +20,7 @@ from modules.product import updater
 from modules.product import configurator_v2
 from modules.hypervisor import deps_vmware
 from modules.hypervisor import configurator as hypervisor_configurator
+from modules.hypervisor import engine_v2
 
 
 def service(port):
@@ -113,23 +114,40 @@ def test_hypervisor_plan_issues_are_visible():
         {"decision":"REVIEW","object_type":"VM","desired_name":"VM-DUP","action":"CREATE","reason":"IP duplicado"},
         {"decision":"BLOCKED","object_type":"HOST","desired_name":"ESX01","action":"NOOP","reason":"conflito"},
     ]}
-    lines=runner.plan_issue_lines(plan)
-    text="\n".join(lines)
+    text="\n".join(runner.plan_issue_lines(plan))
     assert "VM-DUP" in text and "IP duplicado" in text
     assert "ESX01" in text and "conflito" in text
-    assert "OK" not in text
-    assert "PENDÊNCIAS TOTAIS: 2" in text
+    assert "OK" not in text and "PENDÊNCIAS TOTAIS: 2" in text
+
+
+def test_hypervisor_secondary_bridge_ip_is_not_authoritative():
+    import ipaddress
+    old = engine_v2._ACTIVE_NETWORKS
+    try:
+        engine_v2._ACTIVE_NETWORKS = [ipaddress.ip_network("10.1.1.0/24")]
+        item={"interfaces":[{"name":"eth0","mac":"00:11:22:33:44:55","network":"LAN","ips":[
+            {"address":"10.1.1.50","cidr":"10.1.1.50/24","primary":False},
+            {"address":"172.18.0.1","cidr":"172.18.0.1/16","primary":False},
+            {"address":"192.168.50.10","cidr":"192.168.50.10/24","primary":True},
+        ]}]}
+        specs=engine_v2.desired_ip_specs(item)
+        ips=set(x["ip"] for x in specs)
+        assert "10.1.1.50" in ips
+        assert "192.168.50.10" in ips
+        assert "172.18.0.1" not in ips
+    finally:
+        engine_v2._ACTIVE_NETWORKS = old
 
 
 def test_versions():
     root_version=open(os.path.join(ROOT,"VERSION"),"r").read().strip()
     package_version=open(os.path.join(BASE,"VERSION"),"r").read().strip()
-    assert root_version==package_version=="1.9.5"
-    assert updater.version_key("1.9.5")>updater.version_key("1.9.4")
+    assert root_version==package_version=="1.9.6"
+    assert updater.version_key("1.9.6")>updater.version_key("1.9.5")
 
 
 def main():
-    tests=[test_management_mac,test_secondary_mac_not_identity,test_topdata_rules,test_printer_vendor_normalization,test_plan_mac_match,test_import_refreshes_planner_v2,test_explicit_tenant_group_policy,test_vmware_dependency_set_is_minimal,test_hypervisor_collector_is_loaded_after_vendor,test_hypervisor_plan_issues_are_visible,test_versions]
+    tests=[test_management_mac,test_secondary_mac_not_identity,test_topdata_rules,test_printer_vendor_normalization,test_plan_mac_match,test_import_refreshes_planner_v2,test_explicit_tenant_group_policy,test_vmware_dependency_set_is_minimal,test_hypervisor_collector_is_loaded_after_vendor,test_hypervisor_plan_issues_are_visible,test_hypervisor_secondary_bridge_ip_is_not_authoritative,test_versions]
     for test in tests:
         test(); print("PASS",test.__name__)
     print("ALL TESTS PASSED")
