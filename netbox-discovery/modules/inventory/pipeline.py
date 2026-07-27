@@ -24,9 +24,9 @@ def main(argv=None):
     ap.add_argument("--output-dir", default=REPORTS)
     args = ap.parse_args(argv)
 
-    classifier = os.path.join(HERE, "classifier.py")
-    reconciler = os.path.join(HERE, "reconciler.py")
-    planner = os.path.join(HERE, "planner.py")
+    classifier = os.path.join(HERE, "classifier_v2.py")
+    reconciler = os.path.join(HERE, "reconciler_v2.py")
+    planner = os.path.join(HERE, "planner_v2.py")
 
     cmd = [sys.executable, classifier, "--output-dir", args.output_dir]
     if args.input:
@@ -49,9 +49,9 @@ def main(argv=None):
     ])
 
     print("===== INVENTORY PIPELINE =====")
-    print("CLASSIFY: OK")
-    print("RECONCILE: OK")
-    print("PLAN: OK")
+    print("CLASSIFY V2: OK")
+    print("RECONCILE V2: OK")
+    print("PLAN V2: OK")
     print("NetBox write: NÃO")
     return 0
 
