@@ -13,7 +13,7 @@ from collections import Counter
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 HERE = os.path.dirname(os.path.abspath(__file__))
-PIPELINE_VERSION = "2.1-product"
+PIPELINE_VERSION = "2.2-product"
 
 
 def latest(pattern):
@@ -43,6 +43,15 @@ def _format_list(values):
     return ", ".join(clean(x) for x in (values or []) if clean(x)) or "-"
 
 
+def _print_class_evidence(row, class_row):
+    print("  Asset class: {0}".format(clean(row.get("asset_class")) or clean(class_row.get("asset_class")) or "-"))
+    print("  SNMP: name={0} object_id={1} mgmt_mac={2}".format(
+        clean(class_row.get("snmp_name")) or "-", clean(class_row.get("snmp_object_id")) or "-",
+        clean(class_row.get("management_mac")) or "-",
+    ))
+    print("  Evidência CLASSIFY: {0}".format(_format_list(class_row.get("evidence"))))
+
+
 def print_plan_diagnostics(plan_path, classification_path):
     plan = _load_json(plan_path)
     classification = _load_json(classification_path)
@@ -57,6 +66,7 @@ def print_plan_diagnostics(plan_path, classification_path):
         row for row in records
         if row.get("decision") == "READY" and row.get("action") == "UPDATE_SAFE"
     ]
+    delegated = [row for row in records if row.get("decision") == "DELEGATED"]
     pending = [
         row for row in records
         if row.get("decision") in ("REVIEW", "BLOCKED")
@@ -66,21 +76,32 @@ def print_plan_diagnostics(plan_path, classification_path):
     print("Planner: {0}".format(clean(plan.get("planner_version")) or "-"))
     print("READY/CREATE: {0}".format(len(ready_create)))
     print("READY/UPDATE_SAFE: {0}".format(len(ready_update)))
+    print("DELEGATED/HYPERVISOR: {0}".format(len(delegated)))
     print("REVIEW: {0}".format(sum(1 for x in pending if x.get("decision") == "REVIEW")))
     print("BLOCKED: {0}".format(sum(1 for x in pending if x.get("decision") == "BLOCKED")))
     print("NetBox write: NÃO")
 
+    if delegated:
+        print("===== NETWORK DELEGADOS AO HYPERVISOR =====")
+        for pos, row in enumerate(delegated, 1):
+            print("[{0}/{1}] DELEGATED | {2} | {3} | {4}".format(
+                pos, len(delegated), clean(row.get("primary_ip")) or "-",
+                clean(row.get("desired_name")) or "-", clean(row.get("match_reason")) or "-",
+            ))
+
     if ready_create:
         print("===== NETWORK NOVOS OBJETOS READY =====")
         for pos, row in enumerate(ready_create, 1):
+            ip = clean(row.get("primary_ip"))
+            class_row = by_ip.get(ip) or {}
             print("[{0}/{1}] READY | {2} | {3} | role={4} | confidence={5}".format(
-                pos, len(ready_create), clean(row.get("primary_ip")) or "-",
-                clean(row.get("desired_name")) or "-", clean(row.get("role")) or "-",
-                clean(row.get("confidence")) or "-",
+                pos, len(ready_create), ip or "-", clean(row.get("desired_name")) or "-",
+                clean(row.get("role")) or "-", clean(row.get("confidence")) or "-",
             ))
             print("  Fabricante/Modelo: {0} / {1}".format(
                 clean(row.get("manufacturer")) or "-", clean(row.get("model")) or "-"
             ))
+            _print_class_evidence(row, class_row)
 
     if ready_update:
         print("===== NETWORK AJUSTES READY =====")
@@ -124,11 +145,7 @@ def print_plan_diagnostics(plan_path, classification_path):
             clean(row.get("manufacturer")) or "-", clean(row.get("model")) or "-",
             clean(row.get("serial")) or "-",
         ))
-        print("  SNMP: name={0} object_id={1} mgmt_mac={2}".format(
-            clean(class_row.get("snmp_name")) or "-", clean(class_row.get("snmp_object_id")) or "-",
-            clean(class_row.get("management_mac")) or "-",
-        ))
-        print("  Evidência CLASSIFY: {0}".format(_format_list(class_row.get("evidence"))))
+        _print_class_evidence(row, class_row)
 
 
 def main(argv=None):

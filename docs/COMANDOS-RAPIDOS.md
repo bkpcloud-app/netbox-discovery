@@ -1,14 +1,4 @@
-# netbox-discovery 1.10.9 — Comandos rápidos
-
-## Versão e saúde
-
-```bash
-netbox-discovery version
-netbox-discovery status
-netbox-discovery self-test
-netbox-discovery health
-netbox-discovery health --json
-```
+# netbox-discovery 1.10.10 — Comandos rápidos
 
 ## Atualizar
 
@@ -24,121 +14,77 @@ netbox-discovery update run
 netbox-discovery run
 ```
 
-Fluxo:
-
-```text
-DISCOVER → CLASSIFY → RECONCILE → PLAN
-NetBox write: NÃO
-```
-
-A partir da 1.10.9, o próprio comando mostra:
+Saída relevante:
 
 ```text
 NETWORK PLAN DIAGNÓSTICO
-NETWORK NOVOS OBJETOS READY
-NETWORK AJUSTES READY
-NETWORK PENDÊNCIAS POR MOTIVO
-NETWORK PENDÊNCIAS DETALHADAS
+READY/CREATE: N
+READY/UPDATE_SAFE: N
+DELEGATED/HYPERVISOR: N
+REVIEW: N
+BLOCKED: N
+NetBox write: NÃO
 ```
 
-Para `REVIEW`/`BLOCKED`, mostra IP, nome, role, confiança, motivos, match, fabricante/modelo/serial, SNMP e evidência CLASSIFY.
+Se houver VMs já inventariadas:
 
-**Não usar Python auxiliar para abrir/filtrar PLAN na operação normal.**
+```text
+NETWORK DELEGADOS AO HYPERVISOR
+DELEGATED | IP | nome | IP(s) já vinculado(s) a virtualization.vminterface
+```
+
+`DELEGATED` = ownership do Hypervisor, nenhuma escrita Network.
+
+VM candidata sem correspondência:
+
+```text
+REVIEW
+VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
+```
 
 ## Network — APPLY
 
-Somente depois de revisar o PLAN:
+Somente depois de revisar:
 
 ```bash
 netbox-discovery run --apply
 ```
 
-Política:
-
 ```text
-READY   → pode escrever
-REVIEW  → não escreve
-BLOCKED → não escreve
+READY       → pode escrever
+DELEGATED   → não escreve
+REVIEW      → não escreve
+BLOCKED     → não escreve
 ```
 
-O APPLY executa IMPORT apenas de READY e depois AUDIT.
+## Dell switches — 1.10.10
 
-## Network — motivos importantes
+Modelos Dell Networking reconhecidos pelo hardware/ENTITY-MIB têm prioridade sobre Linux/SSH/Web genérico.
+
+Exemplos:
 
 ```text
-CONFIDENCE_*                    → REVIEW
-UNKNOWN_ROLE                    → REVIEW
-STANDALONE_OOB_NEEDS_PARENT     → REVIEW
-IDENTITY_CONFLICT               → BLOCKED
-IP_ASSIGNED_TO_OTHER_DEVICE     → BLOCKED
-IP_ASSIGNED_TO_EXTERNAL_OBJECT  → REVIEW
+N2024
+PCT7024
+S4128F-ON
 ```
 
-Não corrigir dezenas de objetos manualmente no NetBox para “ajudar” o discovery.
+Esperado:
 
-## Hypervisor — configurar
+```text
+role=NETWORK_SWITCH
+confidence=HIGH
+```
+
+## Hypervisor
 
 ```bash
 netbox-discovery hypervisor configure
 netbox-discovery hypervisor check
-```
-
-## Hypervisor — dry-run
-
-```bash
 netbox-discovery hypervisor run
-```
-
-Mostra READY/CREATE, UPDATE_SAFE, RECLASSIFY_SAFE, REVIEW e BLOCKED.
-
-## Hypervisor — comparar
-
-```bash
 netbox-discovery hypervisor run --compare
-```
-
-Saída:
-
-```text
-OK
-MISMATCH
-MISSING
-AMBIGUOUS
-NetBox write: NÃO
-```
-
-## Hypervisor — APPLY
-
-```bash
 netbox-discovery hypervisor run --apply
-```
-
-Antes da escrita:
-
-```text
-HYPERVISOR PREFLIGHT GLOBAL MULTI-CONTEXT
-PREFLIGHT GLOBAL: OK
-REVIEW/BLOCKED: 0
-```
-
-### Cluster/Site — 1.10.7
-
-```text
-RECLASSIFY PREFLIGHT
-→ CLUSTER SCOPE RELEASE
-→ move HOSTS
-→ reaplica scope do CLUSTER
-→ continua VMs
-```
-
-### VM/Parent — 1.10.8
-
-```text
-revalida identidade da VM
-→ relê Device/Cluster
-→ VM PARENT PREFLIGHT
-→ PATCH tenant + site juntos
-→ ajusta Tenant dos IPs
+netbox-discovery hypervisor status
 ```
 
 ## Falha parcial
@@ -151,16 +97,19 @@ revalida identidade da VM
 5. somente então retomar
 ```
 
-## Política geral
+## Status
+
+```bash
+netbox-discovery version
+netbox-discovery status
+netbox-discovery self-test
+netbox-discovery health
+```
+
+O status Network mostra:
 
 ```text
-READY / CREATE            → escrita somente com --apply
-READY / UPDATE_SAFE       → escrita somente com --apply
-READY / RECLASSIFY_SAFE   → escrita após preflight
-REVIEW                    → não escreve
-BLOCKED                   → não escreve
-COMPARE                   → somente leitura
-DELETE automático         → NÃO
+PLAN: READY=N DELEGATED=N REVIEW=N BLOCKED=N
 ```
 
 ## Schedulers
@@ -182,12 +131,6 @@ Config Hypervisor:      /etc/netbox-discovery/hypervisors.json
 Relatórios:             /opt/netbox-discovery/reports
 Backups:                /opt/netbox-discovery/backups
 Lock global:            /var/lock/netbox-discovery-global.lock
-```
-
-## Homologação
-
-```text
-docs/HOMOLOGACAO.md
 ```
 
 CI PASS não significa LIVE PASS.
