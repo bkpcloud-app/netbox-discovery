@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.10.5 — PRODUCT V1  
+**Versão atual:** 1.10.6 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -49,9 +49,40 @@ multi_site
 multi_tenant
 ```
 
-## Diagnóstico automático do PLAN — 1.10.5
+## Preflight global antes de qualquer escrita — 1.10.6
 
-A partir da 1.10.5, o operador **não precisa abrir JSON nem executar Python auxiliar** para descobrir o que o Hypervisor pretende criar.
+A partir da 1.10.6, `hypervisor run --apply` não inicia nenhuma escrita logo após o PLAN apresentado ao operador.
+
+Antes do primeiro POST/PATCH, o produto obrigatoriamente:
+
+```text
+1. reconstrói o PLAN multi-contexto usando o estado atual do NetBox;
+2. aborta se surgir qualquer REVIEW ou BLOCKED;
+3. exige que o conjunto RECLASSIFY_SAFE permaneça idêntico ao dry-run;
+4. revalida a identidade forte de cada objeto imediatamente antes da reclassificação;
+5. somente depois libera RECLASSIFY_SAFE / CREATE / UPDATE_SAFE.
+```
+
+A saída esperada antes da primeira escrita é:
+
+```text
+HYPERVISOR PREFLIGHT GLOBAL MULTI-CONTEXT
+PREFLIGHT GLOBAL: OK
+NetBox write até aqui: NÃO
+```
+
+E, para contextos com migração:
+
+```text
+RECLASSIFY PREFLIGHT Tenant/Site: OK
+NetBox write: NÃO
+```
+
+Se identidade, `existing_id`, Tenant/Site alvo ou conjunto de migrações mudar entre dry-run e APPLY, o processo aborta **antes da primeira escrita**.
+
+## Diagnóstico automático do PLAN — 1.10.5+
+
+O operador **não precisa abrir JSON nem executar Python auxiliar** para descobrir o que o Hypervisor pretende criar.
 
 O próprio:
 
@@ -180,7 +211,7 @@ Tenant Group [opcional]
 ```text
 run sem --apply             = dry-run
 hypervisor run sem --apply  = dry-run
---apply                      = escrita somente de READY
+--apply                      = escrita somente de READY após preflight global
 REVIEW                       = não escreve
 BLOCKED                      = não escreve
 DELETE Hypervisor            = nunca automático
