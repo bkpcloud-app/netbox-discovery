@@ -12,7 +12,7 @@ import sys
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 LOCK_FILE = "/var/lock/netbox-discovery-global.lock"
-RUNNER_VERSION = "2.3-product"
+RUNNER_VERSION = "2.4-product"
 
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
@@ -40,6 +40,22 @@ engine.NetBox = TracingNetBox
 engine.base.NetBox = TracingNetBox
 
 
+def row_context_lines(row):
+    lines = []
+    if row.get("source_id"):
+        lines.append("  Source: {0}".format(row.get("source_id")))
+    if row.get("host_name"):
+        lines.append("  Host API: {0}".format(row.get("host_name")))
+    if row.get("serial"):
+        lines.append("  Serial/UUID API: {0}".format(row.get("serial")))
+    ips = [str(x) for x in (row.get("ips") or []) if x]
+    if ips:
+        lines.append("  IPs autoritativos: {0}".format(", ".join(ips)))
+    if row.get("existing_id"):
+        lines.append("  NetBox object ID: {0}".format(row.get("existing_id")))
+    return lines
+
+
 def plan_issue_lines(plan):
     records = (plan or {}).get("records") or []
     issues = [row for row in records if row.get("decision") in ("REVIEW", "BLOCKED")]
@@ -62,6 +78,7 @@ def plan_issue_lines(plan):
                 row.get("action") or "?",
             ))
             lines.append("  Motivo: {0}".format(row.get("reason") or "não informado"))
+            lines.extend(row_context_lines(row))
         lines.append("PENDÊNCIAS TOTAIS: {0}".format(len(issues)))
 
     if residuals:
@@ -75,6 +92,7 @@ def plan_issue_lines(plan):
             lines.append("  Motivo: {0}".format(detail))
             if row.get("reason") and row.get("reason") != detail:
                 lines.append("  Correspondência: {0}".format(row.get("reason")))
+            lines.extend(row_context_lines(row))
         lines.append("AJUSTES PENDENTES: {0}".format(len(residuals)))
 
     return lines
