@@ -184,8 +184,8 @@ O fluxo foi bloqueado propositalmente antes de produção.
 
 ## Preflight global multi-contexto — 1.10.6
 
-**Estado:** NOT LIVE  
-**CI:** PENDENTE até conclusão do PR 1.10.6
+**Estado:** CI PASS / NOT LIVE  
+**CI:** run `30283140532` — todos os passos PASS
 
 Objetivo: garantir que **nenhum POST/PATCH**, inclusive `RECLASSIFY_SAFE`, ocorra antes de validação atualizada do estado real.
 
@@ -219,13 +219,14 @@ O preflight de reclassificação aborta antes do PATCH se:
 - Cluster/Prefix deixar de ser único;
 - Tenant/Site alvo deixar de ser único/existente.
 
-Regressões obrigatórias 1.10.6:
+Regressões CI 1.10.6 confirmadas:
 
 - preflight aceita conjunto de reclassificação idêntico;
 - mudança de `existing_id` aborta;
 - `REVIEW` novo aborta antes de escrita;
 - identidade forte é revalidada imediatamente antes de reclassificar;
-- identity drift aborta.
+- identity drift aborta;
+- regressões legadas e Hypervisor 1.10 anteriores continuam PASS.
 
 ## Hypervisor multi-contexto — estado geral
 
@@ -245,7 +246,6 @@ Já validado:
 
 Ainda falta:
 
-- CI PASS da 1.10.6;
 - update real para 1.10.6;
 - dry-run 1.10.6;
 - primeiro APPLY multi-contexto real;
@@ -271,7 +271,7 @@ Não habilitar APPLY automático enquanto o fluxo multi-contexto completo não e
 ## Próxima homologação
 
 ```text
-1. publicar 1.10.6 somente após CI PASS
+1. publicar 1.10.6 na stable
 2. netbox-discovery update run
 3. confirmar version = 1.10.6
 4. hypervisor run SEM --apply
