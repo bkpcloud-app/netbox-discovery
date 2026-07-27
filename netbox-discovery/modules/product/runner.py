@@ -13,8 +13,8 @@ import sys
 
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
-LOCK_FILE = "/var/lock/netbox-discovery-run.lock"
-RUNNER_VERSION = "1.0-product"
+LOCK_FILE = "/var/lock/netbox-discovery-global.lock"
+RUNNER_VERSION = "2.0-product"
 
 
 def utc_stamp():
@@ -61,8 +61,8 @@ def execute(apply_mode):
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except IOError:
-        raise RuntimeError("netbox-discovery run já está em execução")
-    lock.write(str(os.getpid()))
+        raise RuntimeError("outro processo netbox-discovery (Network/Hypervisor/Update) já está em execução")
+    lock.write("network:{0}".format(os.getpid()))
     lock.flush()
 
     cfg = load_cfg()
@@ -71,10 +71,10 @@ def execute(apply_mode):
     stages = []
     try:
         run_step("DISCOVER", [py, os.path.join(BASE, "modules/discovery/network.py")], stages)
-        run_step("CLASSIFY_RECONCILE_PLAN", [py, os.path.join(BASE, "modules/inventory/pipeline.py")], stages)
+        run_step("CLASSIFY_RECONCILE_PLAN_V2", [py, os.path.join(BASE, "modules/inventory/pipeline.py")], stages)
         if apply_mode:
-            run_step("IMPORT", [py, os.path.join(BASE, "modules/importers/importer.py"), "--apply"], stages)
-            run_step("AUDIT", [py, os.path.join(BASE, "modules/auditors/inventory.py")], stages)
+            run_step("IMPORT", [py, os.path.join(BASE, "modules/importers/importer_v2.py"), "--apply"], stages)
+            run_step("AUDIT", [py, os.path.join(BASE, "modules/auditors/auditor_v2.py")], stages)
             audit_files = glob.glob(os.path.join(REPORTS, "{0}-audit-*.json".format(site)))
             status = "PASS"
             if audit_files:

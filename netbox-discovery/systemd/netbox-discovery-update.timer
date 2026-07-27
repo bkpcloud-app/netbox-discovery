@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule netbox-discovery stable auto update
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30m
+Unit=netbox-discovery-update.service
+
+[Install]
+WantedBy=timers.target

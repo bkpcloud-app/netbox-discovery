@@ -6,35 +6,20 @@ PYTHON="${PYTHON:-/usr/bin/python3}"
 COMMAND="${1:-help}"
 shift || true
 
+require_root() {
+  if [[ "$(id -u)" != "0" ]]; then
+    echo "ERRO: este comando exige root." >&2
+    exit 1
+  fi
+}
+
 check_product() {
-  "$PYTHON" -m py_compile \
-    "$BASE/lib/config.py" \
-    "$BASE/lib/netbox.py" \
-    "$BASE/modules/discovery/network.py" \
-    "$BASE/modules/inventory/classifier.py" \
-    "$BASE/modules/inventory/reconciler.py" \
-    "$BASE/modules/inventory/planner.py" \
-    "$BASE/modules/inventory/pipeline.py" \
-    "$BASE/modules/importers/importer.py" \
-    "$BASE/modules/auditors/inventory.py" \
-    "$BASE/modules/product/configurator.py" \
-    "$BASE/modules/product/runner.py" \
-    "$BASE/modules/product/status.py" \
-    "$BASE/modules/hypervisor/config.py" \
-    "$BASE/modules/hypervisor/collectors.py" \
-    "$BASE/modules/hypervisor/engine.py" \
-    "$BASE/modules/hypervisor/configurator.py" \
-    "$BASE/modules/hypervisor/checker.py" \
-    "$BASE/modules/hypervisor/runner.py" \
-    "$BASE/modules/hypervisor/status.py"
-
-  for cmd in nmap snmpget snmpwalk; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-      echo "ERRO: dependência ausente: $cmd" >&2
-      return 1
-    fi
-  done
-
+  "$PYTHON" "$BASE/modules/product/selftest.py" --base "$BASE"
+  if [[ ! -f "$BASE/config.yml" ]]; then
+    echo "CONFIG: ainda não criada"
+    echo "Execute: netbox-discovery init"
+    return 0
+  fi
   "$PYTHON" - <<'PY'
 import os, sys
 base = os.environ.get('NETBOX_DISCOVERY_BASE', '/opt/netbox-discovery')
@@ -51,20 +36,50 @@ for name in ('networks_file', 'exclusions_file', 'communities_file'):
     if path and not os.path.isfile(path):
         raise RuntimeError('{0} não encontrado: {1}'.format(name, path))
 print('DISCOVER: OK')
-print('CLASSIFY: OK')
-print('RECONCILE: OK')
-print('PLAN: OK')
-print('IMPORT: OK')
+print('CLASSIFY V2: OK')
+print('RECONCILE V2: OK')
+print('PLAN V2: OK')
+print('IMPORT V2: OK')
 print('AUDIT: OK')
 PY
 }
 
+set_network_automation_enabled() {
+  local enabled="$1"
+  "$PYTHON" - "$enabled" <<'PY'
+import os, sys
+path = os.path.join(os.environ.get('NETBOX_DISCOVERY_BASE','/opt/netbox-discovery'), 'config.yml')
+enabled = sys.argv[1].lower() == 'true'
+if not os.path.isfile(path):
+    raise SystemExit('ERRO: config.yml não existe')
+rows = open(path, 'r').read().splitlines()
+out = []
+in_auto = False
+changed = False
+for row in rows:
+    stripped = row.strip()
+    indent = len(row) - len(row.lstrip())
+    if indent == 0 and stripped.endswith(':'):
+        in_auto = stripped == 'automation:'
+    if in_auto and indent > 0 and stripped.startswith('enabled:'):
+        out.append('  enabled: ' + ('true' if enabled else 'false'))
+        changed = True
+    else:
+        out.append(row)
+if not changed:
+    raise SystemExit('ERRO: automation.enabled não encontrado em config.yml')
+tmp = path + '.tmp'
+with open(tmp, 'w') as f:
+    f.write('\n'.join(out) + '\n')
+os.chmod(tmp, 0o600)
+os.replace(tmp, path)
+PY
+}
+
 scheduler_enable() {
-  if [[ "$(id -u)" != "0" ]]; then
-    echo "ERRO: scheduler exige root." >&2
-    exit 1
-  fi
-  SCHEDULE=$("$PYTHON" - <<'PY'
+  require_root
+  local schedule
+  schedule=$("$PYTHON" - <<'PY'
 import os,sys
 base=os.environ.get('NETBOX_DISCOVERY_BASE','/opt/netbox-discovery')
 sys.path.insert(0,base)
@@ -77,22 +92,24 @@ PY
   cat > /etc/systemd/system/netbox-discovery.timer.d/schedule.conf <<EOF
 [Timer]
 OnCalendar=
-OnCalendar=$SCHEDULE
+OnCalendar=$schedule
 EOF
+  set_network_automation_enabled true
   systemctl daemon-reload
   systemctl enable --now netbox-discovery.timer
   echo "SCHEDULER: HABILITADO"
-  echo "OnCalendar: $SCHEDULE"
-  echo "A escrita automática depende de automation.apply no config.yml."
+  echo "OnCalendar: $schedule"
 }
 
+scheduler_disable() {
+  require_root
+  set_network_automation_enabled false
+  systemctl disable --now netbox-discovery.timer || true
+  echo "SCHEDULER: DESABILITADO"
+}
 
 hypervisor_deps_install() {
-  if [[ "$(id -u)" != "0" ]]; then
-    echo "ERRO: instalação de dependências Hypervisor exige root." >&2
-    return 1
-  fi
-
+  require_root
   local need_external=0 type
   for type in "$@"; do
     case "$type" in
@@ -101,43 +118,9 @@ hypervisor_deps_install() {
       *) echo "ERRO: tipo de conector Hypervisor inválido: $type" >&2; return 1 ;;
     esac
   done
-  if [[ "$need_external" -eq 0 ]]; then
-    return 0
-  fi
+  [[ "$need_external" -eq 0 ]] && return 0
 
-  # VMware + Hyper-V são instalados juntos no vendor isolado. Isso evita
-  # substituir o vendor ao adicionar o segundo tipo de source mais tarde.
   local vendor="$BASE/vendor"
-  local marker="$vendor/.netbox-discovery-hypervisor-deps-v2"
-  if [[ -f "$marker" ]]; then
-    if PYTHONPATH="$vendor${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" - <<'PYDEPS' >/dev/null 2>&1
-import pyVmomi
-import winrm
-PYDEPS
-    then
-      return 0
-    fi
-  fi
-
-  if ! "$PYTHON" -m pip --version >/dev/null 2>&1; then
-    echo "Instalando python3-pip para conectores Hypervisor..."
-    if command -v dnf >/dev/null 2>&1; then
-      dnf install -y python3-pip
-    elif command -v yum >/dev/null 2>&1; then
-      yum install -y python3-pip
-    elif command -v apt-get >/dev/null 2>&1; then
-      apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip
-    else
-      echo "ERRO: não foi possível instalar python3-pip." >&2
-      return 1
-    fi
-  fi
-
-  local tmp
-  tmp="$(mktemp -d "$BASE/vendor.tmp.XXXXXX")"
-  echo "Preparando dependências Hypervisor isoladas..."
-
   local packages=(
     'requests==2.27.1'
     'urllib3==1.26.18'
@@ -151,7 +134,31 @@ PYDEPS
     'ntlm-auth==1.5.0'
     'xmltodict==0.13.0'
   )
+  local fingerprint marker
+  fingerprint=$(printf '%s\n' "${packages[@]}" | sha256sum | awk '{print $1}')
+  marker="$vendor/.requirements.sha256"
+  if [[ -f "$marker" ]] && [[ "$(cat "$marker" 2>/dev/null || true)" == "$fingerprint" ]]; then
+    if PYTHONPATH="$vendor${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" - <<'PYDEPS' >/dev/null 2>&1
+import pyVmomi
+import winrm
+PYDEPS
+    then
+      return 0
+    fi
+  fi
 
+  if ! "$PYTHON" -m pip --version >/dev/null 2>&1; then
+    echo "Instalando python3-pip para conectores Hypervisor..."
+    if command -v dnf >/dev/null 2>&1; then dnf install -y python3-pip
+    elif command -v yum >/dev/null 2>&1; then yum install -y python3-pip
+    elif command -v apt-get >/dev/null 2>&1; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip
+    else echo "ERRO: não foi possível instalar python3-pip." >&2; return 1
+    fi
+  fi
+
+  local tmp
+  tmp="$(mktemp -d "$BASE/vendor.tmp.XXXXXX")"
+  echo "Preparando dependências Hypervisor isoladas..."
   if ! "$PYTHON" -m pip install --disable-pip-version-check --no-cache-dir --target "$tmp" "${packages[@]}"; then
     rm -rf "$tmp"
     echo "ERRO: falha ao instalar dependências Hypervisor; vendor atual foi preservado." >&2
@@ -167,12 +174,9 @@ PYDEPS
     echo "ERRO: validação das dependências Hypervisor falhou; vendor atual foi preservado." >&2
     return 1
   fi
-
-  : > "$tmp/.netbox-discovery-hypervisor-deps-v2"
+  printf '%s\n' "$fingerprint" > "$tmp/.requirements.sha256"
   rm -rf "$vendor.old"
-  if [[ -d "$vendor" ]]; then
-    mv "$vendor" "$vendor.old"
-  fi
+  [[ -d "$vendor" ]] && mv "$vendor" "$vendor.old"
   if ! mv "$tmp" "$vendor"; then
     [[ -d "$vendor.old" ]] && mv "$vendor.old" "$vendor"
     rm -rf "$tmp"
@@ -197,12 +201,23 @@ PYTYPES
   hypervisor_deps_install $types
 }
 
+set_hypervisor_automation_enabled() {
+  local enabled="$1"
+  "$PYTHON" - "$enabled" <<'PY'
+import os,sys
+base=os.environ.get('NETBOX_DISCOVERY_BASE','/opt/netbox-discovery')
+sys.path.insert(0,base)
+from modules.hypervisor.config import load_hypervisor_config, save_hypervisor_config
+cfg=load_hypervisor_config(required=True)
+cfg.setdefault('automation', {})['enabled'] = sys.argv[1].lower() == 'true'
+save_hypervisor_config(cfg)
+PY
+}
+
 hypervisor_scheduler_enable() {
-  if [[ "$(id -u)" != "0" ]]; then
-    echo "ERRO: scheduler exige root." >&2
-    exit 1
-  fi
-  SCHEDULE=$("$PYTHON" - <<'PYSCHED'
+  require_root
+  local schedule
+  schedule=$("$PYTHON" - <<'PYSCHED'
 import os,sys
 base=os.environ.get('NETBOX_DISCOVERY_BASE','/opt/netbox-discovery')
 sys.path.insert(0,base)
@@ -215,19 +230,46 @@ PYSCHED
   cat > /etc/systemd/system/netbox-discovery-hypervisor.timer.d/schedule.conf <<EOF
 [Timer]
 OnCalendar=
-OnCalendar=$SCHEDULE
+OnCalendar=$schedule
 EOF
+  set_hypervisor_automation_enabled true
   systemctl daemon-reload
   systemctl enable --now netbox-discovery-hypervisor.timer
   echo "HYPERVISOR SCHEDULER: HABILITADO"
-  echo "OnCalendar: $SCHEDULE"
-  echo "A escrita automática depende de hypervisors.json automation.apply."
+  echo "OnCalendar: $schedule"
+}
+
+hypervisor_scheduler_disable() {
+  require_root
+  set_hypervisor_automation_enabled false
+  systemctl disable --now netbox-discovery-hypervisor.timer || true
+  echo "HYPERVISOR SCHEDULER: DESABILITADO"
+}
+
+update_dispatch() {
+  local action="${1:-status}"
+  shift || true
+  case "$action" in
+    status|check|run|scheduled)
+      exec "$PYTHON" "$BASE/modules/product/updater.py" "$action" "$@"
+      ;;
+    scheduler)
+      local sched="${1:-status}"
+      case "$sched" in
+        enable) require_root; systemctl enable --now netbox-discovery-update.timer; echo "AUTO UPDATE: HABILITADO" ;;
+        disable) require_root; systemctl disable --now netbox-discovery-update.timer; echo "AUTO UPDATE: DESABILITADO" ;;
+        status) systemctl status netbox-discovery-update.timer --no-pager || true ;;
+        *) echo "Uso: netbox-discovery update scheduler {enable|disable|status}" >&2; exit 2 ;;
+      esac
+      ;;
+    *) echo "Uso: netbox-discovery update {status|check|run|scheduled|scheduler}" >&2; exit 2 ;;
+  esac
 }
 
 hypervisor_dispatch() {
-  local ACTION="${1:-help}"
+  local action="${1:-help}"
   shift || true
-  case "$ACTION" in
+  case "$action" in
     help|-h|--help)
       cat <<'EOF'
 netbox-discovery hypervisor - inventário de virtualização
@@ -239,64 +281,33 @@ Uso:
   netbox-discovery hypervisor status
   netbox-discovery hypervisor scheduler {enable|disable|status}
 
-Plataformas:
-  VMware vCenter/ESXi
-  Proxmox VE
-  Microsoft Hyper-V
-
 Segurança:
   hypervisor run         = coleta + PLAN, sem escrita
   hypervisor run --apply = coleta + PLAN + IMPORT + AUDIT
   nunca renomeia objetos existentes e nunca apaga automaticamente
 EOF
       ;;
-    configure|init)
-      exec "$PYTHON" "$BASE/modules/hypervisor/configurator.py" "$@"
-      ;;
-    check)
-      hypervisor_deps_from_config
-      exec "$PYTHON" "$BASE/modules/hypervisor/checker.py" "$@"
-      ;;
-    run)
-      hypervisor_deps_from_config
-      exec "$PYTHON" "$BASE/modules/hypervisor/runner.py" "$@"
-      ;;
-    scheduled-run)
-      hypervisor_deps_from_config
-      exec "$PYTHON" "$BASE/modules/hypervisor/runner.py" --scheduled
-      ;;
-    _ensure-deps)
-      hypervisor_deps_install "${1:-all}"
-      ;;
-    status)
-      exec "$PYTHON" "$BASE/modules/hypervisor/status.py" "$@"
-      ;;
+    configure|init) exec "$PYTHON" "$BASE/modules/hypervisor/configurator_v2.py" "$@" ;;
+    check) hypervisor_deps_from_config; exec "$PYTHON" "$BASE/modules/hypervisor/checker.py" "$@" ;;
+    run) hypervisor_deps_from_config; exec "$PYTHON" "$BASE/modules/hypervisor/runner.py" "$@" ;;
+    scheduled-run) hypervisor_deps_from_config; exec "$PYTHON" "$BASE/modules/hypervisor/runner.py" --scheduled ;;
+    _ensure-deps) hypervisor_deps_install "${1:-all}" ;;
+    status) exec "$PYTHON" "$BASE/modules/hypervisor/status.py" "$@" ;;
     scheduler)
-      local SCHED_ACTION="${1:-status}"
-      case "$SCHED_ACTION" in
+      local sched="${1:-status}"
+      case "$sched" in
         enable) hypervisor_scheduler_enable ;;
-        disable)
-          systemctl disable --now netbox-discovery-hypervisor.timer
-          echo "HYPERVISOR SCHEDULER: DESABILITADO"
-          ;;
-        status)
-          systemctl status netbox-discovery-hypervisor.timer --no-pager || true
-          ;;
+        disable) hypervisor_scheduler_disable ;;
+        status) systemctl status netbox-discovery-hypervisor.timer --no-pager || true ;;
         *) echo "Uso: netbox-discovery hypervisor scheduler {enable|disable|status}" >&2; exit 2 ;;
       esac
       ;;
-    *)
-      echo "Comando hypervisor inválido: $ACTION" >&2
-      echo "Use: netbox-discovery hypervisor help" >&2
-      exit 2
-      ;;
+    *) echo "Comando hypervisor inválido: $action" >&2; exit 2 ;;
   esac
 }
 
 case "$COMMAND" in
-  version|--version|-V)
-    cat "$BASE/VERSION"
-    ;;
+  version|--version|-V) cat "$BASE/VERSION" ;;
   help|-h|--help)
     cat <<'EOF'
 netbox-discovery - inventário de rede para NetBox
@@ -305,6 +316,8 @@ Uso:
   netbox-discovery init
   netbox-discovery configure
   netbox-discovery check
+  netbox-discovery self-test
+  netbox-discovery health [--json]
   netbox-discovery discover
   netbox-discovery classify
   netbox-discovery reconcile
@@ -316,70 +329,40 @@ Uso:
   netbox-discovery status
   netbox-discovery scheduler {enable|disable|status}
   netbox-discovery hypervisor {configure|check|run|status|scheduler}
+  netbox-discovery update {status|check|run|scheduler}
   netbox-discovery version
 
 Segurança:
   run              = DISCOVER -> CLASSIFY -> RECONCILE -> PLAN, sem escrita
   run --apply      = pipeline completo, com IMPORT READY e AUDIT
-  init/configure   = nunca iniciam varredura automaticamente
+  auto-update      = habilitado por padrão, canal stable, com rollback
+  Network/Hypervisor schedulers = desabilitados por padrão
 EOF
     ;;
-  init|configure)
-    exec "$PYTHON" "$BASE/modules/product/configurator.py" "$@"
-    ;;
-  check)
-    check_product
-    ;;
-  discover)
-    exec "$PYTHON" "$BASE/modules/discovery/network.py" "$@"
-    ;;
-  classify)
-    exec "$PYTHON" "$BASE/modules/inventory/classifier.py" "$@"
-    ;;
-  reconcile)
-    exec "$PYTHON" "$BASE/modules/inventory/reconciler.py" "$@"
-    ;;
-  plan)
-    exec "$PYTHON" "$BASE/modules/inventory/planner.py" "$@"
-    ;;
-  inventory|prepare)
-    exec "$PYTHON" "$BASE/modules/inventory/pipeline.py" "$@"
-    ;;
-  import)
-    exec "$PYTHON" "$BASE/modules/importers/importer.py" "$@"
-    ;;
-  audit)
-    exec "$PYTHON" "$BASE/modules/auditors/inventory.py" "$@"
-    ;;
-  run)
-    exec "$PYTHON" "$BASE/modules/product/runner.py" "$@"
-    ;;
-  scheduled-run)
-    exec "$PYTHON" "$BASE/modules/product/runner.py" --scheduled
-    ;;
-  status)
-    exec "$PYTHON" "$BASE/modules/product/status.py"
-    ;;
-  hypervisor)
-    hypervisor_dispatch "$@"
-    ;;
+  init|configure) exec "$PYTHON" "$BASE/modules/product/configurator_v2.py" "$@" ;;
+  check) check_product ;;
+  self-test) exec "$PYTHON" "$BASE/modules/product/selftest.py" --base "$BASE" "$@" ;;
+  health) exec "$PYTHON" "$BASE/modules/product/health.py" "$@" ;;
+  discover) exec "$PYTHON" "$BASE/modules/discovery/network.py" "$@" ;;
+  classify) exec "$PYTHON" "$BASE/modules/inventory/classifier_v2.py" "$@" ;;
+  reconcile) exec "$PYTHON" "$BASE/modules/inventory/reconciler_v2.py" "$@" ;;
+  plan) exec "$PYTHON" "$BASE/modules/inventory/planner_v2.py" "$@" ;;
+  inventory|prepare) exec "$PYTHON" "$BASE/modules/inventory/pipeline.py" "$@" ;;
+  import) exec "$PYTHON" "$BASE/modules/importers/importer_v2.py" "$@" ;;
+  audit) exec "$PYTHON" "$BASE/modules/auditors/auditor_v2.py" "$@" ;;
+  run) exec "$PYTHON" "$BASE/modules/product/runner.py" "$@" ;;
+  scheduled-run) exec "$PYTHON" "$BASE/modules/product/runner.py" --scheduled ;;
+  status) exec "$PYTHON" "$BASE/modules/product/status.py" ;;
+  hypervisor) hypervisor_dispatch "$@" ;;
+  update) update_dispatch "$@" ;;
   scheduler)
-    ACTION="${1:-status}"
-    case "$ACTION" in
+    action="${1:-status}"
+    case "$action" in
       enable) scheduler_enable ;;
-      disable)
-        systemctl disable --now netbox-discovery.timer
-        echo "SCHEDULER: DESABILITADO"
-        ;;
-      status)
-        systemctl status netbox-discovery.timer --no-pager || true
-        ;;
+      disable) scheduler_disable ;;
+      status) systemctl status netbox-discovery.timer --no-pager || true ;;
       *) echo "Uso: netbox-discovery scheduler {enable|disable|status}" >&2; exit 2 ;;
     esac
     ;;
-  *)
-    echo "Comando inválido: $COMMAND" >&2
-    echo "Use: netbox-discovery help" >&2
-    exit 2
-    ;;
+  *) echo "Comando inválido: $COMMAND" >&2; echo "Use: netbox-discovery help" >&2; exit 2 ;;
 esac
