@@ -12,14 +12,14 @@ import sys
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 LOCK_FILE = "/var/lock/netbox-discovery-global.lock"
-RUNNER_VERSION = "2.3-product"
+RUNNER_VERSION = "3.0-product"
 
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
 
 from lib.netbox import NetBox as RealNetBox
 from modules.hypervisor.config import load_hypervisor_config
-from modules.hypervisor import engine_v2 as engine
+from modules.hypervisor import engine_v3 as engine
 
 WRITE_JOURNAL = []
 
@@ -37,7 +37,15 @@ class TracingNetBox(RealNetBox):
 
 
 engine.NetBox = TracingNetBox
+engine.v2.NetBox = TracingNetBox
+engine.v2.base.NetBox = TracingNetBox
 engine.base.NetBox = TracingNetBox
+
+
+def _target_label(row):
+    tenant = row.get("target_tenant") or "?"
+    site = row.get("target_site") or "?"
+    return "{0}/{1}".format(tenant, site)
 
 
 def plan_issue_lines(plan):
@@ -53,13 +61,9 @@ def plan_issue_lines(plan):
         lines.append("===== HYPERVISOR PENDÊNCIAS DO PLAN =====")
         for pos, row in enumerate(issues, 1):
             name = row.get("desired_name") or row.get("name") or row.get("prefix") or row.get("asset_id") or "?"
-            lines.append("[{0}/{1}] {2} | {3} | {4} | {5}".format(
-                pos,
-                len(issues),
-                row.get("decision") or "?",
-                row.get("object_type") or "?",
-                name,
-                row.get("action") or "?",
+            lines.append("[{0}/{1}] {2} | {3} | {4} | {5} | alvo={6}".format(
+                pos, len(issues), row.get("decision") or "?", row.get("object_type") or "?",
+                name, row.get("action") or "?", _target_label(row),
             ))
             lines.append("  Motivo: {0}".format(row.get("reason") or "não informado"))
         lines.append("PENDÊNCIAS TOTAIS: {0}".format(len(issues)))
@@ -68,8 +72,8 @@ def plan_issue_lines(plan):
         lines.append("===== HYPERVISOR AJUSTES SEGUROS PENDENTES =====")
         for pos, row in enumerate(residuals, 1):
             name = row.get("desired_name") or row.get("name") or row.get("asset_id") or "?"
-            lines.append("[{0}/{1}] READY | {2} | {3} | UPDATE_SAFE".format(
-                pos, len(residuals), row.get("object_type") or "?", name
+            lines.append("[{0}/{1}] READY | {2} | {3} | UPDATE_SAFE | alvo={4}".format(
+                pos, len(residuals), row.get("object_type") or "?", name, _target_label(row)
             ))
             detail = row.get("pending_reason") or row.get("reason") or "ajuste seguro pendente"
             lines.append("  Motivo: {0}".format(detail))
@@ -99,7 +103,7 @@ def write_run(site, apply_mode, status, discovery_path, plan_path, import_path="
             "import": import_path, "audit": audit_path, "error": error,
             "writes_completed": len(WRITE_JOURNAL),
             "last_write": WRITE_JOURNAL[-1] if WRITE_JOURNAL else None,
-            "netbox_write": bool(import_path or WRITE_JOURNAL),
+            "netbox_write": bool(WRITE_JOURNAL),
         }, handle, indent=2, sort_keys=True)
     print("HYPERVISOR RUN REPORT: {0}".format(path))
     return path
@@ -140,10 +144,12 @@ def execute(apply_mode):
     plan_path = ""
     import_path = ""
     audit_path = ""
-    site = ""
+    site = "MULTI"
     try:
         discovery, discovery_path = engine.collect_all()
-        site = discovery.get("site") or "SITE"
+        contexts = discovery.get("contexts") or []
+        if len(contexts) == 1:
+            site = contexts[0].get("site") or "SITE"
         plan, plan_path = engine.build_plan(discovery)
         print_plan_issues(plan)
         if not apply_mode:
@@ -157,10 +163,10 @@ def execute(apply_mode):
         return 0 if status != "FAIL" else 1
     except Exception as exc:
         if apply_mode:
-            failed_path = write_failed_import(site or "SITE", discovery_path, plan_path, exc)
+            failed_path = write_failed_import(site or "MULTI", discovery_path, plan_path, exc)
             if failed_path and not import_path:
                 import_path = failed_path
-        write_run(site or "SITE", apply_mode, "FAIL", discovery_path, plan_path, import_path, audit_path, str(exc))
+        write_run(site or "MULTI", apply_mode, "FAIL", discovery_path, plan_path, import_path, audit_path, str(exc))
         raise
 
 
