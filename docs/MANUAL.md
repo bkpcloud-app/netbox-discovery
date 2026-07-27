@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.10.2 — PRODUCT V1  
+**Versão:** 1.10.3 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -64,7 +64,7 @@ Não existe `full-run`.
 | `REVIEW` | Requer revisão humana | não |
 | `BLOCKED` | Conflito forte | não |
 
-Ações típicas:
+Ações:
 
 | Ação | Significado |
 |---|---|
@@ -72,11 +72,11 @@ Ações típicas:
 | `UPDATE_SAFE` | Ajuste considerado seguro |
 | `NOOP` | Já está coerente |
 
-Regras:
+Regras principais:
 
 - dry-run é o padrão;
 - APPLY replaneja antes da primeira escrita;
-- `REVIEW` e `BLOCKED` não entram no lote de escrita;
+- `REVIEW` e `BLOCKED` não escrevem;
 - GETs podem receber retry seguro;
 - POST/PATCH não recebem retry cego;
 - Hypervisor não executa DELETE automático;
@@ -98,21 +98,13 @@ Uma URL diferente no `config.yml` é rejeitada.
 
 ## 4. Instalação e atualização
 
-### Proxy novo
+Instalação:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/stable/install-from-github.sh | bash
 ```
 
-O instalador:
-
-- valida o pacote antes de ativar;
-- preserva configuração existente;
-- não inicia discovery automaticamente;
-- não habilita schedulers Network/Hypervisor;
-- instala o canal `stable`.
-
-### Atualização
+Atualização:
 
 ```bash
 netbox-discovery update status
@@ -131,7 +123,7 @@ O updater:
 - usa quarentena para versão quebrada;
 - compartilha lock global com Network/Hypervisor.
 
-Desde a 1.10.1, documentação obrigatória também é validada no self-test/CI.
+Desde a 1.10.1, a documentação obrigatória também é validada no self-test/CI.
 
 ---
 
@@ -151,8 +143,6 @@ Tenant Group [opcional]
 ```
 
 O produto é genérico. **Não existe hardcode `MIZU → POLIMIX` ou equivalente.**
-
-O `init` cria/reutiliza a estrutura base de forma idempotente e bloqueia vínculos conflitantes.
 
 ---
 
@@ -177,8 +167,6 @@ netbox-discovery run
 # revisar PLAN
 netbox-discovery run --apply
 ```
-
-O estado de homologação da persistência MAC está em `docs/HOMOLOGACAO.md`.
 
 ---
 
@@ -219,8 +207,6 @@ Cada source possui `inventory_mode`.
 
 Todos os Hosts/VMs pertencem ao Tenant/Site principal desta instalação.
 
-Sources antigas permanecem nesse modo até edição explícita.
-
 ### `multi_site`
 
 Um mesmo Tenant pode ter vários Sites.
@@ -228,8 +214,6 @@ Um mesmo Tenant pode ter vários Sites.
 ### `multi_tenant`
 
 Uma source pode atender vários Tenants e vários Sites.
-
-Exemplo:
 
 ```text
 Tenant Group
@@ -239,6 +223,8 @@ Tenant Group
 └── Tenant B
     └── Site 3
 ```
+
+Sources antigas permanecem em `single_site` até edição explícita.
 
 ---
 
@@ -256,65 +242,67 @@ O assistente pergunta:
 3 - MULTI-TENANT / MULTI-SITE
 ```
 
-Em source existente, ENTER preserva plataforma/endpoint/ID/usuário quando exibidos como default; a senha também pode ser preservada.
+Em source existente, ENTER preserva os valores apresentados como default. A senha também pode ser preservada.
 
 ---
 
-## 10. Wizard multi-contexto VMware — 1.10.2
+## 10. VMware: rede de gerenciamento autoritativa — 1.10.3
 
-### Por que mudou
+### Problema encontrado no DCM
 
-Durante a primeira homologação real do modo `multi_tenant` no DCM, um vCenter com apenas 4 Hosts retornou **11 redes VMware com serviço `management`**.
+Durante homologação real, 4 Hosts ESXi do Datacenter `DCM` apresentaram 11 redes com o serviço VMware `management` habilitado:
 
-Isso é possível porque um ESXi pode possuir vários vmkernel com o serviço VMware `management` habilitado. Portanto:
+```text
+10.1.1.0/24
+192.168.140.0/24
+192.168.141.0/24
+192.168.142.0/24
+192.168.143.0/24
+192.168.160.0/24
+192.168.161.0/24
+192.168.180.0/24
+192.168.181.0/24
+192.168.190.0/24
+192.168.191.0/24
+```
 
-> uma rede vmkernel marcada como management não deve ser tratada automaticamente como um Site distinto.
+A rede de gestão conhecida dos Hosts é `10.1.1.0/24`. Portanto, usar todas as interfaces `management=True` como mappings Tenant/Site era incorreto.
 
-A 1.10.1 perguntaria Tenant/Site para cada CIDR. A configuração foi interrompida antes de salvar o novo mapping.
+### Regra 1.10.3
 
-### Comportamento 1.10.2
+O produto passa a separar:
 
-O wizard agora:
+```text
+vmkernel com serviço management
+            ≠
+rede autoritativa para posicionar o Host no Site
+```
 
-1. conecta no hypervisor;
-2. coleta Hosts, Datacenter, Cluster e interfaces vmkernel;
-3. identifica as redes com serviço VMware `management`;
-4. verifica a relação de cada rede com VMware Datacenter;
-5. quando várias redes pertencem inequivocamente ao mesmo Datacenter, cria um **grupo de posicionamento**;
-6. mostra Hosts, Clusters e todos os CIDRs do grupo;
-7. pergunta se um único Tenant/Site atende aquele Datacenter;
-8. se sim, solicita Tenant/Site uma vez e grava mappings equivalentes para todos os CIDRs;
-9. se não, abre o grupo para revisão por rede;
-10. rede sem Datacenter único ou compartilhada entre Datacenters permanece individual;
-11. mappings existentes divergentes não são consolidados silenciosamente.
+Para VMware, a seleção é conservadora:
 
-Exemplo:
+1. prefere o vmkernel cujo IP corresponde à resolução do FQDN/nome do ESXi;
+2. se não houver essa evidência, prefere `vmk0` quando ela está marcada como management;
+3. se restar uma única rede management candidata, usa essa rede;
+4. se houver múltiplas candidatas sem evidência forte, não adivinha e o Host fica sem contexto resolvido.
+
+As interfaces auxiliares continuam disponíveis no inventário. Elas apenas deixam de decidir Tenant/Site.
+
+### Wizard
+
+O wizard usa apenas redes autoritativas para criar grupos de posicionamento e mappings.
+
+Exemplo esperado para o DCM:
 
 ```text
 Datacenter: DCM
-Hosts: vm-ae01.mizu.local, vm-ae02.mizu.local, vm-ae03.mizu.local, vm-ae04.mizu.local
-Cluster(s): Cluster
-Redes VMware com serviço management (11): 10.1.1.0/24, ...
-
-Usar um único Tenant/Site para todas estas redes deste Datacenter? [S/n]: S
-Tenant Group (opcional) [POLIMIX]:
-Tenant [MIZU]:
-Site [DCM]:
+Hosts: vm-ae01, vm-ae02, vm-ae03, vm-ae04
+Rede autoritativa: 10.1.1.0/24
+Tenant Group: POLIMIX
+Tenant: MIZU
+Site: DCM
 ```
 
-Os defaults `MIZU/DCM` nesse exemplo não são hardcode. Eles podem ser sugeridos apenas quando o nome do Datacenter coincide com o Site base atual configurado nessa instalação.
-
-### Escrita estrutural durante o wizard
-
-Quando o usuário aceita:
-
-```text
-Criar/reutilizar automaticamente Tenant/Site no NetBox para os mapeamentos? [S/n]
-```
-
-o wizard pode criar/reutilizar Tenant Group/Tenant/Site. Isso é **escrita estrutural**, não IMPORT de Hosts/VMs.
-
-Nenhum Host/VM é importado pelo `configure`.
+Se a seleção for ambígua, a configuração não deve inventar um mapping.
 
 ---
 
@@ -323,8 +311,8 @@ Nenhum Host/VM é importado pelo `configure`.
 ### Host
 
 ```text
-IPs do Host
-→ mapping de rede mais específico
+rede de gerenciamento autoritativa
+→ mapping mais específico
 → Tenant/Site alvo
 ```
 
@@ -332,7 +320,6 @@ Sem mapping confiável:
 
 ```text
 REVIEW
-Motivo: rede de gerenciamento do host sem mapeamento Tenant/Site
 ```
 
 ### VM
@@ -378,7 +365,7 @@ Dry-run:
 netbox-discovery hypervisor run
 ```
 
-A saída mostra contextos, `READY`, `REVIEW`, `BLOCKED`, `UPDATE_SAFE` e o alvo Tenant/Site.
+A saída mostra contextos, `READY`, `REVIEW`, `BLOCKED`, `UPDATE_SAFE` e alvo Tenant/Site.
 
 ---
 
@@ -395,9 +382,9 @@ CREATE
 → requer reclassificação/migração
 ```
 
-O produto não cria automaticamente uma segunda cópia para “corrigir” Site/Tenant.
+O produto não cria automaticamente uma segunda cópia para corrigir Site/Tenant.
 
-Reclassificação/migração de objetos já existentes é operação distinta e não é automática na 1.10.2.
+Reclassificação/migração de objetos já existentes é uma operação distinta e não é automática na 1.10.3.
 
 ---
 
@@ -460,35 +447,14 @@ Lock global:            /var/lock/netbox-discovery-global.lock
 
 ---
 
-## 17. Regra de homologação
+## 17. Homologação
 
-`CI PASS` não significa `LIVE PASS`.
-
-Consulte:
+A matriz oficial é:
 
 ```text
 docs/HOMOLOGACAO.md
 ```
 
-Uma funcionalidade só deve ser chamada de homologada ao vivo depois de execução real registrada.
+`CI PASS` não significa `LIVE PASS`.
 
----
-
-## 18. Procedimento atual no DCM
-
-```text
-1. atualizar para 1.10.2
-2. editar a primeira source VMware
-3. escolher multi_tenant
-4. revisar o grupo de Datacenter detectado
-5. confirmar se o grupo realmente representa um Site
-6. confirmar Tenant Group / Tenant / Site
-7. salvar a source
-8. repetir na segunda source
-9. hypervisor check
-10. hypervisor run SEM --apply
-11. revisar redistribuição dos objetos já existentes
-12. somente após plano seguro considerar APPLY
-```
-
-Não habilitar scheduler Hypervisor com APPLY enquanto o multi-contexto ainda não estiver LIVE PASS.
+Não habilitar APPLY automático para funcionalidade ainda marcada como `NOT LIVE`.
