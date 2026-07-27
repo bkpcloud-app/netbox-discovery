@@ -1,8 +1,79 @@
+## V1.10.10 — Ownership Network/Hypervisor + Dell Networking
+
+Release criada a partir do diagnóstico live da 1.10.9 no DCM.
+
+### Causa principal dos REVIEW Network
+
+Grande parte dos assets descobertos na rede já eram VMs inventariadas pelo pipeline Hypervisor. O NetBox já tinha seus IPs atribuídos a:
+
+```text
+virtualization.vminterface
+```
+
+A política anterior marcava isso como `REVIEW` porque o Network corretamente se recusava a transformar o IP em um Device físico, mas ainda tratava a situação como pendência.
+
+### Nova decisão DELEGATED
+
+```text
+IP(s) já pertencem a virtualization.vminterface
+→ DELEGATED
+→ NOOP
+→ OWNED_BY_HYPERVISOR_VM
+```
+
+`DELEGATED` não entra no IMPORT Network. Apenas `READY` continua elegível para escrita.
+
+### Proteção contra VM criada como Device físico
+
+Asset com identidade virtual/VMware mas sem VM correspondente no NetBox:
+
+```text
+REVIEW
+VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
+```
+
+Isso evita que uma lacuna do Hypervisor vire um `dcim.device` incorreto.
+
+### Dell Networking
+
+O classificador agora prioriza modelo de hardware/ENTITY-MIB Dell Networking antes de fingerprints genéricos Linux/SSH/Web/SNMP.
+
+Regressões:
+
+```text
+N2024      → NETWORK_SWITCH / HIGH
+PCT7024    → NETWORK_SWITCH / HIGH
+S4128F-ON  → NETWORK_SWITCH / HIGH
+```
+
+A regra usa famílias de modelo, não IP/hostname/Site específicos.
+
+### Observabilidade
+
+O Network PLAN passa a exibir:
+
+```text
+DELEGATED/HYPERVISOR: N
+NETWORK DELEGADOS AO HYPERVISOR
+```
+
+READY agora também mostra asset class, SNMP e evidência CLASSIFY para facilitar a revisão antes do APPLY.
+
+### Segurança
+
+- `DELEGATED` nunca escreve;
+- `REVIEW`/`BLOCKED` continuam sem escrita;
+- apenas `READY` é importado;
+- não existe criação física para IP já pertencente a VM;
+- storage duplicado/controladoras não foram auto-resolvidos nesta release.
+
+---
+
 ## V1.10.9 — Diagnóstico automático do PLAN Network
 
-Release criada a partir do primeiro dry-run real do pipeline de rede no DCM em 27/07/2026.
+Adicionou diagnóstico completo no terminal para READY, REVIEW, BLOCKED, motivos, matching, SNMP e evidência CLASSIFY.
 
-### Evidência live que motivou a mudança
+Baseline live DCM:
 
 ```text
 Hosts ativos: 64
@@ -10,85 +81,14 @@ Assets reconciliados: 60
 READY: 7
 REVIEW: 47
 BLOCKED: 6
-READY/CREATE: 3
-READY/NOOP: 4
 NetBox write: NÃO
 ```
-
-O discovery encontrou switches e outros equipamentos físicos, mas o terminal não mostrava quais assets estavam em `REVIEW/BLOCKED` nem os motivos sem abrir JSON.
-
-### Mudança
-
-`netbox-discovery run` passa a mostrar automaticamente:
-
-```text
-NETWORK PLAN DIAGNÓSTICO
-NETWORK NOVOS OBJETOS READY
-NETWORK AJUSTES READY
-NETWORK PENDÊNCIAS POR MOTIVO
-NETWORK PENDÊNCIAS DETALHADAS
-```
-
-Para cada pendência, exibe:
-
-- IP;
-- nome desejado;
-- role;
-- confidence/score;
-- reasons do PLAN;
-- match_state/match_reason;
-- fabricante/modelo/serial;
-- SNMP name/object-id/MAC de gerenciamento;
-- evidência usada pelo CLASSIFY.
-
-### Segurança
-
-A 1.10.9 não muda as regras de elegibilidade:
-
-```text
-READY   → pode escrever somente com --apply
-REVIEW  → não escreve
-BLOCKED → não escreve
-```
-
-Não adiciona DELETE automático e não exige Python ad-hoc para análise operacional.
-
-### Objetivo da próxima etapa
-
-Usar a saída live para agrupar as causas reais dos 47 REVIEW e 6 BLOCKED e então corrigir CLASSIFY/RECONCILE/PLAN por classe de problema, sem criar exceções específicas do DCM.
-
-### Regressão
-
-O CI valida que o diagnóstico mostra READY, REVIEW, BLOCKED, contagem por motivo, evidência CLASSIFY e `NetBox write: NÃO`.
 
 ---
 
 ## V1.10.8 — VM acompanha Tenant/Site do Host/Cluster
 
-Hotfix criado após o APPLY real chegar a `PXMETAIS/MAC` e o NetBox rejeitar uma VM ainda com `site=DCM` depois que seu Device já havia mudado para `MAC`.
-
-Correção:
-
-```text
-Host/Cluster já migrado
-→ revalidar identidade forte da VM
-→ reler Device/Cluster
-→ VM PARENT PREFLIGHT
-→ PATCH VM tenant + site juntos
-→ ajustar Tenant dos IPs
-```
-
-Validação live final:
-
-```text
-VM PARENT PREFLIGHT PXMETAIS/MAC: OK | VMs=25
-Hosts processados: 1
-VMs processadas: 25
-Erros: 0
-HYPERVISOR AUDIT MULTI-CONTEXT: PASS
-```
-
-Compare independente:
+Fluxo Hypervisor multi-contexto concluído ao vivo.
 
 ```text
 Objetos comparados: 282
@@ -99,52 +99,20 @@ AMBIGUOUS: 0
 COMPARE STATUS: OK
 ```
 
-Estado: **LIVE PASS**.
+Estado: LIVE PASS.
 
 ---
 
-## V1.10.7 — Migração coordenada de Cluster/Site e compare read-only
+## V1.10.7 — Cluster/Site + compare read-only
 
-Corrige dependência circular entre Cluster scoped e Devices-host mudando juntos de Site.
+Migração coordenada de Cluster scoped/Hosts e modo oficial `hypervisor run --compare`.
 
-```text
-RECLASSIFY PREFLIGHT
-→ remove temporariamente scope do Cluster
-→ move Hosts
-→ reaplica scope no Site alvo
-→ continua VMs
-```
-
-Também adiciona:
-
-```bash
-netbox-discovery hypervisor run --compare
-```
-
-Estados: `OK`, `MISMATCH`, `MISSING`, `AMBIGUOUS`.
-
-Estado: **LIVE PASS**.
+Estado: LIVE PASS.
 
 ---
 
 ## V1.10.6 — Preflight global Hypervisor
 
-Antes do primeiro POST/PATCH:
+Recalcula PLAN e revalida identidade antes da primeira escrita.
 
-```text
-reconstrói PLAN
-→ REVIEW/BLOCKED = 0
-→ conjunto RECLASSIFY_SAFE inalterado
-→ identidade forte/existing_id/alvo revalidados
-→ escrita
-```
-
-Estado: **LIVE PASS**.
-
----
-
-## V1.10.5 — Diagnóstico completo do PLAN Hypervisor
-
-Elimina Python ad-hoc para listar `READY/CREATE`, `UPDATE_SAFE`, `RECLASSIFY_SAFE`, `REVIEW` e `BLOCKED`.
-
-Estado: **LIVE PASS**.
+Estado: LIVE PASS.
