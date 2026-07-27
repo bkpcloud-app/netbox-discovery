@@ -64,6 +64,58 @@ def management_network_groups(raw):
     return [groups[key] for key in sorted(groups)]
 
 
+def management_placement_groups(raw):
+    """Collapse management networks that clearly belong to one VMware Datacenter.
+
+    ESXi can expose several vmkernel NICs with the VMware 'management' service
+    enabled. Asking Tenant/Site once per vmkernel network is noisy and can lead
+    to accidental inconsistent mappings. When a management network is observed
+    only inside one Datacenter, group those networks by Datacenter and ask once.
+    Ambiguous networks (no Datacenter or shared by multiple Datacenters) remain
+    individual groups and therefore still require explicit mapping.
+    """
+    network_groups = management_network_groups(raw)
+    by_dc = {}
+    individual = []
+
+    for row in network_groups:
+        dcs = [clean(x) for x in row.get("datacenters") or [] if clean(x)]
+        if len(dcs) != 1:
+            individual.append({
+                "kind": "network",
+                "label": clean(row.get("network")),
+                "networks": [clean(row.get("network"))],
+                "hosts": list(row.get("hosts") or []),
+                "datacenters": list(row.get("datacenters") or []),
+                "clusters": list(row.get("clusters") or []),
+            })
+            continue
+
+        dc = dcs[0]
+        group = by_dc.setdefault(dc, {
+            "kind": "datacenter",
+            "label": dc,
+            "networks": [],
+            "hosts": [],
+            "datacenters": [dc],
+            "clusters": [],
+        })
+        network = clean(row.get("network"))
+        if network and network not in group["networks"]:
+            group["networks"].append(network)
+        for key in ("hosts", "clusters"):
+            for value in row.get(key) or []:
+                if value not in group[key]:
+                    group[key].append(value)
+
+    rows = [by_dc[key] for key in sorted(by_dc)] + individual
+    for row in rows:
+        row["networks"] = sorted(row.get("networks") or [])
+        row["hosts"] = sorted(row.get("hosts") or [])
+        row["clusters"] = sorted(row.get("clusters") or [])
+    return rows
+
+
 def validate_mapping(mapping, mode):
     network = clean(mapping.get("network"))
     try:
