@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.10.7 — PRODUCT V1  
+**Versão atual:** 1.10.8 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -49,6 +49,24 @@ single_site
 multi_site
 multi_tenant
 ```
+
+## VM acompanha Tenant/Site do Host/Cluster — 1.10.8
+
+A VM herda o contexto autoritativo do Host onde está executando. Quando uma VM já existente precisa ser reclassificada, o produto agora trata `tenant` e `site` de forma atômica.
+
+Antes do PATCH da VM:
+
+```text
+revalida identidade forte da VM
+→ relê Device/Cluster atual no NetBox
+→ confirma que o parent já está no Site alvo
+→ PATCH tenant + site no mesmo request
+→ ajusta Tenant dos IPs vinculados
+```
+
+Isso evita o estado inválido em que o Host já mudou de Site, mas a VM ainda aponta para o Site anterior. A regra é genérica para qualquer Tenant/Site e não depende de nomes de cliente, Site ou IP.
+
+Se o Device/Cluster ainda estiver fora do Site alvo, o `VM PARENT PREFLIGHT` bloqueia a reclassificação antes do PATCH das VMs daquele contexto.
 
 ## Migração coordenada de Cluster/Site — 1.10.7
 
@@ -202,7 +220,7 @@ Proteções:
 - serial e IP/MAC apontando para objetos diferentes vira `REVIEW`;
 - preserva o mesmo ID do objeto;
 - Host pode ter Tenant/Site corrigidos;
-- VM pode ter Tenant corrigido mantendo o posicionamento físico por Host/Cluster;
+- VM pode ter Tenant/Site corrigidos seguindo o contexto autoritativo do Host/Cluster;
 - IPs vinculados acompanham o Tenant quando necessário;
 - não existe DELETE automático.
 
