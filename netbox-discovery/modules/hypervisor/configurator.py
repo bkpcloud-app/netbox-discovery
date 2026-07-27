@@ -11,7 +11,6 @@ BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
 
-from modules.hypervisor.collectors import check_source
 from modules.hypervisor.config import clean, load_hypervisor_config, save_hypervisor_config, slugify
 
 
@@ -72,6 +71,16 @@ def ensure_connector_deps(stype):
         subprocess.check_call([os.path.join(BASE, "bin", "netbox-discovery"), "hypervisor", "_ensure-deps", "hyperv"])
 
 
+def check_source_ready(source):
+    # O vendor pode ser criado durante esta mesma execução do configurador.
+    # Garanta que ele entre no sys.path antes de importar o collector.
+    vendor = os.path.join(BASE, "vendor")
+    if os.path.isdir(vendor) and vendor not in sys.path:
+        sys.path.insert(0, vendor)
+    from modules.hypervisor.collectors import check_source
+    return check_source(source)
+
+
 def edit_source(current=None):
     current = dict(current or {})
     stype = type_choice(clean(current.get("type")).lower())
@@ -116,7 +125,7 @@ def edit_source(current=None):
         source["secret"] = secret("Senha Hyper-V", current.get("secret", ""))
 
     print("\n===== TESTE DA SOURCE =====")
-    result = check_source(source)
+    result = check_source_ready(source)
     print("CONEXÃO: OK")
     print("Produto: {0}".format(result.get("product", "")))
     print("Versão: {0}".format(result.get("version", "")))

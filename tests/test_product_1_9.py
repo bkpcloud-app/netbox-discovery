@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 import hashlib
 import os
+import shutil
 import sys
+import tempfile
+import types
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 BASE = os.path.join(ROOT, "netbox-discovery")
@@ -16,6 +19,7 @@ import importer_v2
 from modules.product import updater
 from modules.product import configurator_v2
 from modules.hypervisor import deps_vmware
+from modules.hypervisor import configurator as hypervisor_configurator
 
 
 def service(port):
@@ -117,11 +121,33 @@ def test_vmware_dependency_set_is_minimal():
     assert deps_vmware.fingerprint() == expected
 
 
+def test_hypervisor_collector_is_loaded_after_vendor():
+    assert "modules.hypervisor.collectors" not in sys.modules
+    tmp = tempfile.mkdtemp(prefix="nd-test-")
+    vendor = os.path.join(tmp, "vendor")
+    os.makedirs(vendor)
+    old_base = hypervisor_configurator.BASE
+    fake = types.ModuleType("modules.hypervisor.collectors")
+    fake.check_source = lambda source: {"product": "fake", "version": "1"}
+    try:
+        hypervisor_configurator.BASE = tmp
+        sys.modules["modules.hypervisor.collectors"] = fake
+        result = hypervisor_configurator.check_source_ready({"type": "vmware"})
+        assert result["product"] == "fake"
+        assert vendor in sys.path
+    finally:
+        hypervisor_configurator.BASE = old_base
+        sys.modules.pop("modules.hypervisor.collectors", None)
+        while vendor in sys.path:
+            sys.path.remove(vendor)
+        shutil.rmtree(tmp)
+
+
 def test_versions():
     root_version = open(os.path.join(ROOT, "VERSION"), "r").read().strip()
     package_version = open(os.path.join(BASE, "VERSION"), "r").read().strip()
-    assert root_version == package_version == "1.9.3"
-    assert updater.version_key("1.9.3") > updater.version_key("1.9.2")
+    assert root_version == package_version == "1.9.4"
+    assert updater.version_key("1.9.4") > updater.version_key("1.9.3")
 
 
 def main():
@@ -134,6 +160,7 @@ def main():
         test_import_refreshes_planner_v2,
         test_explicit_tenant_group_policy,
         test_vmware_dependency_set_is_minimal,
+        test_hypervisor_collector_is_loaded_after_vendor,
         test_versions,
     ]
     for test in tests:
