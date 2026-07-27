@@ -13,6 +13,7 @@ import reconciler_v2
 import planner_v2
 import importer_v2
 from modules.product import updater
+from modules.product import configurator_v2
 
 
 def service(port):
@@ -94,11 +95,18 @@ def test_import_refreshes_planner_v2():
         importer_v2.base.latest = old_latest
 
 
+def test_known_tenant_group_policy():
+    assert configurator_v2._tenant_group_for("MIZU", {}) == "POLIMIX"
+    assert configurator_v2._tenant_group_for("mizu", {}) == "POLIMIX"
+    assert configurator_v2._tenant_group_for("OUTRO", {}) == ""
+    assert configurator_v2.slugify("São Paulo DCM") == "sao-paulo-dcm"
+
+
 def test_versions():
     root_version = open(os.path.join(ROOT, "VERSION"), "r").read().strip()
     package_version = open(os.path.join(BASE, "VERSION"), "r").read().strip()
-    assert root_version == package_version == "1.9.0"
-    assert updater.version_key("1.9.0") > updater.version_key("1.8.9")
+    assert root_version == package_version == "1.9.1"
+    assert updater.version_key("1.9.1") > updater.version_key("1.9.0")
 
 
 def main():
@@ -109,6 +117,7 @@ def main():
         test_printer_vendor_normalization,
         test_plan_mac_match,
         test_import_refreshes_planner_v2,
+        test_known_tenant_group_policy,
         test_versions,
     ]
     for test in tests:
