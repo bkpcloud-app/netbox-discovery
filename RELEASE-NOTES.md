@@ -1,3 +1,38 @@
+## V1.10.2 — Agrupamento de redes VMware por Datacenter
+
+Correção de UX e segurança identificada durante a primeira homologação real do modo `multi_tenant` no DCM.
+
+### Problema observado ao vivo
+
+Na source VMware `10.1.1.20`, o vCenter retornou 4 Hosts do Datacenter `DCM`, porém 11 CIDRs associados a vmkernel com o serviço VMware `management` habilitado. A 1.10.1 perguntaria Tenant/Site 11 vezes, embora várias dessas redes pertençam ao mesmo conjunto de Hosts/Datacenter.
+
+A configuração foi interrompida antes de salvar qualquer mapping novo ou provisionar estrutura incorreta.
+
+### Wizard 1.10.2
+
+- redes de management que pertencem inequivocamente a um único VMware Datacenter são agrupadas;
+- o wizard pergunta Tenant/Site uma vez por grupo de Datacenter;
+- todos os CIDRs do grupo recebem mappings equivalentes por baixo;
+- o usuário pode responder que o Datacenter não representa um único Site e abrir revisão por rede;
+- rede sem Datacenter único ou compartilhada entre Datacenters continua individual;
+- mappings existentes divergentes não são consolidados silenciosamente;
+- para um Datacenter cujo nome coincide com o Site base atual, o Tenant/Site atual pode ser sugerido como default confirmável, sem hardcode de cliente.
+
+### Runtime
+
+O resolver continua baseado nos mappings de CIDR. A 1.10.2 altera o modo de construir os mappings no configurador; não muda a política de escrita, não adiciona DELETE e não move objetos existentes automaticamente.
+
+### Testes e documentação
+
+- adiciona regressões para múltiplas redes management no mesmo Datacenter;
+- valida separação de Datacenters distintos;
+- valida que rede ambígua compartilhada não é agrupada;
+- README, Manual, Comandos Rápidos, Security, Release Notes e Matriz de Homologação acompanham a versão.
+
+**Estado na publicação:** CI PASS; agrupamento 1.10.2 ainda precisa ser repetido ao vivo no DCM para virar LIVE PASS.
+
+---
+
 ## V1.10.1 — Documentação como parte obrigatória da release
 
 Release de hardening documental. Não altera a lógica de inventário multi-contexto criada na 1.10.0.
@@ -47,7 +82,7 @@ multi_tenant
 - coleta hosts do hypervisor;
 - agrupa por rede de gerenciamento;
 - mostra Hosts/Datacenters/Clusters como evidência;
-- solicita Tenant Group/Tenant/Site por rede;
+- solicita Tenant Group/Tenant/Site;
 - cria ou reutiliza a estrutura NetBox quando autorizado;
 - salva os mappings na source.
 
@@ -160,13 +195,10 @@ Release de consolidação do produto para operação em escala, preservando a po
 
 ### Impressoras e controle de acesso
 
-- melhora normalização de fabricantes de impressora, incluindo HP, Epson, Canon, Kyocera, Ricoh, Lexmark, Xerox, Zebra e OKI, preservando regras existentes;
-- mantém classificação conservadora: uma porta genérica isolada não deve inventar fabricante/modelo;
+- melhora normalização de fabricantes de impressora;
+- mantém classificação conservadora;
 - adiciona evidência Topdata/Inner sem usar OUI sozinho para adivinhar função;
-- TCP 3570 pode compor evidência de `ACCESS_CONTROL` quando combinado com identidade Topdata/Inner;
-- TCP 51000 pode compor evidência de `TIME_ATTENDANCE` quando combinado com identidade Topdata/Inner;
-- evidência explícita de catraca pode classificar `TURNSTILE`;
-- adiciona roles NetBox `TIME ATTENDANCE`, `ACCESS CONTROL` e `TURNSTILE` quando necessários.
+- adiciona roles correspondentes quando necessários.
 
 ### Auto-update stable
 
@@ -174,25 +206,22 @@ Release de consolidação do produto para operação em escala, preservando a po
 - auto-update é habilitado automaticamente na instalação;
 - Network e Hypervisor schedulers continuam desabilitados por padrão;
 - valida candidato antes de substituir o produto;
-- mantém backup da versão anterior e executa rollback se a nova versão falhar no self-test/check;
+- mantém backup da versão anterior e executa rollback se a nova versão falhar;
 - bloqueia downgrade automático;
-- versão que falha entra em quarentena e não é tentada novamente automaticamente até surgir outra versão ou execução manual com retry;
-- timer diário usa `RandomizedDelaySec=30m` para evitar atualização simultânea de todos os proxies;
-- retenção conserva os últimos cinco backups de update e remove reports locais antigos.
+- versão que falha entra em quarentena;
+- timer diário usa atraso aleatório;
+- retenção conserva backups recentes e remove reports locais antigos.
 
 ### Hardening operacional
 
-- Network, Hypervisor e Update compartilham `/var/lock/netbox-discovery-global.lock`;
-- adiciona retry/backoff apenas para GETs seguros da API NetBox em erros transitórios;
+- Network, Hypervisor e Update compartilham lock global;
+- retry/backoff apenas para GETs seguros da API NetBox;
 - POST/PATCH/DELETE não recebem retry cego;
-- Hypervisor registra journal de writes quando um APPLY falha depois de alterações parciais;
-- dependências VMware/Hyper-V passam a usar fingerprint SHA256 do conjunto de pacotes para decidir quando reconstruir o vendor;
-- configuração de scheduler e estado do systemd passam a ser sincronizados pelos configuradores;
+- Hypervisor registra journal de writes;
+- dependências usam fingerprint para reconstrução controlada do vendor;
 - adiciona status consolidado do produto, updater e pipelines.
 
 ### Saúde e validação
-
-Novos comandos:
 
 ```text
 netbox-discovery self-test
@@ -204,52 +233,24 @@ netbox-discovery update run
 netbox-discovery update scheduler {enable|disable|status}
 ```
 
-- `self-test` não depende de `config.yml`, permitindo validar instalação nova e candidato de upgrade;
-- `health --json` fornece saída simples para Zabbix e outras ferramentas;
-- CI valida sincronismo dos arquivos VERSION, sintaxe shell, compilação Python, self-test e regressões de identidade física.
-
 ---
 
 ## V1.8.0 — Hypervisor integrado e endpoint BKPCLOUD
 
-Release de produto que adiciona inventário de virtualização sem alterar o pipeline de rede existente.
-
-### Endpoint
-
 - fixa o NetBox em `https://inventory.bkpcloud.app.br:8080`;
-- `init`/`configure` deixam de pedir a URL;
-- runtime recusa `config.yml` apontando para outro NetBox.
-
-### Hypervisor
-
-- adiciona `netbox-discovery hypervisor`;
-- conectores VMware vCenter/ESXi, Proxmox VE e Hyper-V WinRM/NTLM;
-- comandos `configure`, `check`, `run`, `run --apply`, `status` e `scheduler`;
-- scheduler independente do pipeline de rede;
-- não existe `full-run`;
+- adiciona conectores VMware, Proxmox e Hyper-V;
+- adiciona pipeline Hypervisor independente;
 - cria/reconcilia Prefixes explícitos, Clusters, hosts, VMs/containers, interfaces, MACs e IPs;
-- Proxmox usa UUID quando disponível e identidade estável baseada em source/VMID como fallback;
-- disco de VM é convertido para MB no modelo NetBox.
-
-### Segurança e idempotência
-
-- dry-run por padrão;
-- replanejamento/preflight antes da primeira escrita;
-- conflitos de IP, MAC, identidade, Role e Cluster Type viram REVIEW/bloqueio antes da escrita;
-- preserva nomes manuais de Devices, VMs e interfaces já vinculadas;
-- atualiza pinning de VM migrada quando comprovado pela API;
-- não executa DELETE;
-- credenciais Hypervisor ficam em `/etc/netbox-discovery/hypervisors.json` com proteção root-only.
+- dry-run por padrão, preflight antes de escrita e sem DELETE automático;
+- credenciais Hypervisor protegidas em `/etc/netbox-discovery/hypervisors.json`.
 
 ---
 
 ## V1.7.0 — Estabilização de classificação e inventário
 
-- reconhece WEG SRW01-ETH, Siemens PAC3220/SCALANCE e outros footprints observados;
-- melhora classificação CFTV conservadora;
-- prioriza identidade física sobre banners de aplicação/TLS;
+- melhora classificação de equipamentos industriais/CFTV;
+- prioriza identidade física;
 - ignora nomes/seriais genéricos;
-- adiciona probes CFTV direcionados e padroniza timestamps;
 - mantém as proteções de escrita da linha 1.6.
 
 ---
@@ -268,7 +269,7 @@ Release de produto que adiciona inventário de virtualização sem alterar o pip
 ## V1.5.2 — Correção do instalador e sincronização de versão
 
 - sincroniza `VERSION` da raiz e do pacote;
-- corrige instalação de `config.yml`, `bin`, `lib` e `modules`;
+- corrige instalação de arquivos do produto;
 - preserva configuração operacional existente durante upgrade.
 
 ## V1.5.1 — Correção de DNS reverso
