@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.10.3 — PRODUCT V1  
+**Versão atual:** 1.10.4 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -67,6 +67,69 @@ Cada source possui um modo de inventário:
 
 Sources criadas antes da 1.10 permanecem em `single_site` por compatibilidade até serem editadas.
 
+## Reclassificação segura multi-contexto — 1.10.4
+
+A 1.10.4 adiciona uma etapa explícita de reclassificação para corrigir objetos que já existem no NetBox, mas foram gravados anteriormente no Tenant/Site errado.
+
+O PLAN pode produzir:
+
+```text
+READY / RECLASSIFY_SAFE
+```
+
+Essa ação só é criada quando o produto reencontra **a mesma identidade forte** no NetBox. As evidências aceitas são serial/UUID e/ou vínculo inequívoco de IP/MAC ao mesmo objeto.
+
+Exemplo:
+
+```text
+Device já existente: MIZU/DCM
+Rede autoritativa atual: 10.2.1.0/24
+Mapping atual: MIZU/FBA
+
+PLAN:
+READY / RECLASSIFY_SAFE
+MIZU/DCM → MIZU/FBA
+```
+
+Regras de segurança:
+
+- identidade global ambígua nunca vira migração automática; fica `REVIEW`;
+- serial e IP/MAC apontando para objetos diferentes ficam `REVIEW`;
+- a reclassificação preserva o mesmo ID do objeto, em vez de criar duplicata;
+- Host pode ter Tenant/Site corrigidos;
+- VM pode ter Tenant corrigido e continua vinculada ao Host/Cluster autoritativo;
+- IPs já pertencentes ao objeto acompanham a correção de Tenant;
+- Cluster/Prefix podem ser reclassificados somente quando a correspondência global é única e segura;
+- não existe DELETE automático.
+
+O comando continua dry-run por padrão:
+
+```bash
+netbox-discovery hypervisor run
+```
+
+A escrita real continua exigindo:
+
+```bash
+netbox-discovery hypervisor run --apply
+```
+
+A funcionalidade `RECLASSIFY_SAFE` da 1.10.4 deve permanecer **NOT LIVE** até passar CI e ser validada em dry-run e APPLY controlado no ambiente real. Consulte `docs/HOMOLOGACAO.md`.
+
+## Delta de inventário Hypervisor — 1.10.4
+
+O discovery compara a coleta atual com o snapshot multi-contexto anterior.
+
+Quando uma VM existia na coleta anterior e não aparece mais na atual, a saída informa:
+
+```text
+HYPERVISOR INVENTORY CHANGE
+REMOVED/REVIEW
+DELETE automático: NÃO
+```
+
+A ausência vira `REVIEW/NOOP`. O produto **não apaga a VM do NetBox automaticamente**.
+
 ## Rede de gerenciamento autoritativa VMware — 1.10.3
 
 Um ESXi pode ter vários vmkernel com o serviço VMware `management` habilitado. Isso **não significa** que todas essas redes são redes de gerenciamento autoritativas do Host nem que devem virar mappings Tenant/Site.
@@ -119,7 +182,7 @@ No runtime:
 - a VM herda o contexto Tenant/Site do Host onde está rodando;
 - IP da VM é fallback;
 - sem resolução confiável o objeto vira `REVIEW`;
-- serial/UUID já existente fora do contexto alvo vira `REVIEW` para reclassificação/migração, nunca CREATE duplicado;
+- identidade forte já existente fora do contexto alvo pode virar `RECLASSIFY_SAFE` na 1.10.4, somente quando inequívoca;
 - o pipeline Hypervisor não executa DELETE automático.
 
 ## Estrutura Tenant/Site
@@ -229,7 +292,7 @@ Backups:                /opt/netbox-discovery/backups
 
 A matriz oficial fica em `docs/HOMOLOGACAO.md`.
 
-Na 1.10.3, a seleção autoritativa de rede VMware possui regressões automatizadas para o caso real observado no DCM, mas só deve ser marcada `LIVE PASS` depois de repetir o wizard no ambiente real e confirmar que apenas a rede correta é apresentada para mapping.
+A seleção autoritativa VMware 1.10.3 possui evidência `LIVE PASS` no DCM. O resolver multi-contexto das duas sources e o dry-run real também já possuem evidência ao vivo. A nova reclassificação automática 1.10.4 permanece separada e só pode ser promovida após CI e validação real específica.
 
 ## Documentação obrigatória
 
