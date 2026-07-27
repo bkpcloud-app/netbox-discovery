@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.10.9 — PRODUCT V1  
+**Versão atual:** 1.10.10 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -36,111 +36,90 @@ netbox-discovery hypervisor run --apply
 netbox-discovery hypervisor status
 ```
 
-Conectores Hypervisor:
+Conectores: VMware, Proxmox VE e Microsoft Hyper-V.
 
-- VMware vCenter/ESXi;
-- Proxmox VE;
-- Microsoft Hyper-V via WinRM/NTLM.
+## Ownership entre Network e Hypervisor — 1.10.10
 
-## Diagnóstico automático do PLAN de rede — 1.10.9
-
-O primeiro dry-run real do DCM em 27/07/2026 encontrou 64 hosts ativos e reconciliou 60 assets, mas o PLAN terminou com:
+O dry-run Network 1.10.9 mostrou que grande parte dos `REVIEW` do DCM eram VMs que já tinham IP vinculado no NetBox a:
 
 ```text
-READY: 7
-REVIEW: 47
-BLOCKED: 6
+virtualization.vminterface
 ```
 
-A partir da 1.10.9, o próprio pipeline de rede mostra no terminal:
+Esses objetos não devem virar `dcim.device` e também não representam trabalho pendente do pipeline Network.
+
+A partir da 1.10.10:
+
+```text
+IP de Network já pertencente a virtualization.vminterface
+→ decisão DELEGATED
+→ action NOOP
+→ owner Hypervisor
+→ nenhuma escrita Network
+```
+
+O diagnóstico mostra:
+
+```text
+DELEGATED/HYPERVISOR: N
+NETWORK DELEGADOS AO HYPERVISOR
+```
+
+Proteção adicional: um asset com MAC VMware/asset class de VM, mas ainda sem correspondência no inventário Hypervisor, vira `REVIEW` com:
+
+```text
+VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
+```
+
+Assim o pipeline Network não cria uma VM como equipamento físico por engano.
+
+## Dell Networking — 1.10.10
+
+Modelos físicos de switch Dell identificados por ENTITY-MIB/modelo de hardware agora têm prioridade sobre fingerprints genéricos de Linux/SSH, SNMP ou Web.
+
+Exemplos observados no DCM:
+
+```text
+N2024
+PCT7024 / PowerConnect 7024
+S4128F-ON
+```
+
+Todos são tratados como `NETWORK_SWITCH` quando o modelo de hardware confirma a família.
+
+Isso é importante porque sistemas Dell Networking podem expor SSH/Linux, mas o asset continua sendo um switch físico.
+
+## Diagnóstico automático do PLAN Network — 1.10.9+
+
+`netbox-discovery run` mostra:
 
 ```text
 NETWORK PLAN DIAGNÓSTICO
+NETWORK DELEGADOS AO HYPERVISOR
 NETWORK NOVOS OBJETOS READY
 NETWORK AJUSTES READY
 NETWORK PENDÊNCIAS POR MOTIVO
 NETWORK PENDÊNCIAS DETALHADAS
 ```
 
-Para cada `REVIEW`/`BLOCKED`, o produto exibe:
-
-- IP e nome desejado;
-- role e confiança;
-- motivos do PLAN;
-- estado/motivo do matching;
-- fabricante, modelo e serial;
-- SNMP name/object-id/MAC de gerenciamento;
-- evidência usada pelo CLASSIFY.
-
-Objetivo: nenhuma operação normal deve exigir abrir JSON ou executar Python ad-hoc para descobrir por que um asset não está `READY`.
-
-A 1.10.9 **não afrouxa as regras de segurança**. Ela torna as decisões existentes visíveis para orientar as próximas correções do classificador/reconciliador/planner.
+Para READY/REVIEW/BLOCKED o produto mostra evidências relevantes sem exigir JSON/Python ad-hoc.
 
 ## Política Network
 
 ```text
 READY       → elegível para escrita somente com --apply
+DELEGATED   → pertencente a outro pipeline; NOOP no Network
 REVIEW      → não escreve
 BLOCKED     → não escreve
 run         → dry-run
 run --apply → IMPORT apenas de READY + AUDIT
 ```
 
-O PLAN bloqueia ou revisa, entre outros casos:
+O PLAN revisa/bloqueia confiança insuficiente, role desconhecida, OOB sem parent, conflito de identidade, IP pertencente a outro Device e drift destrutivo.
 
-- confiança abaixo de HIGH;
-- role UNKNOWN;
-- OOB sem parent;
-- conflito de serial/MAC/IP/nome;
-- IP já pertencente a outro Device;
-- IP associado a objeto externo, como interface de VM;
-- drift de inventário que não deve ser sobrescrito cegamente.
+## Hypervisor LIVE PASS — 1.10.8
 
-## VM acompanha Tenant/Site do Host/Cluster — 1.10.8
-
-Quando uma VM existente é reclassificada, o produto:
-
-```text
-revalida identidade forte da VM
-→ relê Device/Cluster atual
-→ confirma Parent no Site alvo
-→ PATCH tenant + site juntos
-→ ajusta Tenant dos IPs vinculados
-```
-
-Se o Parent estiver fora do Site alvo, `VM PARENT PREFLIGHT` bloqueia o lote.
-
-## Migração coordenada de Cluster/Site — 1.10.7
-
-Quando Cluster scoped e Devices-host precisam mudar juntos de Site:
-
-```text
-RECLASSIFY PREFLIGHT
-→ valida todos os hosts do Cluster
-→ remove temporariamente scope do Cluster
-→ move Devices-host
-→ reaplica scope no Site alvo
-→ continua VMs
-```
-
-Sem DELETE automático.
-
-## Compare Hypervisor — 1.10.7+
-
-```bash
-netbox-discovery hypervisor run --compare
-```
-
-Somente leitura. Compara Hosts, VMs, Clusters e Prefixes e retorna:
-
-```text
-OK
-MISMATCH
-MISSING
-AMBIGUOUS
-```
-
-Após o APPLY 1.10.8 no DCM, a validação real fechou em:
+Após o APPLY multi-contexto e compare final:
 
 ```text
 Objetos comparados: 282
@@ -151,32 +130,19 @@ AMBIGUOUS: 0
 COMPARE STATUS: OK
 ```
 
-## Preflight Hypervisor
-
-Antes da primeira escrita:
-
-```text
-HYPERVISOR PREFLIGHT GLOBAL MULTI-CONTEXT
-→ reconstruir PLAN atual
-→ REVIEW/BLOCKED precisam ser 0
-→ conjunto RECLASSIFY_SAFE precisa permanecer igual
-→ revalidar identidade forte
-→ só então escrever
-```
+A VM acompanha Tenant/Site do Host/Cluster, Cluster/Site usa migração coordenada e o compare é read-only.
 
 ## Identidade e reconciliação
 
 Regras conservadoras:
 
-- nome sozinho nunca autoriza migração/reclassificação forte;
+- nome sozinho não autoriza migração forte;
 - serial/UUID, IP e MAC são evidências fortes quando inequívocas;
-- MAC de gerenciamento autoritativo é usado para reconciliação de rede;
-- MACs auxiliares permanecem evidência, mas não fundem assets sozinhos;
-- inventário não é apagado automaticamente por ausência em uma coleta.
+- MAC de gerenciamento autoritativo é usado no Network;
+- MACs auxiliares não fundem assets sozinhos;
+- ausência em coleta não vira DELETE automático.
 
 ## Estrutura Tenant/Site
-
-O produto é genérico. Não existe hardcode de cliente.
 
 ```text
 Tenant Group [opcional]
@@ -184,11 +150,14 @@ Tenant Group [opcional]
     └── Site
 ```
 
+O produto é genérico e não contém hardcode de cliente.
+
 ## Segurança operacional
 
 ```text
 Network run                 = dry-run
 Network run --apply         = escrita de READY + AUDIT
+DELEGATED                   = nunca escreve no Network
 Hypervisor run              = dry-run
 Hypervisor run --compare    = read-only
 Hypervisor run --apply      = escrita após preflight
@@ -196,14 +165,7 @@ REVIEW/BLOCKED              = não escrevem
 DELETE Hypervisor           = nunca automático
 ```
 
-Outras proteções:
-
-- Network, Hypervisor, Compare e Update compartilham lock global;
-- GET pode receber retry seguro;
-- POST/PATCH não recebe retry cego;
-- APPLY Hypervisor mantém journal;
-- schedulers Network/Hypervisor são opt-in;
-- auto-update `stable` usa backup, validação e rollback.
+Network, Hypervisor, Compare e Update compartilham lock global. POST/PATCH não recebem retry cego.
 
 ## Operação
 
@@ -215,13 +177,11 @@ netbox-discovery health
 
 netbox-discovery run
 netbox-discovery run --apply
-netbox-discovery scheduler status
 
 netbox-discovery hypervisor check
 netbox-discovery hypervisor run
 netbox-discovery hypervisor run --compare
 netbox-discovery hypervisor run --apply
-netbox-discovery hypervisor status
 
 netbox-discovery update status
 netbox-discovery update check
