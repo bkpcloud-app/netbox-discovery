@@ -110,39 +110,65 @@ scheduler_disable() {
 
 hypervisor_deps_install() {
   require_root
-  local need_external=0 type
+
+  local need_vmware=0
+  local need_hyperv=0
+  local type
   for type in "$@"; do
     case "$type" in
-      vmware|hyperv|all) need_external=1 ;;
+      vmware) need_vmware=1 ;;
+      hyperv) need_hyperv=1 ;;
+      all) need_vmware=1; need_hyperv=1 ;;
       proxmox|'') ;;
       *) echo "ERRO: tipo de conector Hypervisor inválido: $type" >&2; return 1 ;;
     esac
   done
-  [[ "$need_external" -eq 0 ]] && return 0
+
+  if [[ "$need_vmware" -eq 0 && "$need_hyperv" -eq 0 ]]; then
+    return 0
+  fi
 
   local vendor="$BASE/vendor"
-  local packages=(
-    'requests==2.27.1'
-    'urllib3==1.26.18'
-    'charset-normalizer==2.0.12'
-    'idna==3.6'
-    'certifi==2024.2.2'
-    'six==1.16.0'
-    'pyvmomi==7.0.3'
-    'pywinrm==0.4.3'
-    'requests-ntlm==1.1.0'
-    'ntlm-auth==1.5.0'
-    'xmltodict==0.13.0'
-  )
+  local packages=('six==1.16.0')
+
+  if [[ "$need_vmware" -eq 1 ]]; then
+    packages+=('pyvmomi==7.0.3')
+  fi
+
+  if [[ "$need_hyperv" -eq 1 ]]; then
+    packages+=(
+      'requests==2.27.1'
+      'urllib3==1.26.18'
+      'charset-normalizer==2.0.12'
+      'idna==3.6'
+      'certifi==2024.2.2'
+      'cryptography==3.4.8'
+      'pywinrm==0.4.3'
+      'requests-ntlm==1.1.0'
+      'ntlm-auth==1.5.0'
+      'xmltodict==0.13.0'
+    )
+  fi
+
   local fingerprint marker
-  fingerprint=$(printf '%s\n' "${packages[@]}" | sha256sum | awk '{print $1}')
+  fingerprint=$(printf '%s\n' "vmware=$need_vmware" "hyperv=$need_hyperv" "${packages[@]}" | sha256sum | awk '{print $1}')
   marker="$vendor/.requirements.sha256"
-  if [[ -f "$marker" ]] && [[ "$(cat "$marker" 2>/dev/null || true)" == "$fingerprint" ]]; then
-    if PYTHONPATH="$vendor${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" - <<'PYDEPS' >/dev/null 2>&1
-import pyVmomi
-import winrm
+
+  validate_vendor() {
+    local path="$1"
+    NEED_VMWARE="$need_vmware" NEED_HYPERV="$need_hyperv" \
+      PYTHONPATH="$path${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" - <<'PYDEPS'
+import os
+if os.environ.get('NEED_VMWARE') == '1':
+    import pyVmomi
+if os.environ.get('NEED_HYPERV') == '1':
+    import winrm
+print('HYPERVISOR DEPS: OK')
 PYDEPS
-    then
+  }
+
+  if [[ -f "$marker" ]] && [[ "$(cat "$marker" 2>/dev/null || true)" == "$fingerprint" ]]; then
+    if validate_vendor "$vendor" >/dev/null 2>&1; then
       return 0
     fi
   fi
@@ -156,34 +182,53 @@ PYDEPS
     fi
   fi
 
-  local tmp
+  local tmp pip_bootstrap
   tmp="$(mktemp -d "$BASE/vendor.tmp.XXXXXX")"
-  echo "Preparando dependências Hypervisor isoladas..."
-  if ! "$PYTHON" -m pip install --disable-pip-version-check --no-cache-dir --target "$tmp" "${packages[@]}"; then
-    rm -rf "$tmp"
+  pip_bootstrap="$(mktemp -d "$BASE/pip-bootstrap.tmp.XXXXXX")"
+
+  cleanup_hypervisor_deps_tmp() {
+    rm -rf "$tmp" "$pip_bootstrap"
+  }
+
+  echo "Preparando instalador Python compatível com Python 3.6..."
+  if ! "$PYTHON" -m pip install --disable-pip-version-check --no-cache-dir --target "$pip_bootstrap" \
+      'pip==21.3.1' 'setuptools==59.6.0' 'wheel==0.37.1'; then
+    cleanup_hypervisor_deps_tmp
+    echo "ERRO: falha ao preparar pip compatível; vendor atual foi preservado." >&2
+    return 1
+  fi
+
+  if [[ "$need_vmware" -eq 1 && "$need_hyperv" -eq 1 ]]; then
+    echo "Preparando dependências VMware + Hyper-V isoladas..."
+  elif [[ "$need_vmware" -eq 1 ]]; then
+    echo "Preparando dependências VMware isoladas..."
+  else
+    echo "Preparando dependências Hyper-V isoladas..."
+  fi
+
+  if ! PYTHONPATH="$pip_bootstrap${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PYTHON" -m pip install --disable-pip-version-check --no-cache-dir --target "$tmp" "${packages[@]}"; then
+    cleanup_hypervisor_deps_tmp
     echo "ERRO: falha ao instalar dependências Hypervisor; vendor atual foi preservado." >&2
     return 1
   fi
-  if ! PYTHONPATH="$tmp${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" - <<'PYDEPS'
-import pyVmomi
-import winrm
-print('HYPERVISOR DEPS: OK')
-PYDEPS
-  then
-    rm -rf "$tmp"
+
+  if ! validate_vendor "$tmp"; then
+    cleanup_hypervisor_deps_tmp
     echo "ERRO: validação das dependências Hypervisor falhou; vendor atual foi preservado." >&2
     return 1
   fi
+
   printf '%s\n' "$fingerprint" > "$tmp/.requirements.sha256"
   rm -rf "$vendor.old"
   [[ -d "$vendor" ]] && mv "$vendor" "$vendor.old"
   if ! mv "$tmp" "$vendor"; then
     [[ -d "$vendor.old" ]] && mv "$vendor.old" "$vendor"
-    rm -rf "$tmp"
+    cleanup_hypervisor_deps_tmp
     echo "ERRO: não foi possível ativar vendor Hypervisor." >&2
     return 1
   fi
-  rm -rf "$vendor.old"
+  rm -rf "$vendor.old" "$pip_bootstrap"
 }
 
 hypervisor_deps_from_config() {

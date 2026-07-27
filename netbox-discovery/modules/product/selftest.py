@@ -23,7 +23,7 @@ def check(base, package_root=""):
         "modules/product/configurator_v2.py", "modules/product/runner.py",
         "modules/product/updater.py", "modules/product/health.py",
         "modules/product/selftest.py", "modules/hypervisor/configurator_v2.py",
-        "modules/hypervisor/runner.py",
+        "modules/hypervisor/deps_vmware.py", "modules/hypervisor/runner.py",
         "systemd/netbox-discovery-update.service", "systemd/netbox-discovery-update.timer",
     ]
     for rel in required:
