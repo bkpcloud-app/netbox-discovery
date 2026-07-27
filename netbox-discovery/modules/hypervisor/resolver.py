@@ -64,6 +64,74 @@ def management_network_groups(raw):
     return [groups[key] for key in sorted(groups)]
 
 
+def _network_detail(row):
+    return {
+        "network": clean(row.get("network")),
+        "hosts": sorted(list(row.get("hosts") or [])),
+        "datacenters": sorted(list(row.get("datacenters") or [])),
+        "clusters": sorted(list(row.get("clusters") or [])),
+    }
+
+
+def management_placement_groups(raw):
+    """Collapse management networks that clearly belong to one VMware Datacenter.
+
+    ESXi can expose several vmkernel NICs with the VMware 'management' service
+    enabled. Asking Tenant/Site once per vmkernel network is noisy and can lead
+    to accidental inconsistent mappings. When a management network is observed
+    only inside one Datacenter, group those networks by Datacenter and ask once.
+    Ambiguous networks (no Datacenter or shared by multiple Datacenters) remain
+    individual groups and therefore still require explicit mapping.
+
+    Per-network evidence is retained so that opening a Datacenter group for
+    detailed review shows only the Hosts/Clusters actually observed on each CIDR.
+    """
+    network_groups = management_network_groups(raw)
+    by_dc = {}
+    individual = []
+
+    for row in network_groups:
+        network = clean(row.get("network"))
+        detail = _network_detail(row)
+        dcs = [clean(x) for x in row.get("datacenters") or [] if clean(x)]
+        if len(dcs) != 1:
+            individual.append({
+                "kind": "network",
+                "label": network,
+                "networks": [network],
+                "hosts": list(detail["hosts"]),
+                "datacenters": list(detail["datacenters"]),
+                "clusters": list(detail["clusters"]),
+                "network_details": {network: detail},
+            })
+            continue
+
+        dc = dcs[0]
+        group = by_dc.setdefault(dc, {
+            "kind": "datacenter",
+            "label": dc,
+            "networks": [],
+            "hosts": [],
+            "datacenters": [dc],
+            "clusters": [],
+            "network_details": {},
+        })
+        if network and network not in group["networks"]:
+            group["networks"].append(network)
+        group["network_details"][network] = detail
+        for key in ("hosts", "clusters"):
+            for value in row.get(key) or []:
+                if value not in group[key]:
+                    group[key].append(value)
+
+    rows = [by_dc[key] for key in sorted(by_dc)] + individual
+    for row in rows:
+        row["networks"] = sorted(row.get("networks") or [])
+        row["hosts"] = sorted(row.get("hosts") or [])
+        row["clusters"] = sorted(row.get("clusters") or [])
+    return rows
+
+
 def validate_mapping(mapping, mode):
     network = clean(mapping.get("network"))
     try:

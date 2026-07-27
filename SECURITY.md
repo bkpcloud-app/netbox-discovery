@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.10.1
+**Versão da política:** 1.10.2
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; **dados operacionais e credenciais de clientes não podem**.
 
@@ -62,7 +62,7 @@ Requisitos:
 - segredos mascarados em saídas públicas do config;
 - nunca incluir cópia desse arquivo em issue, PR, relatório ou documentação.
 
-Dependências Python de conectores ficam isoladas em:
+Dependências Python ficam isoladas em:
 
 ```text
 /opt/netbox-discovery/vendor
@@ -70,19 +70,31 @@ Dependências Python de conectores ficam isoladas em:
 
 ## Multi-Tenant / multi-Site — 1.10+
 
-O modo multi-contexto adiciona regras específicas:
-
-- Host é resolvido por mapping de rede de gerenciamento;
+- Host é resolvido por mappings de rede de gerenciamento;
 - VM herda o contexto do Host como primeira escolha;
 - sem mapping confiável o objeto vira `REVIEW`;
 - o produto não deve adivinhar Tenant/Site pelo nome da VM;
 - serial/UUID já existente fora do contexto alvo vira `REVIEW` em vez de CREATE duplicado;
-- reclassificação/migração de objeto existente não é feita automaticamente na 1.10.1;
+- reclassificação/migração de objeto existente não é automática;
 - criação/reuso de Tenant Group/Tenant/Site durante o wizard é estrutural e explícita; não equivale a importar Hosts/VMs.
+
+### Agrupamento VMware 1.10.2
+
+Um ESXi pode possuir múltiplos vmkernel com o serviço VMware `management` habilitado. A 1.10.2 não trata cada CIDR automaticamente como um Site diferente.
+
+O wizard pode agrupar redes quando todas apontam inequivocamente para o mesmo VMware Datacenter. O usuário confirma se o grupo pertence a um único Tenant/Site. Se responder não, o produto abre revisão por rede.
+
+Regras de segurança:
+
+- rede associada a mais de um Datacenter não é agrupada automaticamente;
+- mappings existentes divergentes não são consolidados silenciosamente;
+- Tenant/Site continua sendo confirmação explícita;
+- o agrupamento altera apenas configuração estrutural/mappings, não executa IMPORT de Hosts/VMs;
+- qualquer incerteza deve terminar em revisão, não em inferência silenciosa.
 
 ## Dados de cliente em mappings
 
-`hypervisors.json` pode conter nomes de Tenant/Site e evidências de hosts/Datacenters/Clusters, além de credenciais. Por isso o arquivo inteiro deve ser tratado como sensível mesmo quando o campo `secret` é mascarado em relatório.
+`hypervisors.json` pode conter nomes de Tenant/Site e evidências de hosts/Datacenters/Clusters, além de credenciais. Trate o arquivo inteiro como sensível.
 
 ## Atualização
 
@@ -95,7 +107,7 @@ O updater stable:
 - bloqueia downgrade;
 - usa quarentena para versão quebrada.
 
-A partir da 1.10.1, documentação obrigatória também entra na validação de release. Uma versão cujo manual/documentação não corresponda ao `VERSION` deve falhar no self-test/CI.
+Desde a 1.10.1, documentação obrigatória entra na validação de release. Uma versão cujo manual/documentação não corresponda ao `VERSION` deve falhar no self-test/CI.
 
 ## Homologação
 

@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.1 — Matriz de Homologação
+# netbox-discovery 1.10.2 — Matriz de Homologação
 
 Este arquivo separa claramente **implementação/CI** de **validação real ao vivo**.
 
@@ -15,22 +15,25 @@ NOT LIVE      = ainda não homologado ao vivo
 
 ---
 
-## DCM — histórico real
+## DCM — ambiente de referência
 
-### Estrutura base Tenant Group / Tenant / Site
+```text
+Proxy: SNOC-AGL-DCM
+Python: 3.6.8
+Tenant Group base: POLIMIX
+Tenant base: MIZU
+Site base: DCM
+NetBox: https://inventory.bkpcloud.app.br:8080
+```
+
+---
+
+## Estrutura base Tenant Group / Tenant / Site
 
 **Estado:** LIVE PASS  
 **Release de referência:** 1.9.2
 
-Validado em DCM com:
-
-```text
-Tenant Group: POLIMIX
-Tenant: MIZU
-Site: DCM
-```
-
-Resultado observado:
+Validado:
 
 ```text
 Tenant Group POLIMIX: CRIADO
@@ -39,34 +42,27 @@ Site DCM: CRIADO
 ESTRUTURA BASE: OK
 ```
 
-Importante: a relação não é hardcoded no produto. O grupo é explícito na configuração.
+A relação não é hardcoded. O grupo é explícito na configuração.
 
 ---
 
-### Dependências VMware isoladas
+## Dependências VMware isoladas
 
 **Estado:** LIVE PASS  
 **Release de referência:** 1.9.3
 
-Ambiente:
-
-```text
-Proxy: SNOC-AGL-DCM
-Python: 3.6.8
-```
-
-Validado que o caminho VMware instala somente o conjunto necessário para VMware e não força dependências do Hyper-V/Rust.
-
-Conjunto top-level observado:
+Conjunto top-level VMware observado:
 
 ```text
 six==1.16.0
 pyvmomi==7.0.3
 ```
 
+O caminho VMware não força dependências Hyper-V/Rust.
+
 ---
 
-### VMware configure / conexão / save
+## VMware configure / conexão / save
 
 **Estado:** LIVE PASS  
 **Release de referência:** 1.9.4
@@ -78,22 +74,18 @@ vmware-10-1-1-20
 VMware vCenter Server 7.0.3 build-24322018
 ```
 
-Resultado observado:
+Resultado:
 
 ```text
 CONEXÃO: OK
 SOURCE SALVA
 ```
 
-O bug de import do `vendor` na mesma execução foi corrigido e validado ao vivo.
-
 ---
 
-### VMware hypervisor check
+## VMware hypervisor check
 
 **Estado:** LIVE PASS
-
-Resultado observado:
 
 ```text
 NETBOX: OK
@@ -105,20 +97,20 @@ NetBox write: NÃO
 
 ---
 
-### Política de IP secundário interno
+## Política de IP secundário interno
 
 **Estado:** LIVE PASS  
 **Release de referência:** 1.9.6
 
-Problema real observado:
+Problema real:
 
 ```text
 172.18.0.1
 ```
 
-aparecia como IP interno repetido em VMs diferentes e gerava falso `REVIEW`.
+aparecia repetido em VMs distintas e gerava falso `REVIEW`.
 
-Após correção, dry-run observado:
+Após correção:
 
 ```text
 READY: 130
@@ -126,14 +118,14 @@ REVIEW: 0
 BLOCKED: 0
 ```
 
-A correção foi feita por política genérica de IP autoritativo, não por exceção específica para `172.18.0.1`.
+A correção é genérica; não existe exceção hardcoded para `172.18.0.1`.
 
 ---
 
-### Dois vCenters no mesmo proxy
+## Dois vCenters no mesmo proxy
 
 **Estado:** LIVE PASS para coleta/conectividade  
-**Escopo:** não significa classificação correta de Tenant/Site
+**Observação:** isso não significa classificação correta de Tenant/Site.
 
 Sources reais:
 
@@ -142,7 +134,7 @@ Sources reais:
 10.1.1.10 → VMware vCenter 8.0.3
 ```
 
-Coleta consolidada observada:
+Coleta consolidada:
 
 ```text
 hosts=22
@@ -152,12 +144,12 @@ clusters=2
 
 ---
 
-### APPLY Hypervisor V2
+## APPLY Hypervisor V2
 
 **Estado:** LIVE PARTIAL  
 **Release de referência:** 1.9.7
 
-Import real executado:
+Import real:
 
 ```text
 Hosts processados: 22
@@ -166,9 +158,7 @@ Erros: 0
 NetBox write: SIM
 ```
 
-Isso comprova que o caminho de escrita processou os objetos sem erro de import.
-
-Porém o pós-AUDIT retornou:
+Pós-AUDIT:
 
 ```text
 PASS: 278
@@ -176,18 +166,16 @@ WARN: 1
 FAIL: 1
 ```
 
-Portanto **o fluxo completo não foi homologado como idempotente/perfeito**.
+Portanto o fluxo completo não foi homologado como idempotente/perfeito.
 
-Além disso, depois foi identificado que as sources estavam em escopo único `MIZU/DCM`, embora os vCenters enxergassem hosts de vários Sites. Assim, a localização Tenant/Site dos objetos daquele primeiro APPLY não deve ser considerada correta como modelo final.
+Depois foi identificado que as sources estavam sendo tratadas como `MIZU/DCM`, embora os vCenters enxergassem hosts de vários Sites. A localização Tenant/Site daquele primeiro APPLY não deve ser considerada modelo final.
 
 ---
 
-### Diagnóstico de resíduos do PLAN
+## Diagnóstico de resíduos do PLAN
 
 **Estado:** LIVE PASS  
 **Release de referência:** 1.9.8
-
-A saída passou a mostrar automaticamente `REVIEW` e `UPDATE_SAFE` sem exigir leitura manual de JSON.
 
 Casos observados:
 
@@ -200,44 +188,126 @@ SRV-AE02 → device
 SNOC-PXARG-DCM → device
 ```
 
-Esse diagnóstico levou à mudança arquitetural de 1.10.
+Esse diagnóstico levou à arquitetura multi-contexto.
 
 ---
 
-## Hypervisor multi-Tenant / multi-Site — 1.10
+## Atualização 1.10.1 no DCM
+
+**Estado:** LIVE PASS
+
+Observado:
+
+```text
+Versão instalada: 1.10.1
+Self-test: PASS
+Config existente: preservada
+Hypervisor sources: 2
+Schedulers Network/Hypervisor: DISABLED
+```
+
+---
+
+## Primeira tentativa real do wizard `multi_tenant` — 1.10.1
+
+**Estado:** LIVE PARTIAL
+
+Source:
+
+```text
+vmware-10-1-1-20
+VMware vCenter Server 7.0.3 build-24322018
+```
+
+A source foi editada até:
+
+```text
+Como este hypervisor deve ser tratado?
+3 - MULTI-TENANT / MULTI-SITE
+```
+
+Conexão:
+
+```text
+CONEXÃO: OK
+```
+
+A descoberta encontrou:
+
+```text
+[1/11] Rede de gerenciamento: 10.1.1.0/24
+Hosts: vm-ae03.mizu.local, vm-ae01.mizu.local, vm-ae04.mizu.local, vm-ae02.mizu.local
+Datacenter(s): DCM
+Cluster(s): Cluster
+```
+
+Ponto crítico observado:
+
+```text
+4 Hosts
+11 redes VMware marcadas com serviço management
+```
+
+Conclusão: perguntar Tenant/Site uma vez por CIDR seria repetitivo e poderia induzir mapeamentos inconsistentes. A execução foi interrompida **antes de preencher Tenant/Site e antes de salvar a source alterada**.
+
+Nenhum novo mapping multi-contexto foi persistido nessa tentativa.
+
+---
+
+## Wizard com agrupamento por Datacenter — 1.10.2
 
 **Estado:** CI PASS / NOT LIVE
 
-Implementado:
+Objetivo:
 
-```text
-single_site
-multi_site
-multi_tenant
-```
+- agrupar redes VMware `management` quando todas pertencem inequivocamente ao mesmo Datacenter;
+- perguntar Tenant/Site uma vez por grupo;
+- manter um mapping CIDR por baixo para o resolver atual;
+- permitir abrir revisão por rede quando um Datacenter não representa um único Site;
+- não agrupar rede compartilhada por vários Datacenters;
+- não consolidar mappings existentes divergentes silenciosamente.
 
 Regressões automatizadas cobrem:
 
-- agrupamento de hosts por rede de gerenciamento;
+- três redes management em dois Hosts do mesmo Datacenter → um grupo;
+- Datacenters DCM e FBA → grupos separados;
+- rede compartilhada entre dois Datacenters → grupo individual/ambíguo;
 - VM herdando contexto do Host;
 - host sem mapping não sendo adivinhado;
 - `multi_site` usando Tenant padrão;
-- validação de mapping `multi_tenant`;
-- guarda global impedindo CREATE duplicado por serial/UUID fora do contexto alvo;
+- mapping `multi_tenant` válido;
+- guarda global impedindo CREATE duplicado por serial/UUID;
 - regressões antigas da linha 1.9.
 
-**Ainda não validado ao vivo:**
+**Ainda não validado ao vivo:** repetir o wizard 1.10.2 no DCM e confirmar que as 11 redes do primeiro vCenter aparecem agrupadas no Datacenter `DCM`.
 
-- edição real das duas sources DCM para `multi_tenant`;
-- descoberta real de todas as redes de gerenciamento dos 22 hosts;
-- provisionamento real de todos os Tenants/Sites encontrados;
-- dry-run multi-contexto real com os dois vCenters;
-- comportamento do PLAN diante dos 280 objetos que já foram criados anteriormente em `MIZU/DCM`;
-- migração/reclassificação segura desses objetos existentes;
+---
+
+## Hypervisor multi-Tenant / multi-Site — estado geral
+
+**Estado:** LIVE PARTIAL / fluxo completo ainda NOT LIVE
+
+Já validado ao vivo:
+
+- conexão VMware;
+- duas sources;
+- coleta de 22 Hosts / 255 VMs;
+- seleção do modo `multi_tenant` até a etapa de descoberta;
+- descoberta real de múltiplas redes `management` no primeiro vCenter.
+
+Ainda falta:
+
+- concluir mappings da primeira source;
+- mapear a segunda source;
+- provisionar/reutilizar todos os Tenants/Sites necessários;
+- `hypervisor check` após mappings;
+- dry-run multi-contexto real;
+- avaliar os 280 objetos já criados anteriormente em `MIZU/DCM`;
+- projetar/revisar reclassificação segura;
 - APPLY multi-contexto real;
-- AUDIT/idempotência multi-contexto real.
+- AUDIT e segundo dry-run de idempotência.
 
-Até esses testes ocorrerem, **não chamar 1.10 multi-contexto de homologado ao vivo**.
+Até isso ocorrer, não chamar o multi-contexto completo de `LIVE PASS`.
 
 ---
 
@@ -245,15 +315,7 @@ Até esses testes ocorrerem, **não chamar 1.10 multi-contexto de homologado ao 
 
 **Estado:** CI PASS / NOT LIVE
 
-O código possui:
-
-- `management_mac`;
-- correlação por MAC;
-- persistência em `dcim/mac-addresses`;
-- vínculo com interface;
-- validação no audit.
-
-Ainda falta homologação real completa da persistência MAC no endpoint NetBox de produção, incluindo idempotência e comportamento exato de `dcim/mac-addresses`.
+O código possui correlação/persistência de `management_mac`, vínculo com interface e validação no audit. Ainda falta homologação real completa do endpoint `dcim/mac-addresses` no NetBox de produção.
 
 ---
 
@@ -263,7 +325,7 @@ Ainda falta homologação real completa da persistência MAC no endpoint NetBox 
 
 **Estado:** LIVE PASS
 
-Atualizações reais 1.9.x → 1.10.0 foram executadas preservando configuração e com self-test PASS.
+Atualizações reais 1.9.x → 1.10.1 foram executadas preservando configuração e com self-test PASS.
 
 ### Network scheduler
 
@@ -273,34 +335,35 @@ Atualizações reais 1.9.x → 1.10.0 foram executadas preservando configuraçã
 
 **Estado no DCM:** DESABILITADO durante homologação.
 
-Não habilitar APPLY automático enquanto o multi-contexto não estiver homologado ao vivo.
+Não habilitar APPLY automático enquanto o multi-contexto não estiver `LIVE PASS`.
 
 ---
 
 ## Próxima homologação obrigatória — DCM
 
-Sequência:
-
 ```text
-1. atualizar para 1.10.1+
-2. editar a primeira source
-3. escolher o modo correto, provavelmente multi_tenant
-4. revisar cada rede de gerenciamento detectada
-5. mapear Tenant Group / Tenant / Site
-6. repetir na segunda source
-7. hypervisor check
-8. hypervisor run SEM --apply
-9. conferir contextos e REVIEWs
-10. avaliar reclassificação dos objetos já existentes em MIZU/DCM
-11. somente após plano seguro considerar APPLY
-12. executar AUDIT e segundo dry-run para idempotência
+1. atualizar para 1.10.2
+2. editar a primeira source vmware-10-1-1-20
+3. escolher multi_tenant
+4. confirmar o novo grupo de posicionamento do Datacenter DCM
+5. conferir Hosts e todos os CIDRs exibidos
+6. confirmar se DCM é um único Tenant/Site para esse grupo
+7. preencher/confirmar Tenant Group / Tenant / Site
+8. salvar a primeira source
+9. repetir na segunda source
+10. hypervisor check
+11. hypervisor run SEM --apply
+12. conferir contextos e REVIEWs
+13. avaliar reclassificação dos objetos já existentes em MIZU/DCM
+14. somente após plano seguro considerar APPLY
+15. AUDIT + segundo dry-run para idempotência
 ```
 
 ---
 
 ## Regra de evidência
 
-Para promover um item deste arquivo de `CI PASS/NOT LIVE` para `LIVE PASS`, registrar pelo menos:
+Para promover algo para `LIVE PASS`, registrar:
 
 - versão executada;
 - comando;

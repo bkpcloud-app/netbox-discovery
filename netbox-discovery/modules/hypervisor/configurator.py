@@ -13,7 +13,7 @@ if BASE not in sys.path:
 
 from lib.config import load_config
 from modules.hypervisor.config import clean, load_hypervisor_config, save_hypervisor_config, slugify
-from modules.hypervisor.resolver import management_network_groups
+from modules.hypervisor.resolver import management_placement_groups
 from modules.hypervisor.structure import ensure_structure
 
 
@@ -115,6 +115,85 @@ def product_defaults():
     }
 
 
+def _mapping_signature(mapping, mode, defaults):
+    if not mapping:
+        return None
+    tenant = clean(mapping.get("tenant")) or (defaults["tenant"] if mode == "multi_site" else "")
+    return (
+        clean(mapping.get("tenant_group")) or defaults["tenant_group"],
+        tenant,
+        clean(mapping.get("site")),
+    )
+
+
+def _prompt_target(mode, group, old, defaults):
+    same_as_default_site = clean(group.get("label")).casefold() == clean(defaults.get("site")).casefold()
+    if mode == "multi_site":
+        tenant_group = clean(old.get("tenant_group")) or defaults["tenant_group"]
+        tenant = defaults["tenant"]
+        print("  Tenant fixo: {0}".format(tenant))
+    else:
+        tenant_group = ask("Tenant Group (opcional)", clean(old.get("tenant_group")) or defaults["tenant_group"])
+        tenant_default = clean(old.get("tenant"))
+        if not tenant_default and same_as_default_site:
+            tenant_default = defaults["tenant"]
+        tenant = ask("Tenant", tenant_default, True)
+    site_default = clean(old.get("site"))
+    if not site_default and group.get("kind") == "datacenter":
+        site_default = clean(group.get("label"))
+    site = ask("Site", site_default, True)
+    return tenant_group, tenant, site
+
+
+def _detail_for_network(group, network):
+    details = group.get("network_details") or {}
+    detail = details.get(network) or {}
+    return {
+        "hosts": list(detail.get("hosts") or group.get("hosts") or []),
+        "datacenters": list(detail.get("datacenters") or group.get("datacenters") or []),
+        "clusters": list(detail.get("clusters") or group.get("clusters") or []),
+    }
+
+
+def _append_group_mappings(mappings, group, tenant_group, tenant, site):
+    for network in group.get("networks") or []:
+        detail = _detail_for_network(group, network)
+        mappings.append({
+            "network": network,
+            "tenant_group": tenant_group,
+            "tenant": tenant,
+            "site": site,
+            "evidence": {
+                "placement_kind": group.get("kind"),
+                "placement_label": group.get("label"),
+                "hosts": detail["hosts"],
+                "datacenters": detail["datacenters"],
+                "clusters": detail["clusters"],
+            },
+        })
+
+
+def _network_subgroups(group):
+    rows = []
+    for network in group.get("networks") or []:
+        detail = _detail_for_network(group, network)
+        rows.append({
+            "kind": "network",
+            "label": network,
+            "networks": [network],
+            "hosts": detail["hosts"],
+            "datacenters": detail["datacenters"],
+            "clusters": detail["clusters"],
+            "network_details": {network: {
+                "network": network,
+                "hosts": detail["hosts"],
+                "datacenters": detail["datacenters"],
+                "clusters": detail["clusters"],
+            }},
+        })
+    return rows
+
+
 def mapping_wizard(source, current=None):
     current = current or {}
     mode = clean(source.get("inventory_mode") or "single_site")
@@ -132,50 +211,59 @@ def mapping_wizard(source, current=None):
             raise RuntimeError("modo multi-site/multi-tenant exige mapeamentos")
         return source
 
-    print("\n===== DESCOBERTA DE REDES DE GERENCIAMENTO =====")
+    print("\n===== DESCOBERTA DE POSICIONAMENTO HYPERVISOR =====")
     raw = collect_source_ready(source)
-    groups = management_network_groups(raw)
+    groups = management_placement_groups(raw)
     if not groups:
         raise RuntimeError("nenhuma rede de gerenciamento de host foi detectada")
 
     defaults = product_defaults()
+    total_networks = sum(len(x.get("networks") or []) for x in groups)
+    print("Grupos de posicionamento: {0} | Redes management detectadas: {1}".format(len(groups), total_networks))
     auto_create = yn("Criar/reutilizar automaticamente Tenant/Site no NetBox para os mapeamentos?", True)
     mappings = []
     seen = set()
-    for pos, group in enumerate(groups, 1):
-        network = group.get("network")
-        old = existing.get(network, {})
-        print("\n[{0}/{1}] Rede de gerenciamento: {2}".format(pos, len(groups), network))
+    provisioned = set()
+
+    queue = list(groups)
+    pos = 0
+    while queue:
+        group = queue.pop(0)
+        pos += 1
+        networks = list(group.get("networks") or [])
+        old_rows = [existing[x] for x in networks if x in existing]
+        old_signatures = set(_mapping_signature(x, mode, defaults) for x in old_rows)
+        old_signatures.discard(None)
+
+        if len(old_signatures) > 1 and len(networks) > 1:
+            print("\nGrupo {0}: mapeamentos existentes divergem; abrindo revisão por rede.".format(group.get("label")))
+            queue = _network_subgroups(group) + queue
+            continue
+
+        print("\n[{0}] {1}: {2}".format(pos, "Datacenter" if group.get("kind") == "datacenter" else "Rede", group.get("label")))
         print("  Hosts: {0}".format(", ".join(group.get("hosts") or []) or "?"))
-        if group.get("datacenters"):
-            print("  Datacenter(s): {0}".format(", ".join(group.get("datacenters"))))
         if group.get("clusters"):
             print("  Cluster(s): {0}".format(", ".join(group.get("clusters"))))
+        if len(networks) > 1:
+            print("  Redes VMware com serviço management ({0}): {1}".format(len(networks), ", ".join(networks)))
+            if not yn("  Usar um único Tenant/Site para todas estas redes deste Datacenter?", True):
+                queue = _network_subgroups(group) + queue
+                continue
+        elif networks:
+            print("  Rede de gerenciamento: {0}".format(networks[0]))
 
-        if mode == "multi_site":
-            tenant_group = clean(old.get("tenant_group")) or defaults["tenant_group"]
-            tenant = defaults["tenant"]
-            print("  Tenant fixo: {0}".format(tenant))
-        else:
-            tenant_group = ask("Tenant Group (opcional)", clean(old.get("tenant_group")) or defaults["tenant_group"])
-            tenant = ask("Tenant", clean(old.get("tenant")), True)
-        site = ask("Site", clean(old.get("site")), True)
-        mapping = {
-            "network": network,
-            "tenant_group": tenant_group,
-            "tenant": tenant,
-            "site": site,
-            "evidence": {
-                "hosts": list(group.get("hosts") or []),
-                "datacenters": list(group.get("datacenters") or []),
-                "clusters": list(group.get("clusters") or []),
-            },
-        }
-        mappings.append(mapping)
-        seen.add(network)
+        old = old_rows[0] if old_rows else {}
+        tenant_group, tenant, site = _prompt_target(mode, group, old, defaults)
+        _append_group_mappings(mappings, group, tenant_group, tenant, site)
+        for network in networks:
+            seen.add(network)
+
         if auto_create:
-            print("  Provisionando estrutura NetBox...")
-            ensure_structure(tenant, site, tenant_group)
+            pkey = (tenant_group.casefold(), tenant.casefold(), site.casefold())
+            if pkey not in provisioned:
+                print("  Provisionando estrutura NetBox...")
+                ensure_structure(tenant, site, tenant_group)
+                provisioned.add(pkey)
 
     # Preserve mappings not visible in this discovery, useful for temporarily offline hosts.
     for network, mapping in existing.items():
@@ -184,6 +272,7 @@ def mapping_wizard(source, current=None):
     source["mappings"] = mappings
     source["scope_mode"] = "all"
     print("\nMAPEAMENTOS SALVOS: {0}".format(len(mappings)))
+    print("CONTEXTOS PROVISIONADOS/CONFIRMADOS: {0}".format(len(provisioned) if auto_create else "sem escrita estrutural"))
     return source
 
 
