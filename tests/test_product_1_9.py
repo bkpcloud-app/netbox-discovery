@@ -111,15 +111,34 @@ def test_hypervisor_plan_issues_are_visible():
     from modules.hypervisor import runner
     plan={"records":[
         {"decision":"READY","object_type":"VM","desired_name":"OK","action":"CREATE","reason":"ok"},
-        {"decision":"READY","object_type":"VM","desired_name":"VM-RESIDUAL","action":"UPDATE_SAFE","reason":"serial/IP","pending_reason":"campos pendentes: primary_ip4"},
-        {"decision":"REVIEW","object_type":"VM","desired_name":"VM-DUP","action":"UPDATE_SAFE","reason":"IP duplicado"},
+        {"decision":"READY","object_type":"VM","desired_name":"VM-RESIDUAL","action":"UPDATE_SAFE","reason":"serial/IP","pending_reason":"campos pendentes: primary_ip4","source_id":"vc-a","host_name":"10.1.1.21","serial":"uuid-a","ips":["10.1.1.50"],"existing_id":9},
+        {"decision":"REVIEW","object_type":"VM","desired_name":"VM-DUP","action":"UPDATE_SAFE","reason":"IP duplicado","source_id":"vc-b","host_name":"10.7.1.21","serial":"uuid-b","ips":["10.7.1.50"],"existing_id":10},
         {"decision":"BLOCKED","object_type":"HOST","desired_name":"ESX01","action":"NOOP","reason":"conflito"},
     ]}
     text="\n".join(runner.plan_issue_lines(plan))
-    assert "VM-DUP" in text and "IP duplicado" in text
+    assert "VM-DUP" in text and "IP duplicado" in text and "vc-b" in text and "10.7.1.21" in text and "uuid-b" in text
+    assert "VM-RESIDUAL" in text and "primary_ip4" in text and "vc-a" in text and "NetBox object ID: 9" in text
     assert "ESX01" in text and "conflito" in text
-    assert "VM-RESIDUAL" in text and "primary_ip4" in text
     assert "OK" not in text and "PENDÊNCIAS TOTAIS: 2" in text and "AJUSTES PENDENTES: 1" in text
+
+
+def test_hypervisor_scope_bulk_update_preserves_source_data():
+    from modules.hypervisor import scope as scope_tool
+    cfg={"sources":[
+        {"id":"vc1","type":"vmware","endpoint":"10.1.1.20","username":"svc","secret":"secret1","scope_mode":"all"},
+        {"id":"vc2","type":"vmware","endpoint":"10.1.1.10","username":"svc","secret":"secret2","scope_mode":"all"},
+    ],"automation":{"enabled":False}}
+    saved=[]
+    old_save=scope_tool.save_hypervisor_config
+    try:
+        scope_tool.save_hypervisor_config=lambda data:saved.append(data)
+        scope_tool.set_scope(cfg,"site_networks")
+        assert all(x["scope_mode"]=="site_networks" for x in cfg["sources"])
+        assert cfg["sources"][0]["secret"]=="secret1" and cfg["sources"][1]["secret"]=="secret2"
+        assert cfg["sources"][0]["endpoint"]=="10.1.1.20" and cfg["sources"][1]["endpoint"]=="10.1.1.10"
+        assert saved and saved[0] is cfg
+    finally:
+        scope_tool.save_hypervisor_config=old_save
 
 
 def test_hypervisor_secondary_bridge_ip_is_not_authoritative():
@@ -210,12 +229,12 @@ def test_hypervisor_audit_details_are_visible():
 def test_versions():
     root_version=open(os.path.join(ROOT,"VERSION"),"r").read().strip()
     package_version=open(os.path.join(BASE,"VERSION"),"r").read().strip()
-    assert root_version==package_version=="1.9.8"
-    assert updater.version_key("1.9.8")>updater.version_key("1.9.7")
+    assert root_version==package_version=="1.9.9"
+    assert updater.version_key("1.9.9")>updater.version_key("1.9.8")
 
 
 def main():
-    tests=[test_management_mac,test_secondary_mac_not_identity,test_topdata_rules,test_printer_vendor_normalization,test_plan_mac_match,test_import_refreshes_planner_v2,test_explicit_tenant_group_policy,test_vmware_dependency_set_is_minimal,test_hypervisor_collector_is_loaded_after_vendor,test_hypervisor_plan_issues_are_visible,test_hypervisor_secondary_bridge_ip_is_not_authoritative,test_hypervisor_apply_and_audit_force_v2_planner_and_client,test_hypervisor_audit_details_are_visible,test_versions]
+    tests=[test_management_mac,test_secondary_mac_not_identity,test_topdata_rules,test_printer_vendor_normalization,test_plan_mac_match,test_import_refreshes_planner_v2,test_explicit_tenant_group_policy,test_vmware_dependency_set_is_minimal,test_hypervisor_collector_is_loaded_after_vendor,test_hypervisor_plan_issues_are_visible,test_hypervisor_scope_bulk_update_preserves_source_data,test_hypervisor_secondary_bridge_ip_is_not_authoritative,test_hypervisor_apply_and_audit_force_v2_planner_and_client,test_hypervisor_audit_details_are_visible,test_versions]
     for test in tests:
         test(); print("PASS",test.__name__)
     print("ALL TESTS PASSED")
