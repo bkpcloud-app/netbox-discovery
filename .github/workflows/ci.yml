@@ -17,7 +17,7 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.10.1"
+          test "$(cat VERSION)" = "1.10.2"
 
       - name: Documentation sync
         run: |
