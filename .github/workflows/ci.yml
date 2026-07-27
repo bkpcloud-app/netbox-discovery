@@ -1,0 +1,40 @@
+name: netbox-discovery-ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python
+        run: python3 --version
+
+      - name: Version sync
+        run: |
+          test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
+          test "$(cat VERSION)" = "1.9.0"
+
+      - name: Shell syntax
+        run: |
+          bash -n bootstrap.sh
+          bash -n install.sh
+          bash -n install-from-github.sh
+          bash -n netbox-discovery/bin/netbox-discovery
+
+      - name: Python compile
+        run: python3 -m compileall -q netbox-discovery tests
+
+      - name: Product self-test
+        run: python3 netbox-discovery/modules/product/selftest.py --base "$PWD/netbox-discovery" --package-root "$PWD"
+
+      - name: Regression tests
+        run: python3 tests/test_product_1_9.py
+
+      - name: Secret sanity check
+        run: |
+          ! grep -RIE --exclude-dir=.git --exclude='*.md' '(password|passwd|secret|token)[[:space:]]*[:=][[:space:]]*["'"'][^"'"']{8,}["'"']' netbox-discovery || false
