@@ -6,10 +6,12 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 BASE = os.path.join(ROOT, "netbox-discovery")
 sys.path.insert(0, BASE)
 sys.path.insert(0, os.path.join(BASE, "modules", "inventory"))
+sys.path.insert(0, os.path.join(BASE, "modules", "importers"))
 
 import classifier_v2
 import reconciler_v2
 import planner_v2
+import importer_v2
 from modules.product import updater
 
 
@@ -77,6 +79,21 @@ def test_plan_mac_match():
     assert did == 9 and state == "MATCHED" and "MAC" in reason
 
 
+def test_import_refreshes_planner_v2():
+    called = []
+    old_check = importer_v2.base.subprocess.check_call
+    old_latest = importer_v2.base.latest
+    try:
+        importer_v2.base.subprocess.check_call = lambda cmd: called.append(cmd)
+        importer_v2.base.latest = lambda pattern: "/tmp/fake-plan-v2.json"
+        path = importer_v2.refresh_plan()
+        assert path == "/tmp/fake-plan-v2.json"
+        assert called and called[0][1].endswith("planner_v2.py")
+    finally:
+        importer_v2.base.subprocess.check_call = old_check
+        importer_v2.base.latest = old_latest
+
+
 def test_versions():
     root_version = open(os.path.join(ROOT, "VERSION"), "r").read().strip()
     package_version = open(os.path.join(BASE, "VERSION"), "r").read().strip()
@@ -91,6 +108,7 @@ def main():
         test_topdata_rules,
         test_printer_vendor_normalization,
         test_plan_mac_match,
+        test_import_refreshes_planner_v2,
         test_versions,
     ]
     for test in tests:
