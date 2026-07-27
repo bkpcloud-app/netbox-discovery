@@ -251,8 +251,8 @@ O conflito anterior de `AGL-IBE03` em FMN era uma VM lixo/duplicada removida pel
 
 ## Reclassificação segura — 1.10.4
 
-**Estado:** NOT LIVE  
-**CI:** PENDENTE nesta branch até a execução do GitHub Actions
+**Estado:** CI PASS / NOT LIVE  
+**CI:** run `30276231423` — todos os passos PASS
 
 Objetivo: transformar casos de identidade forte já existente fora do contexto alvo em:
 
@@ -275,23 +275,31 @@ Regras implementadas:
 - depois da reclassificação o pipeline V2 normal executa a reconciliação;
 - DELETE automático continua proibido.
 
+Regressões CI cobrem:
+
+- identidade global única → `RECLASSIFY_SAFE`;
+- identidade global ambígua → `REVIEW`;
+- VM cross-tenant reencontrada por vínculo de IP → `RECLASSIFY_SAFE`;
+- VM ausente no snapshot → `REVIEW/NOOP`, nunca DELETE;
+- APPLY unitário de reclassificação de VM + Tenant do IP;
+- regressões legadas e de rede autoritativa 1.10.3 continuam verdes.
+
 Esta função **não pode ser chamada LIVE PASS** até:
 
 ```text
-1. CI PASS
-2. update real para 1.10.4
-3. hypervisor check
-4. hypervisor run SEM --apply
-5. revisar todos os RECLASSIFY_SAFE/REVIEW
-6. APPLY controlado
-7. AUDIT
-8. segundo dry-run idempotente
+1. update real para 1.10.4
+2. hypervisor check
+3. hypervisor run SEM --apply
+4. revisar todos os RECLASSIFY_SAFE/REVIEW
+5. APPLY controlado
+6. AUDIT
+7. segundo dry-run idempotente
 ```
 
 ## Delta de inventário Hypervisor — 1.10.4
 
-**Estado:** NOT LIVE  
-**CI:** PENDENTE
+**Estado:** CI PASS / NOT LIVE  
+**CI:** run `30276231423`
 
 A coleta atual é comparada ao snapshot multi-contexto anterior. VMs ausentes são apresentadas como:
 
@@ -321,7 +329,6 @@ Já validado ao vivo:
 
 Ainda falta para o fluxo completo:
 
-- CI da 1.10.4;
 - dry-run ao vivo da reclassificação 1.10.4;
 - APPLY multi-contexto real com reclassificação;
 - AUDIT;
@@ -346,7 +353,7 @@ Não habilitar APPLY automático enquanto o fluxo multi-contexto completo não e
 ## Próxima homologação obrigatória — DCM
 
 ```text
-1. publicar 1.10.4 somente após CI PASS
+1. publicar 1.10.4 na stable
 2. atualizar pela stable
 3. confirmar netbox-discovery version = 1.10.4
 4. hypervisor check
