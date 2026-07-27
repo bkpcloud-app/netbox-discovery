@@ -139,15 +139,51 @@ def test_hypervisor_secondary_bridge_ip_is_not_authoritative():
         engine_v2._ACTIVE_NETWORKS = old
 
 
+def test_hypervisor_apply_and_audit_force_v2_planner_and_client():
+    from modules.hypervisor import engine_v2
+    base = engine_v2.base
+    old_apply = base.apply_plan
+    old_audit = base.audit
+    old_build = base.build_plan
+    old_nb = engine_v2.NetBox
+    dummy = object()
+    seen = {}
+
+    def fake_apply(discovery, plan, nb=None):
+        seen["apply_planner"] = base.build_plan is engine_v2.build_plan
+        seen["apply_nb"] = nb
+        return "import.json"
+
+    def fake_audit(discovery, plan, nb=None):
+        seen["audit_planner"] = base.build_plan is engine_v2.build_plan
+        seen["audit_nb"] = nb
+        return "PASS", "audit.json"
+
+    try:
+        base.apply_plan = fake_apply
+        base.audit = fake_audit
+        engine_v2.NetBox = lambda: dummy
+        assert engine_v2.apply_plan({}, {}) == "import.json"
+        assert engine_v2.audit({}, {}) == ("PASS", "audit.json")
+        assert seen["apply_planner"] and seen["audit_planner"]
+        assert seen["apply_nb"] is dummy and seen["audit_nb"] is dummy
+        assert base.build_plan is old_build
+    finally:
+        base.apply_plan = old_apply
+        base.audit = old_audit
+        base.build_plan = old_build
+        engine_v2.NetBox = old_nb
+
+
 def test_versions():
     root_version=open(os.path.join(ROOT,"VERSION"),"r").read().strip()
     package_version=open(os.path.join(BASE,"VERSION"),"r").read().strip()
-    assert root_version==package_version=="1.9.6"
-    assert updater.version_key("1.9.6")>updater.version_key("1.9.5")
+    assert root_version==package_version=="1.9.7"
+    assert updater.version_key("1.9.7")>updater.version_key("1.9.6")
 
 
 def main():
-    tests=[test_management_mac,test_secondary_mac_not_identity,test_topdata_rules,test_printer_vendor_normalization,test_plan_mac_match,test_import_refreshes_planner_v2,test_explicit_tenant_group_policy,test_vmware_dependency_set_is_minimal,test_hypervisor_collector_is_loaded_after_vendor,test_hypervisor_plan_issues_are_visible,test_hypervisor_secondary_bridge_ip_is_not_authoritative,test_versions]
+    tests=[test_management_mac,test_secondary_mac_not_identity,test_topdata_rules,test_printer_vendor_normalization,test_plan_mac_match,test_import_refreshes_planner_v2,test_explicit_tenant_group_policy,test_vmware_dependency_set_is_minimal,test_hypervisor_collector_is_loaded_after_vendor,test_hypervisor_plan_issues_are_visible,test_hypervisor_secondary_bridge_ip_is_not_authoritative,test_hypervisor_apply_and_audit_force_v2_planner_and_client,test_versions]
     for test in tests:
         test(); print("PASS",test.__name__)
     print("ALL TESTS PASSED")

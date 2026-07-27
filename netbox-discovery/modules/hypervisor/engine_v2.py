@@ -7,9 +7,10 @@ import json
 
 from modules.hypervisor import engine as base
 
-ENGINE_VERSION = "2.0-product"
+ENGINE_VERSION = "2.1-product"
 _ACTIVE_NETWORKS = []
 NetBox = base.NetBox
+_BASE_BUILD_PLAN = base.build_plan
 
 
 def _authoritative_ip(iprow, ip):
@@ -60,7 +61,7 @@ def build_plan(discovery, nb=None):
     base.desired_ip_specs = desired_ip_specs
     try:
         active_nb = nb or NetBox()
-        plan, path = base.build_plan(discovery, active_nb)
+        plan, path = _BASE_BUILD_PLAN(discovery, active_nb)
         plan["engine_version"] = ENGINE_VERSION
         plan["ip_policy"] = "primary_or_site_network"
         with open(path, "w") as handle:
@@ -71,8 +72,28 @@ def build_plan(discovery, nb=None):
         _ACTIVE_NETWORKS = previous_networks
 
 
+def _call_base_with_v2_planner(func, *args, **kwargs):
+    """Force base APPLY/AUDIT preflight to reuse the exact V2 planner policy."""
+    previous_build_plan = base.build_plan
+    base.build_plan = build_plan
+    try:
+        return func(*args, **kwargs)
+    finally:
+        base.build_plan = previous_build_plan
+
+
+def apply_plan(discovery, plan, nb=None):
+    # Use the runner-injected NetBox subclass so every write is journaled.
+    active_nb = nb or NetBox()
+    return _call_base_with_v2_planner(base.apply_plan, discovery, plan, nb=active_nb)
+
+
+def audit(discovery, original_plan, nb=None):
+    # Audit must evaluate idempotency with the same V2 IP policy used by PLAN/APPLY.
+    active_nb = nb or NetBox()
+    return _call_base_with_v2_planner(base.audit, discovery, original_plan, nb=active_nb)
+
+
 # Public engine surface used by runner.py.
 collect_all = base.collect_all
-apply_plan = base.apply_plan
-audit = base.audit
 utc_now = base.utc_now
