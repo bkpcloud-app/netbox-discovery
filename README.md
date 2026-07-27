@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.10.8 — PRODUCT V1  
+**Versão atual:** 1.10.9 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -36,76 +36,102 @@ netbox-discovery hypervisor run --apply
 netbox-discovery hypervisor status
 ```
 
-Conectores:
+Conectores Hypervisor:
 
-- VMware vCenter ou ESXi standalone;
+- VMware vCenter/ESXi;
 - Proxmox VE;
 - Microsoft Hyper-V via WinRM/NTLM.
 
-Modos de source:
+## Diagnóstico automático do PLAN de rede — 1.10.9
+
+O primeiro dry-run real do DCM em 27/07/2026 encontrou 64 hosts ativos e reconciliou 60 assets, mas o PLAN terminou com:
 
 ```text
-single_site
-multi_site
-multi_tenant
+READY: 7
+REVIEW: 47
+BLOCKED: 6
 ```
+
+A partir da 1.10.9, o próprio pipeline de rede mostra no terminal:
+
+```text
+NETWORK PLAN DIAGNÓSTICO
+NETWORK NOVOS OBJETOS READY
+NETWORK AJUSTES READY
+NETWORK PENDÊNCIAS POR MOTIVO
+NETWORK PENDÊNCIAS DETALHADAS
+```
+
+Para cada `REVIEW`/`BLOCKED`, o produto exibe:
+
+- IP e nome desejado;
+- role e confiança;
+- motivos do PLAN;
+- estado/motivo do matching;
+- fabricante, modelo e serial;
+- SNMP name/object-id/MAC de gerenciamento;
+- evidência usada pelo CLASSIFY.
+
+Objetivo: nenhuma operação normal deve exigir abrir JSON ou executar Python ad-hoc para descobrir por que um asset não está `READY`.
+
+A 1.10.9 **não afrouxa as regras de segurança**. Ela torna as decisões existentes visíveis para orientar as próximas correções do classificador/reconciliador/planner.
+
+## Política Network
+
+```text
+READY       → elegível para escrita somente com --apply
+REVIEW      → não escreve
+BLOCKED     → não escreve
+run         → dry-run
+run --apply → IMPORT apenas de READY + AUDIT
+```
+
+O PLAN bloqueia ou revisa, entre outros casos:
+
+- confiança abaixo de HIGH;
+- role UNKNOWN;
+- OOB sem parent;
+- conflito de serial/MAC/IP/nome;
+- IP já pertencente a outro Device;
+- IP associado a objeto externo, como interface de VM;
+- drift de inventário que não deve ser sobrescrito cegamente.
 
 ## VM acompanha Tenant/Site do Host/Cluster — 1.10.8
 
-A VM herda o contexto autoritativo do Host onde está executando. Quando uma VM já existente precisa ser reclassificada, o produto agora trata `tenant` e `site` de forma atômica.
-
-Antes do PATCH da VM:
+Quando uma VM existente é reclassificada, o produto:
 
 ```text
 revalida identidade forte da VM
-→ relê Device/Cluster atual no NetBox
-→ confirma que o parent já está no Site alvo
-→ PATCH tenant + site no mesmo request
+→ relê Device/Cluster atual
+→ confirma Parent no Site alvo
+→ PATCH tenant + site juntos
 → ajusta Tenant dos IPs vinculados
 ```
 
-Isso evita o estado inválido em que o Host já mudou de Site, mas a VM ainda aponta para o Site anterior. A regra é genérica para qualquer Tenant/Site e não depende de nomes de cliente, Site ou IP.
-
-Se o Device/Cluster ainda estiver fora do Site alvo, o `VM PARENT PREFLIGHT` bloqueia a reclassificação antes do PATCH das VMs daquele contexto.
+Se o Parent estiver fora do Site alvo, `VM PARENT PREFLIGHT` bloqueia o lote.
 
 ## Migração coordenada de Cluster/Site — 1.10.7
 
-A 1.10.7 corrige a migração de clusters NetBox já existentes quando o Cluster e seus Devices-host precisam sair de um Site antigo e ir para outro Site.
-
-O NetBox exige que um Device host pertença ao mesmo Site do Cluster quando o Cluster possui `scope` de Site. Portanto não é seguro mover simplesmente o Cluster antes dos Hosts nem mover os Hosts enquanto o Cluster ainda está preso ao Site antigo.
-
-A sequência 1.10.7 é:
+Quando Cluster scoped e Devices-host precisam mudar juntos de Site:
 
 ```text
 RECLASSIFY PREFLIGHT
-→ valida todos os hosts membros do Cluster
-→ remove temporariamente o scope opcional do Cluster
-→ move os Devices-host para o Site alvo
-→ reaplica o scope do Cluster no Site alvo
-→ continua a reconciliação de VMs
+→ valida todos os hosts do Cluster
+→ remove temporariamente scope do Cluster
+→ move Devices-host
+→ reaplica scope no Site alvo
+→ continua VMs
 ```
 
-Proteções:
+Sem DELETE automático.
 
-- todos os hosts do Cluster que estão fora do Site alvo precisam estar cobertos por `HOST / RECLASSIFY_SAFE`;
-- host com rack/location não muda de Site automaticamente;
-- se a composição do Cluster mudar, o preflight bloqueia;
-- falha parcial mantém journal e pode ser reavaliada antes de nova tentativa;
-- nenhuma rotina executa DELETE automático.
-
-Essa correção foi adicionada após o APPLY real de 27/07/2026 parar corretamente no NetBox com HTTP 400 ao tentar mover o Cluster `FBA` enquanto dois Devices-host ainda estavam em `DCM`.
-
-## Comparação NetBox × Hypervisor — 1.10.7
-
-O modo oficial read-only:
+## Compare Hypervisor — 1.10.7+
 
 ```bash
 netbox-discovery hypervisor run --compare
 ```
 
-coleta o estado atual das sources, lê o NetBox e compara Tenant/Site atual versus Tenant/Site esperado pelos mappings.
-
-A saída mostra:
+Somente leitura. Compara Hosts, VMs, Clusters e Prefixes e retorna:
 
 ```text
 OK
@@ -114,163 +140,39 @@ MISSING
 AMBIGUOUS
 ```
 
-para Hosts, VMs, Clusters e Prefixes, além de listar todas as divergências no terminal.
-
-Regras:
-
-- não executa POST/PATCH;
-- usa o lock global e não roda durante APPLY/Update;
-- VMs associadas a Cluster usam o scope do Cluster como Site efetivo;
-- VMs associadas diretamente a Device usam o Site do Device;
-- gera relatório `MULTI-hypervisor-compare-*.json`;
-- `NetBox write: NÃO`.
-
-## Preflight global antes de qualquer escrita — 1.10.6+
-
-A partir da 1.10.6, `hypervisor run --apply` não inicia nenhuma escrita logo após o PLAN apresentado ao operador.
-
-Antes do primeiro POST/PATCH, o produto obrigatoriamente:
+Após o APPLY 1.10.8 no DCM, a validação real fechou em:
 
 ```text
-1. reconstrói o PLAN multi-contexto usando o estado atual do NetBox;
-2. aborta se surgir qualquer REVIEW ou BLOCKED;
-3. exige que o conjunto RECLASSIFY_SAFE permaneça idêntico ao dry-run;
-4. revalida a identidade forte de cada objeto imediatamente antes da reclassificação;
-5. somente depois libera RECLASSIFY_SAFE / CREATE / UPDATE_SAFE.
+Objetos comparados: 282
+OK: 282
+MISMATCH: 0
+MISSING: 0
+AMBIGUOUS: 0
+COMPARE STATUS: OK
 ```
 
-A saída esperada antes da primeira escrita é:
+## Preflight Hypervisor
+
+Antes da primeira escrita:
 
 ```text
 HYPERVISOR PREFLIGHT GLOBAL MULTI-CONTEXT
-PREFLIGHT GLOBAL: OK
-NetBox write até aqui: NÃO
+→ reconstruir PLAN atual
+→ REVIEW/BLOCKED precisam ser 0
+→ conjunto RECLASSIFY_SAFE precisa permanecer igual
+→ revalidar identidade forte
+→ só então escrever
 ```
 
-E, para contextos com migração:
+## Identidade e reconciliação
 
-```text
-RECLASSIFY PREFLIGHT Tenant/Site: OK
-NetBox write: NÃO
-```
+Regras conservadoras:
 
-Se identidade, `existing_id`, Tenant/Site alvo ou conjunto de migrações mudar entre dry-run e APPLY, o processo aborta antes da primeira escrita.
-
-## Diagnóstico automático do PLAN — 1.10.5+
-
-O operador **não precisa abrir JSON nem executar Python auxiliar** para descobrir o que o Hypervisor pretende criar.
-
-O próprio:
-
-```bash
-netbox-discovery hypervisor run
-```
-
-lista automaticamente no terminal:
-
-```text
-HYPERVISOR NOVOS OBJETOS READY
-READY / CREATE
-
-HYPERVISOR AJUSTES/MIGRAÇÕES SEGURAS PENDENTES
-READY / UPDATE_SAFE
-READY / RECLASSIFY_SAFE
-
-HYPERVISOR PENDÊNCIAS DO PLAN
-REVIEW
-BLOCKED
-```
-
-E fecha com um resumo de escrita do dry-run:
-
-```text
-CREATE READY: N
-UPDATE_SAFE/RECLASSIFY_SAFE READY: N
-REVIEW/BLOCKED: N
-NetBox write: NÃO
-```
-
-A análise é automática. A única ação manual obrigatória continua sendo a autorização de escrita real:
-
-```bash
-netbox-discovery hypervisor run --apply
-```
-
-## Reclassificação segura multi-contexto — 1.10.4+
-
-O PLAN pode produzir:
-
-```text
-READY / RECLASSIFY_SAFE
-```
-
-quando o produto reencontra a mesma identidade forte no NetBox fora do Tenant/Site autoritativo.
-
-Evidências fortes:
-
-- serial/UUID único;
-- IP inequivocamente vinculado ao mesmo objeto;
-- MAC inequivocamente vinculado ao mesmo objeto;
-- combinação coerente dessas evidências.
-
-Proteções:
-
-- nome sozinho nunca autoriza migração;
-- identidade global ambígua vira `REVIEW`;
-- serial e IP/MAC apontando para objetos diferentes vira `REVIEW`;
-- preserva o mesmo ID do objeto;
-- Host pode ter Tenant/Site corrigidos;
-- VM pode ter Tenant/Site corrigidos seguindo o contexto autoritativo do Host/Cluster;
-- IPs vinculados acompanham o Tenant quando necessário;
-- não existe DELETE automático.
-
-## Delta de inventário Hypervisor — 1.10.4+
-
-O discovery compara a coleta atual com o snapshot multi-contexto anterior.
-
-VM presente anteriormente e ausente agora:
-
-```text
-HYPERVISOR INVENTORY CHANGE
-REMOVED/REVIEW
-REVIEW / NOOP
-DELETE automático: NÃO
-```
-
-Ausência nunca vira exclusão automática.
-
-## Rede de gerenciamento autoritativa VMware — 1.10.3+
-
-Um ESXi pode ter vários vmkernel com o serviço VMware `management` habilitado. Isso não significa que todas essas redes devam decidir Tenant/Site.
-
-Seleção conservadora:
-
-1. IP de vmkernel que corresponde ao FQDN/nome do ESXi;
-2. `vmk0` marcada como management;
-3. única rede management candidata;
-4. múltiplas candidatas sem evidência forte → sem resolução automática / `REVIEW`.
-
-As demais interfaces continuam no inventário, mas não posicionam o Host.
-
-## Resolver multi-contexto
-
-Host:
-
-```text
-rede de gerenciamento autoritativa
-→ mapping mais específico
-→ Tenant/Site
-```
-
-VM:
-
-```text
-VM
-→ Host onde está executando
-→ Tenant/Site do Host
-```
-
-IP da VM é fallback. Sem evidência confiável, o objeto vira `REVIEW`.
+- nome sozinho nunca autoriza migração/reclassificação forte;
+- serial/UUID, IP e MAC são evidências fortes quando inequívocas;
+- MAC de gerenciamento autoritativo é usado para reconciliação de rede;
+- MACs auxiliares permanecem evidência, mas não fundem assets sozinhos;
+- inventário não é apagado automaticamente por ausência em uma coleta.
 
 ## Estrutura Tenant/Site
 
@@ -285,30 +187,23 @@ Tenant Group [opcional]
 ## Segurança operacional
 
 ```text
-run sem --apply             = dry-run
-hypervisor run sem --apply  = dry-run
-hypervisor run --compare    = comparação read-only
---apply                      = escrita somente de READY após preflight global
-REVIEW                       = não escreve
-BLOCKED                      = não escreve
-DELETE Hypervisor            = nunca automático
+Network run                 = dry-run
+Network run --apply         = escrita de READY + AUDIT
+Hypervisor run              = dry-run
+Hypervisor run --compare    = read-only
+Hypervisor run --apply      = escrita após preflight
+REVIEW/BLOCKED              = não escrevem
+DELETE Hypervisor           = nunca automático
 ```
 
 Outras proteções:
 
-- Network, Hypervisor e Update compartilham lock global;
-- GETs podem receber retry seguro;
-- POST/PATCH não recebem retry cego;
-- APPLY Hypervisor mantém journal das escritas;
-- credenciais Hypervisor ficam em arquivo root-only `0600`;
+- Network, Hypervisor, Compare e Update compartilham lock global;
+- GET pode receber retry seguro;
+- POST/PATCH não recebe retry cego;
+- APPLY Hypervisor mantém journal;
 - schedulers Network/Hypervisor são opt-in;
 - auto-update `stable` usa backup, validação e rollback.
-
-## Instalação
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/stable/install-from-github.sh | bash
-```
 
 ## Operação
 
@@ -317,16 +212,20 @@ netbox-discovery version
 netbox-discovery status
 netbox-discovery self-test
 netbox-discovery health
-netbox-discovery health --json
 
-netbox-discovery update status
-netbox-discovery update check
-netbox-discovery update run
+netbox-discovery run
+netbox-discovery run --apply
+netbox-discovery scheduler status
 
 netbox-discovery hypervisor check
 netbox-discovery hypervisor run
 netbox-discovery hypervisor run --compare
+netbox-discovery hypervisor run --apply
 netbox-discovery hypervisor status
+
+netbox-discovery update status
+netbox-discovery update check
+netbox-discovery update run
 ```
 
 ## Caminhos
@@ -335,10 +234,10 @@ netbox-discovery hypervisor status
 Aplicação:              /opt/netbox-discovery
 Configuração principal: /opt/netbox-discovery/config.yml
 Config Hypervisor:      /etc/netbox-discovery/hypervisors.json
-Dependências isoladas:  /opt/netbox-discovery/vendor
 Config por Site:        /opt/netbox-discovery/config/sites/
 Relatórios:             /opt/netbox-discovery/reports
 Backups:                /opt/netbox-discovery/backups
+Lock global:            /var/lock/netbox-discovery-global.lock
 ```
 
 ## Homologação

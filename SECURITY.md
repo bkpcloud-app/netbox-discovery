@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.10.8
+**Versão da política:** 1.10.9
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; **dados operacionais e credenciais de clientes não podem**.
 
@@ -19,150 +19,121 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 ## Comportamento seguro
 
 - `netbox-discovery run` é dry-run por padrão;
+- `netbox-discovery run --apply` escreve somente `READY` e executa AUDIT;
 - `netbox-discovery hypervisor run` é dry-run por padrão;
 - `netbox-discovery hypervisor run --compare` é somente leitura;
-- escrita manual exige `--apply`;
-- somente `READY` escreve;
+- escrita exige `--apply`;
 - `REVIEW` não escreve;
 - `BLOCKED` não escreve;
 - AUDIT é read-only;
-- Hypervisor não executa DELETE automático;
+- não existe DELETE automático no Hypervisor;
 - Network, Hypervisor, Compare e Update compartilham lock global;
 - retry automático é reservado a GETs seguros;
 - POST/PATCH não recebem retry cego;
-- falha parcial de APPLY mantém journal;
 - schedulers Network/Hypervisor são opt-in.
+
+## Transparência do PLAN Network — 1.10.9
+
+Segurança operacional não deve depender de abrir JSON nem executar Python ad-hoc.
+
+O `netbox-discovery run` deve mostrar:
+
+```text
+NETWORK PLAN DIAGNÓSTICO
+NETWORK NOVOS OBJETOS READY
+NETWORK AJUSTES READY
+NETWORK PENDÊNCIAS POR MOTIVO
+NETWORK PENDÊNCIAS DETALHADAS
+NetBox write: NÃO
+```
+
+Para cada `REVIEW`/`BLOCKED`, mostrar pelo menos:
+
+- IP e nome desejado;
+- role e confiança;
+- motivos;
+- match state/reason;
+- fabricante/modelo/serial;
+- sinais SNMP disponíveis;
+- evidência CLASSIFY.
+
+A visibilidade do diagnóstico **não pode alterar automaticamente a decisão** do PLAN.
+
+## Política Network
+
+O PLAN deve permanecer conservador:
+
+- confiança abaixo de HIGH → `REVIEW`;
+- role UNKNOWN → `REVIEW`;
+- OOB standalone → `REVIEW`;
+- conflito de identidade → `BLOCKED`;
+- IP pertencente a outro Device → `BLOCKED`;
+- IP associado a objeto externo → `REVIEW` até existir regra explícita e testada para esse tipo;
+- drift de inventário não vazio não é sobrescrito cegamente.
+
+Somente `READY` é consumido pelo importer.
+
+## Identidade Network
+
+- serial válido é evidência forte;
+- MAC de gerenciamento autoritativo é evidência forte;
+- MAC secundário/interface não pode fundir assets sozinho;
+- LLDP chassis ID válido pode ser evidência forte;
+- nome sozinho não é identidade global;
+- múltiplos IPs do mesmo equipamento não devem criar múltiplos Devices quando identidade forte prova que é o mesmo asset.
 
 ## Recuperação após APPLY parcial
 
-Uma falha depois de algumas escritas não autoriza rollback cego nem repetição imediata do `--apply`.
+Uma falha depois de escritas não autoriza rollback cego nem repetição imediata do `--apply`.
 
 ```text
-1. preservar estado e journal
-2. confirmar que processo/lock terminou
+1. preservar estado/journal/relatórios
+2. confirmar processo/lock
 3. não corrigir objetos em massa manualmente
-4. executar compare read-only
-5. executar dry-run se necessário
-6. revisar divergências
-7. somente depois considerar novo APPLY
+4. executar compare ou dry-run apropriado
+5. revisar divergências
+6. somente depois considerar novo APPLY
 ```
 
-Comando:
-
-```bash
-netbox-discovery hypervisor run --compare
-```
-
-O compare não executa POST/PATCH.
-
-## Preflight global — 1.10.6+
+## Preflight global Hypervisor — 1.10.6+
 
 Antes da primeira escrita Hypervisor:
 
-1. reconstruir PLAN contra o estado atual do NetBox;
-2. abortar se surgir `REVIEW`/`BLOCKED`;
-3. confirmar conjunto `RECLASSIFY_SAFE` inalterado;
+1. reconstruir PLAN atual;
+2. abortar com `REVIEW/BLOCKED`;
+3. confirmar `RECLASSIFY_SAFE` inalterado;
 4. confirmar `existing_id`, Tenant e Site alvo;
-5. revalidar identidade forte imediatamente antes da reclassificação;
+5. revalidar identidade forte;
 6. somente então permitir POST/PATCH.
 
-Qualquer drift bloqueia a escrita correspondente.
-
-## Migração coordenada de Cluster/Site — 1.10.7
-
-Quando Cluster scoped e Devices-host precisam mudar juntos de Site:
+## Cluster/Site — 1.10.7
 
 ```text
 RECLASSIFY PREFLIGHT
-→ validar membros
-→ remover temporariamente scope do Cluster
-→ mover Devices-host
-→ reaplicar Tenant/scope do Cluster no Site alvo
-→ continuar VMs
+→ remove temporariamente scope do Cluster
+→ move Devices-host
+→ reaplica scope no Site alvo
+→ continua VMs
 ```
 
-Travas:
+Hosts com rack/location ou composição inesperada bloqueiam migração automática.
 
-- todos os hosts membros fora do Site alvo precisam ter `HOST / RECLASSIFY_SAFE` no mesmo contexto;
-- Cluster deve permanecer único;
-- identidade dos Hosts deve continuar forte;
-- rack/location bloqueia mudança automática de Site;
-- composição inesperada do Cluster aborta o contexto;
-- sem DELETE automático.
-
-## VM vinculada acompanha Parent — 1.10.8
-
-Uma VM herda Tenant/Site do Host/Cluster autoritativo. Reclassificar apenas o Tenant enquanto o Device já mudou de Site produz um estado inválido no NetBox.
-
-A sequência segura é:
+## VM/Parent — 1.10.8
 
 ```text
 Host/Cluster já migrado
-→ revalidar identidade da VM
-→ reler Device/Cluster atual
-→ confirmar Parent no Site alvo
-→ PATCH VM tenant + site atomicamente
-→ ajustar Tenant dos IPs vinculados
+→ revalida identidade da VM
+→ relê Parent
+→ confirma Parent no Site alvo
+→ PATCH tenant + site juntos
+→ ajusta Tenant dos IPs
 ```
 
-Travas:
-
-- Device associado precisa estar no Site alvo;
-- Cluster associado não pode estar scoped em outro Site;
-- identidade da VM é revalidada após a migração do Parent;
-- `existing_id` deve permanecer igual;
-- se o Parent estiver fora do alvo, nenhuma VM daquele contexto é reclassificada;
-- sem DELETE automático.
-
-A lógica é genérica e não depende de cliente, Site ou IP específico.
-
-## Transparência do PLAN
-
-O dry-run deve mostrar no terminal:
-
-- todos os `READY/CREATE`;
-- todos os `READY/UPDATE_SAFE`;
-- todos os `READY/RECLASSIFY_SAFE`;
-- todos os `REVIEW`;
-- todos os `BLOCKED`;
-- resumo explícito com `NetBox write: NÃO`.
-
-JSON é evidência/auditoria, não requisito para descobrir ações do PLAN.
-
-## Multi-Tenant / multi-Site
-
-- Host é resolvido por rede de gerenciamento autoritativa;
-- VM herda contexto do Host como primeira escolha;
-- sem mapping confiável o objeto vira `REVIEW`;
-- nome da VM sozinho nunca decide Tenant/Site.
-
-## Reclassificação segura
-
-`RECLASSIFY_SAFE` exige identidade inequívoca por:
-
-- serial/UUID único;
-- IP vinculado ao mesmo objeto;
-- MAC vinculado ao mesmo objeto.
-
-Proteções:
-
-- nome sozinho nunca autoriza migração;
-- serial/UUID duplicado → `REVIEW`;
-- múltiplos donos de IP/MAC → `REVIEW`;
-- serial e IP/MAC apontando para objetos diferentes → `REVIEW`;
-- o mesmo ID é preservado;
-- nenhuma reclassificação executa DELETE.
+Se Parent estiver fora do Site alvo, o lote de VMs é bloqueado.
 
 ## Delta de inventário
 
-VM ausente entre snapshots:
-
-```text
-REVIEW / NOOP
-DELETE automático: NÃO
-```
-
-Ausência não autoriza exclusão.
+Ausência em snapshot não autoriza DELETE automático.
 
 ## Endpoint NetBox
 
@@ -180,8 +151,8 @@ Requisitos:
 
 - permissão `0600`;
 - proprietário root quando executado como root;
-- segredos mascarados em saídas públicas;
-- nunca publicar o arquivo real.
+- segredos mascarados;
+- nunca publicar arquivo real.
 
 ## Atualização
 
@@ -190,7 +161,7 @@ O updater `stable`:
 - cria backup;
 - valida candidato;
 - preserva configuração;
-- executa rollback quando a validação pós-instalação falha;
+- executa rollback em falha de validação;
 - bloqueia downgrade;
 - usa quarentena para versão quebrada.
 

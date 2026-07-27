@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.8 — Matriz de Homologação
+# netbox-discovery 1.10.9 — Matriz de Homologação
 
 Este arquivo separa **implementação/CI** de **validação real ao vivo**.
 
@@ -26,7 +26,7 @@ Site base: DCM
 NetBox: https://inventory.bkpcloud.app.br:8080
 ```
 
-## Mappings LIVE
+## Mappings Hypervisor LIVE
 
 ```text
 10.1.1.0/24  -> MIZU/DCM
@@ -55,255 +55,184 @@ NetBox: https://inventory.bkpcloud.app.br:8080
 1.10.3  management network autoritativa VMware                 LIVE PASS
 1.10.3  resolver multi-contexto                                LIVE PASS
 1.10.4  RECLASSIFY_SAFE em dry-run                             LIVE PASS
-1.10.5  diagnóstico automático completo do PLAN               LIVE PASS
+1.10.5  diagnóstico automático do PLAN Hypervisor              LIVE PASS
 1.10.6  preflight global antes da primeira escrita             LIVE PASS
-1.10.7  bridge Cluster/Site                                    LIVE PASS no FBA
+1.10.7  bridge Cluster/Site                                    LIVE PASS
 1.10.7  compare read-only                                      LIVE PASS
-1.10.8  VM parent/site bridge                                  NOT LIVE até novo APPLY
+1.10.8  VM parent/site bridge                                  LIVE PASS
+1.10.9  diagnóstico automático do PLAN Network                 NOT LIVE
 ```
 
 ---
 
-## 1.10.6 — primeiro APPLY multi-contexto
+## Hypervisor multi-contexto — estado final 1.10.8
 
-Preflight global ao vivo:
+O APPLY real 1.10.8 concluiu os 12 contextos.
 
-```text
-PREFLIGHT GLOBAL: OK
-READY/CREATE: 12
-READY/UPDATE_SAFE: 53
-READY/RECLASSIFY_SAFE: 44
-REVIEW/BLOCKED: 0
-NetBox write até aqui: NÃO
-```
-
-### DCM
+PXMETAIS/MAC validou especificamente:
 
 ```text
-Hosts processados: 4
-VMs processadas: 124
-Erros: 0
-```
-
-### FAB
-
-```text
-RECLASSIFY PREFLIGHT MIZU/FAB: OK
+RECLASSIFY PREFLIGHT PXMETAIS/MAC: OK | objetos=25
+VM PARENT PREFLIGHT PXMETAIS/MAC: OK | VMs=25
 Hosts processados: 1
-VMs processadas: 4
+VMs processadas: 25
 Erros: 0
 ```
 
-### FBA — falha que originou 1.10.7
+AUDIT final:
 
 ```text
-HTTP 400 /api/virtualization/clusters/4/
-{"scope":["2 devices are assigned as hosts for this cluster but are not in site FBA"]}
+HYPERVISOR AUDIT MULTI-CONTEXT
+Status: PASS
+Contextos auditados: 12
 ```
 
-Causa confirmada: tentativa de mover Cluster scoped antes dos Devices-host.
-
----
-
-## 1.10.7 — bridge Cluster/Site
-
-Sequência implementada:
-
-```text
-RECLASSIFY PREFLIGHT
-→ validar Devices-host do Cluster
-→ remover temporariamente o scope do Cluster
-→ mover Hosts
-→ reaplicar scope do Cluster no Site alvo
-→ continuar VMs
-```
-
-### Validação real
-
-Após atualização para 1.10.7, o APPLY atravessou o ponto que falhava no FBA.
-
-Execuções concluídas com `Erros: 0`:
-
-```text
-MIZU/FBA
-MIZU/FBE
-MIZU/FFT
-MIZU/FIB
-MIZU/FMN
-```
-
-Depois de queda da sessão SSH, compare read-only confirmou:
-
-```text
-FBA: 51/51 NOOP
-FBE: 13/13 NOOP
-FFT: 8/8 NOOP
-FIB: 6/6 NOOP
-FMN: 12/12 NOOP
-AMBIGUOUS: 0
-```
-
-Conclusão: bridge Cluster/Site = **LIVE PASS**.
-
----
-
-## Compare read-only — 1.10.7
-
-Comando:
-
-```bash
-netbox-discovery hypervisor run --compare
-```
-
-Validação real após APPLY parcial:
+Compare independente pós-APPLY:
 
 ```text
 Objetos comparados: 282
-OK: 245
-MISMATCH: 31
-MISSING: 6
+OK: 282
+MISMATCH: 0
+MISSING: 0
 AMBIGUOUS: 0
+CLUSTER: OK=2
+HOST: OK=22
+PREFIX: OK=12
+VM: OK=246
+COMPARE STATUS: OK
 NetBox write: NÃO
 ```
 
-O compare mostrou corretamente que os Sites já concluídos viraram `NOOP` e restavam apenas contextos posteriores.
-
-Conclusão: compare read-only = **LIVE PASS**.
+**Conclusão:** Hypervisor multi-contexto 1.10.8 = **LIVE PASS** para placement Tenant/Site, migração coordenada, VM Parent/Site, APPLY/AUDIT e compare final.
 
 ---
 
-## Segundo APPLY 1.10.7 — evidência real
+## Network DCM — primeiro dry-run real antes da 1.10.9
 
-Preflight:
-
-```text
-PREFLIGHT GLOBAL: OK
-READY/CREATE: 6
-READY/UPDATE_SAFE: 11
-READY/RECLASSIFY_SAFE: 31
-REVIEW/BLOCKED: 0
-```
-
-Contextos concluídos com `Erros: 0`:
+Execução em 27/07/2026:
 
 ```text
-MIZU/DCM
-MIZU/FAB
-MIZU/FBA
-MIZU/FBE
-MIZU/FFT
-MIZU/FIB
-MIZU/FMN
-MIZU/FMO
-MIZU/FPA
-MIZU/FSO
-MIZU/FVI
+Rede: 10.1.1.0/24
+Hosts ativos: 64
+Evidence HIGH: 59
+MEDIUM: 4
+LOW: 1
+NONE: 0
 ```
 
-Em `PXMETAIS/MAC`, o Host `10.36.1.21` foi reclassificado para MAC. A primeira VM reclassificada falhou:
+CLASSIFY:
 
 ```text
-RECLASSIFY PXMETAIS/MAC | READY=26
-RECLASSIFY PREFLIGHT PXMETAIS/MAC: OK
-HTTP 400 /api/virtualization/virtual-machines/467/
-{"site":["The selected device (10.36.1.21) is not assigned to this site (DCM)."]}
+Registros: 64
+Confiança: HIGH=47 MEDIUM=1 LOW=11 NONE=5
 ```
 
-### Causa raiz
-
-A rotina histórica de `RECLASSIFY_SAFE` de VM fazia:
+RECONCILE:
 
 ```text
-PATCH VM: tenant=<alvo>
+Registros de IP: 64
+Assets reconciliados: 60
+Assets com múltiplos registros/IPs: 4
+Candidatos para revisão: 3
 ```
 
-Quando a VM tinha `host_name`/Device, o campo `site` não era enviado.
+PLAN:
 
-Depois que o Host mudou de `DCM` para `MAC`, a VM continuou com `site=DCM`. Ao tentar alterar apenas o Tenant, o NetBox validou a relação VM ↔ Device e recusou o estado inconsistente.
+```text
+NetBox: 4 devices atuais no site
+Assets planejados: 60
+READY: 7
+REVIEW: 47
+BLOCKED: 6
+CREATE: 56
+NOOP: 4
+READY/CREATE: 3
+READY/NOOP: 4
+NetBox write: NÃO
+```
 
-Não é erro de mapping. É dependência de escrita entre Device e VM.
+A descoberta encontrou equipamentos de rede reais, incluindo:
+
+```text
+10.1.1.31  SW-DCM-SERVERS  NETWORK  HIGH
+10.1.1.38  SW_LINKS        NETWORK  HIGH
+```
+
+Também mostrou classificações que precisam ser investigadas, por exemplo SAN switches/appliances e dispositivos UNKNOWN.
+
+**Nenhum APPLY Network foi autorizado nesse estado.**
 
 ---
 
-## 1.10.8 — VM acompanha Tenant/Site do Parent
+## 1.10.9 — diagnóstico automático do PLAN Network
 
 **Estado:** NOT LIVE  
-**CI:** pendente até a branch concluir CI
+**CI:** pendente até conclusão da branch/PR
 
-Correção implementada de forma genérica:
+Objetivo: eliminar leitura manual de JSON/Python para descobrir os 47 REVIEW e 6 BLOCKED do DCM.
+
+Nova saída do próprio `netbox-discovery run`:
 
 ```text
-Host/Cluster migration
-→ revalidar identidade forte da VM novamente
-→ reler Device/Cluster no NetBox
-→ VM PARENT PREFLIGHT
-→ confirmar parent no Site alvo
-→ PATCH VM tenant + site no mesmo request
-→ ajustar Tenant dos IPs da VM
+NETWORK PLAN DIAGNÓSTICO
+NETWORK NOVOS OBJETOS READY
+NETWORK AJUSTES READY
+NETWORK PENDÊNCIAS POR MOTIVO
+NETWORK PENDÊNCIAS DETALHADAS
 ```
 
-Travas:
-
-- VM ligada a Device: Device deve estar no Site alvo;
-- VM ligada a Cluster: Cluster não pode estar scoped em outro Site;
-- identidade da VM é revalidada depois das migrações do parent;
-- `existing_id` precisa permanecer igual;
-- se parent ainda estiver fora do Site alvo, nenhuma VM daquele contexto é alterada;
-- sem DELETE automático.
-
-Regressões 1.10.8:
-
-- reproduz VM com `site=DCM` ligada a Device já movido para `MAC`;
-- exige PATCH atômico `tenant + site`;
-- confirma atualização do Tenant do IP vinculado;
-- bloqueia VM se Device ainda estiver no Site antigo.
-
-Essa lógica não contém hardcode de PXMETAIS, MAC, MIZU, DCM ou IP específico.
-
----
-
-## Estado geral Hypervisor multi-contexto
-
-**Estado:** LIVE PARTIAL
-
-Já validado ao vivo:
-
-- 2 sources VMware;
-- 12 contextos;
-- 22/22 Hosts resolvidos;
-- 246 VMs resolvidas na coleta mais recente;
-- `NÃO RESOLVIDOS: 0`;
-- `AMBIGUOUS: 0` no compare;
-- preflight global real;
-- journal de falha parcial;
-- retomada idempotente por `NOOP`;
-- DCM/FAB/FBA/FBE/FFT/FIB/FMN/FMO/FPA/FSO/FVI aplicados sem erro;
-- bridge de Cluster/Site validada ao vivo.
-
-Ainda falta:
+Para cada pendência:
 
 ```text
-1. CI PASS da 1.10.8
-2. publicar 1.10.8 na stable
-3. update real no SNOC-AGL-DCM
-4. compare read-only do estado parcial PXMETAIS/MAC
-5. dry-run/preflight limpo
-6. novo APPLY apenas do residual
-7. validar VM PARENT PREFLIGHT PXMETAIS/MAC
-8. concluir PXMETAIS/MAC
-9. AUDIT final
-10. compare final sem divergências
-11. segundo dry-run idempotente
-12. promover fluxo completo para LIVE PASS
+Decision
+IP
+nome desejado
+role
+confidence/score
+reasons
+match_state/match_reason
+fabricante/modelo/serial
+SNMP name/object-id/management MAC
+evidência CLASSIFY
+```
+
+A 1.10.9 não altera elegibilidade de escrita. `REVIEW`/`BLOCKED` continuam sem escrita.
+
+Regressão adicionada valida:
+
+- READY/CREATE visível;
+- REVIEW visível;
+- BLOCKED visível;
+- contagem por motivo;
+- evidência CLASSIFY visível;
+- `NetBox write: NÃO`.
+
+Próxima homologação live esperada:
+
+```text
+1. publicar 1.10.9 stable
+2. update no SNOC-AGL-DCM
+3. netbox-discovery run
+4. capturar diagnóstico completo dos 47 REVIEW / 6 BLOCKED
+5. agrupar causas reais
+6. corrigir classificador/reconciliador/planner por classe de causa
+7. repetir dry-run
+8. somente autorizar Network APPLY quando o PLAN representar corretamente equipamentos físicos
 ```
 
 ---
 
-## Network — persistência MAC V2
+## Regras Network que permanecem obrigatórias
 
-**Estado:** CI PASS / NOT LIVE
-
-A homologação completa ao vivo da persistência em `dcim/mac-addresses` continua separada deste fluxo Hypervisor.
+- não editar inventário em massa manualmente para “ajudar” o discovery;
+- não começar Site novo diretamente com `--apply`;
+- apenas `READY` escreve;
+- `REVIEW`/`BLOCKED` não escrevem;
+- MAC de gerenciamento autoritativo é identidade forte;
+- MAC secundário não funde asset sozinho;
+- múltiplos IPs do mesmo firewall não devem criar múltiplos firewalls quando identidade forte confirma o mesmo equipamento;
+- redes OT/Industrial permanecem separadas conforme configuração do Site;
+- ausência não vira DELETE automático.
 
 ---
 
@@ -315,4 +244,4 @@ Network scheduler: DISABLED durante homologação
 Hypervisor scheduler: DISABLED durante homologação
 ```
 
-Não habilitar APPLY automático enquanto o fluxo Hypervisor completo não estiver `LIVE PASS`.
+Não habilitar APPLY automático de Network enquanto o fluxo Network não estiver `LIVE PASS`.
