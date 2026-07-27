@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para inventário de infraestrutura no NetBox.
 
-**Versão atual:** 1.9.0 — PRODUCT V1  
+**Versão atual:** 1.9.1 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`
 
@@ -93,6 +93,8 @@ netbox-discovery init
 netbox-discovery check
 ```
 
+A partir da V1.9.1, `init` não apenas salva a configuração local: ele garante no NetBox o Tenant e o Site configurados. Relações de Tenant Group conhecidas pelo produto também são garantidas de forma idempotente; para `MIZU`, a estrutura conhecida é `POLIMIX → MIZU → Site`. Objetos ausentes são criados, vínculos vazios são preenchidos e vínculos conflitantes são bloqueados em vez de sobrescritos silenciosamente.
+
 Para ambientes virtualizados, prepare primeiro a base de virtualização:
 
 ```bash
@@ -139,6 +141,7 @@ netbox-discovery update scheduler status
 - Network, Hypervisor e Update compartilham lock global e não executam simultaneamente;
 - retry automático é aplicado somente a leituras GET seguras da API NetBox;
 - falha parcial de APPLY Hypervisor gera journal das escritas concluídas;
+- `init` não sobrescreve vínculos conflitantes de Tenant Group/Tenant/Site;
 - Network e Hypervisor schedulers continuam opt-in;
 - auto-update `stable` é habilitado por padrão.
 
