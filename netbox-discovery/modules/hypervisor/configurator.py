@@ -65,11 +65,17 @@ def default_source_id(stype, endpoint):
     return slugify("{0}-{1}".format(stype, host))
 
 
+def ensure_connector_deps(stype):
+    if stype == "vmware":
+        subprocess.check_call([sys.executable, os.path.join(BASE, "modules", "hypervisor", "deps_vmware.py")])
+    elif stype == "hyperv":
+        subprocess.check_call([os.path.join(BASE, "bin", "netbox-discovery"), "hypervisor", "_ensure-deps", "hyperv"])
+
+
 def edit_source(current=None):
     current = dict(current or {})
     stype = type_choice(clean(current.get("type")).lower())
-    if stype in ("vmware", "hyperv"):
-        subprocess.check_call([os.path.join(BASE, "bin", "netbox-discovery"), "hypervisor", "_ensure-deps", stype])
+    ensure_connector_deps(stype)
     endpoint = ask("IP/FQDN do hypervisor/manager", current.get("endpoint", ""), True)
     sid = ask("ID da source", current.get("id") or default_source_id(stype, endpoint), True)
     username = ask("Usuário", current.get("username", ""), True)
