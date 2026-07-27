@@ -17,7 +17,7 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.10.9"
+          test "$(cat VERSION)" = "1.10.10"
 
       - name: Documentation sync
         run: |
@@ -59,6 +59,9 @@ jobs:
 
       - name: Network 1.10.9 PLAN diagnostics
         run: python3 tests/test_network_1_10_9.py
+
+      - name: Network 1.10.10 ownership and Dell switches
+        run: python3 tests/test_network_1_10_10.py
 
       - name: Secret sanity check
         run: |
