@@ -17,7 +17,7 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.9.4"
+          test "$(cat VERSION)" = "1.9.5"
 
       - name: Shell syntax
         run: |

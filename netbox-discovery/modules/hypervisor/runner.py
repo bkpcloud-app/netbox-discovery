@@ -12,7 +12,7 @@ import sys
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 LOCK_FILE = "/var/lock/netbox-discovery-global.lock"
-RUNNER_VERSION = "2.0-product"
+RUNNER_VERSION = "2.1-product"
 
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
@@ -37,6 +37,34 @@ class TracingNetBox(RealNetBox):
 
 
 engine.NetBox = TracingNetBox
+
+
+def plan_issue_lines(plan):
+    records = (plan or {}).get("records") or []
+    issues = [row for row in records if row.get("decision") in ("REVIEW", "BLOCKED")]
+    lines = []
+    if not issues:
+        return ["HYPERVISOR PENDÊNCIAS: nenhuma"]
+
+    lines.append("===== HYPERVISOR PENDÊNCIAS DO PLAN =====")
+    for pos, row in enumerate(issues, 1):
+        name = row.get("desired_name") or row.get("name") or row.get("prefix") or row.get("asset_id") or "?"
+        lines.append("[{0}/{1}] {2} | {3} | {4} | {5}".format(
+            pos,
+            len(issues),
+            row.get("decision") or "?",
+            row.get("object_type") or "?",
+            name,
+            row.get("action") or "?",
+        ))
+        lines.append("  Motivo: {0}".format(row.get("reason") or "não informado"))
+    lines.append("PENDÊNCIAS TOTAIS: {0}".format(len(issues)))
+    return lines
+
+
+def print_plan_issues(plan):
+    for line in plan_issue_lines(plan):
+        print(line)
 
 
 def write_run(site, apply_mode, status, discovery_path, plan_path, import_path="", audit_path="", error=""):
@@ -99,6 +127,7 @@ def execute(apply_mode):
         discovery, discovery_path = engine.collect_all()
         site = discovery.get("site") or "SITE"
         plan, plan_path = engine.build_plan(discovery)
+        print_plan_issues(plan)
         if not apply_mode:
             print("HYPERVISOR IMPORT NÃO EXECUTADO: use 'netbox-discovery hypervisor run --apply' para escrita real.")
             write_run(site, False, "PLAN_READY", discovery_path, plan_path)
