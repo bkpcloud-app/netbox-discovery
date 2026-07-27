@@ -447,7 +447,8 @@ def _plan_reclassifications(plan, nb):
         if kind in ("HOST", "VM") and row.get("action") in ("CREATE", "UPDATE_SAFE"):
             obj, match_reason = _strong_global_match(row, device_by_id if kind == "HOST" else vm_by_id, device_serials if kind == "HOST" else vm_serials, ips, macs)
             if not obj:
-                if match_reason != "sem identidade global forte" and row.get("decision") != "READY":
+                if match_reason != "sem identidade global forte":
+                    row["decision"] = "REVIEW"
                     row["reason"] = (clean(row.get("reason")) + "; " if clean(row.get("reason")) else "") + match_reason
                 continue
             wrong_context = _tenant_id(obj) not in (None, tenant_id)
