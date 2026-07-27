@@ -95,18 +95,23 @@ def test_import_refreshes_planner_v2():
         importer_v2.base.latest = old_latest
 
 
-def test_known_tenant_group_policy():
-    assert configurator_v2._tenant_group_for("MIZU", {}) == "POLIMIX"
-    assert configurator_v2._tenant_group_for("mizu", {}) == "POLIMIX"
-    assert configurator_v2._tenant_group_for("OUTRO", {}) == ""
-    assert configurator_v2.slugify("São Paulo DCM") == "sao-paulo-dcm"
+def test_explicit_tenant_group_policy():
+    old_env = os.environ.pop("NETBOX_DISCOVERY_TENANT_GROUP", None)
+    try:
+        assert configurator_v2._tenant_group_for({}) == ""
+        assert configurator_v2._tenant_group_for({"tenant": "MIZU"}) == ""
+        assert configurator_v2._tenant_group_for({"tenant_group": "POLIMIX"}) == "POLIMIX"
+        assert configurator_v2.slugify("São Paulo DCM") == "sao-paulo-dcm"
+    finally:
+        if old_env is not None:
+            os.environ["NETBOX_DISCOVERY_TENANT_GROUP"] = old_env
 
 
 def test_versions():
     root_version = open(os.path.join(ROOT, "VERSION"), "r").read().strip()
     package_version = open(os.path.join(BASE, "VERSION"), "r").read().strip()
-    assert root_version == package_version == "1.9.1"
-    assert updater.version_key("1.9.1") > updater.version_key("1.9.0")
+    assert root_version == package_version == "1.9.2"
+    assert updater.version_key("1.9.2") > updater.version_key("1.9.1")
 
 
 def main():
@@ -117,7 +122,7 @@ def main():
         test_printer_vendor_normalization,
         test_plan_mac_match,
         test_import_refreshes_planner_v2,
-        test_known_tenant_group_policy,
+        test_explicit_tenant_group_policy,
         test_versions,
     ]
     for test in tests:
