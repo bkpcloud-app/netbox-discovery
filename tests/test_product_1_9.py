@@ -20,7 +20,6 @@ from modules.product import updater
 from modules.product import configurator_v2
 from modules.hypervisor import deps_vmware
 from modules.hypervisor import configurator as hypervisor_configurator
-from modules.hypervisor import engine_v2
 
 
 def service(port):
@@ -122,6 +121,7 @@ def test_hypervisor_plan_issues_are_visible():
 
 def test_hypervisor_secondary_bridge_ip_is_not_authoritative():
     import ipaddress
+    from modules.hypervisor import engine_v2
     old = engine_v2._ACTIVE_NETWORKS
     try:
         engine_v2._ACTIVE_NETWORKS = [ipaddress.ip_network("10.1.1.0/24")]
