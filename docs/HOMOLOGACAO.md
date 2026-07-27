@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.6 — Matriz de Homologação
+# netbox-discovery 1.10.7 — Matriz de Homologação
 
 Este arquivo separa **implementação/CI** de **validação real ao vivo**.
 
@@ -40,6 +40,7 @@ NetBox: https://inventory.bkpcloud.app.br:8080
 1.10.3 discovery/resolver multi-contexto dry-run
 1.10.4 RECLASSIFY_SAFE em dry-run
 1.10.5 diagnóstico automático completo do PLAN em dry-run
+1.10.6 preflight global multi-contexto ao vivo
 ```
 
 ## Mappings LIVE
@@ -89,7 +90,7 @@ Os 43 REVIEW eram legado do primeiro APPLY single-site:
 
 ## Reclassificação segura — 1.10.4
 
-**Estado:** LIVE PASS para dry-run / NOT LIVE para APPLY completo
+**Estado:** LIVE PASS para dry-run / LIVE PARTIAL para escrita
 
 Dry-run real:
 
@@ -162,7 +163,7 @@ O terminal mostrou automaticamente os 12 `READY/CREATE`:
 1 VM SRV-ISO04 em MIZU/FSO
 ```
 
-Também mostrou automaticamente os 51 `UPDATE_SAFE`, 44 `RECLASSIFY_SAFE`, resumo de escrita e `REVIEW/BLOCKED: 0`.
+Também mostrou automaticamente os `UPDATE_SAFE`, `RECLASSIFY_SAFE`, resumo de escrita e `REVIEW/BLOCKED: 0`.
 
 **Conclusão 1.10.5:** diagnóstico automático do PLAN = LIVE PASS.
 
@@ -170,26 +171,14 @@ Também mostrou automaticamente os 51 `UPDATE_SAFE`, 44 `RECLASSIFY_SAFE`, resum
 
 Durante a revisão final do código antes de autorizar escrita real, foi identificado que o engine V3 executava `_apply_reclassifications()` antes de chamar o preflight V2 do contexto.
 
-Portanto:
-
-```text
-PLAN 1.10.5 está limpo
-mas
-RECLASSIFY_SAFE podia iniciar PATCH antes do preflight V2 do contexto
-```
-
 Nenhum APPLY 1.10.5 foi executado no DCM. Nenhuma escrita ocorreu.
-
-O fluxo foi bloqueado propositalmente antes de produção.
 
 ## Preflight global multi-contexto — 1.10.6
 
-**Estado:** CI PASS / NOT LIVE  
-**CI:** run `30283140532` — todos os passos PASS
+**Estado:** LIVE PASS para preflight / LIVE PARTIAL para APPLY completo  
+**CI:** PASS
 
-Objetivo: garantir que **nenhum POST/PATCH**, inclusive `RECLASSIFY_SAFE`, ocorra antes de validação atualizada do estado real.
-
-Ordem 1.10.6:
+Ordem validada:
 
 ```text
 DISCOVER
@@ -201,32 +190,165 @@ DISCOVER
 → RECLASSIFY PREFLIGHT por contexto (NetBox write: NÃO)
 → revalidar identidade forte + existing_id + Tenant/Site alvo
 → somente então iniciar escrita
-→ APPLY V3/V2
-→ AUDIT
 ```
 
-O preflight global aborta antes da primeira escrita se:
+### Dry-run 1.10.6 real — 27/07/2026
 
-- surgir `REVIEW` ou `BLOCKED`;
-- o conjunto `RECLASSIFY_SAFE` mudar;
-- `existing_id`, Tenant ou Site alvo divergirem.
+```text
+Versão instalada: 1.10.6
+source 1: hosts 4/4 | VMs 124/124
+source 2: hosts 18/18 | VMs 121/121
+Contextos: 12
+NÃO RESOLVIDOS: 0
+Objetos planejados: 281
+READY: 281
+REVIEW: 0
+BLOCKED: 0
+CREATE: 12
+UPDATE_SAFE: 53
+RECLASSIFY_SAFE: 44
+NOOP: 172
+NetBox write: NÃO
+```
 
-O preflight de reclassificação aborta antes do PATCH se:
+### Primeiro APPLY multi-contexto real — 27/07/2026
 
-- serial/UUID não reencontrar o mesmo ID;
-- IP/MAC não confirmar o mesmo objeto;
-- identidade ficar ambígua;
-- Cluster/Prefix deixar de ser único;
-- Tenant/Site alvo deixar de ser único/existente.
+O preflight global passou ao vivo antes da primeira escrita:
 
-Regressões CI 1.10.6 confirmadas:
+```text
+PREFLIGHT GLOBAL: OK
+READY/CREATE: 12
+READY/UPDATE_SAFE: 53
+READY/RECLASSIFY_SAFE: 44
+REVIEW/BLOCKED: 0
+NetBox write até aqui: NÃO
+```
 
-- preflight aceita conjunto de reclassificação idêntico;
-- mudança de `existing_id` aborta;
-- `REVIEW` novo aborta antes de escrita;
-- identidade forte é revalidada imediatamente antes de reclassificar;
-- identity drift aborta;
-- regressões legadas e Hypervisor 1.10 anteriores continuam PASS.
+#### MIZU/DCM
+
+```text
+PREFLIGHT: OK
+Hosts processados: 4
+VMs processadas: 124
+Erros: 0
+NetBox write: SIM
+```
+
+#### MIZU/FAB
+
+```text
+RECLASSIFY PREFLIGHT MIZU/FAB: OK
+objetos=1
+NetBox write antes da migração: NÃO
+Hosts processados: 1
+VMs processadas: 4
+Erros: 0
+NetBox write: SIM
+```
+
+Evidência visual pós-APPLY parcial mostrou o Device `10.5.1.21` no Site `FAB`, enquanto Devices dos contextos seguintes ainda permaneciam em `DCM`, coerente com a interrupção subsequente do pipeline.
+
+#### MIZU/FBA — falha controlada
+
+```text
+RECLASSIFY PREFLIGHT MIZU/FBA: OK | objetos=5 | NetBox write: NÃO
+HTTP 400 /api/virtualization/clusters/4/
+{"scope":["2 devices are assigned as hosts for this cluster but are not in site FBA"]}
+```
+
+O APPLY foi interrompido pelo NetBox. Contextos posteriores a FBA não foram executados.
+
+Relatórios:
+
+```text
+MULTI-hypervisor-import-failed-20260727-163932.json
+MULTI-hypervisor-run-20260727-163932.json
+```
+
+### Causa raiz confirmada
+
+A 1.10.6 ordenava reclassificações como:
+
+```text
+PREFIX
+→ CLUSTER
+→ HOST
+→ VM
+```
+
+Para um Cluster já scoped em `DCM`, isso é inválido: o NetBox não permite mover o Cluster para `FBA` enquanto Devices-host continuam em `DCM`; também não permite mover um Device para outro Site enquanto seu Cluster continua scoped no Site antigo.
+
+**Conclusão:** o resolver/mapping não foi a causa. O erro é de ordem de migração coordenada Cluster ↔ Devices-host.
+
+## Migração coordenada de Cluster/Site — 1.10.7
+
+**Estado:** NOT LIVE  
+**CI:** PENDENTE até publicação da branch
+
+Correção implementada:
+
+```text
+RECLASSIFY PREFLIGHT
+→ validar todos os Devices-host do Cluster
+→ remover temporariamente o scope opcional do Cluster
+→ mover Devices-host para o Site alvo
+→ reaplicar Tenant/scope do Cluster no Site alvo
+→ continuar VMs
+```
+
+Travas adicionadas:
+
+- cada Device-host fora do Site alvo precisa estar coberto por `HOST / RECLASSIFY_SAFE` no mesmo contexto;
+- Cluster precisa continuar único por identidade prevista;
+- host com rack/location bloqueia migração automática de Site;
+- identidade forte continua sendo revalidada imediatamente antes da escrita;
+- se a composição do Cluster divergir, o contexto aborta.
+
+Regressões adicionadas:
+
+- reproduz a validação NetBox que falha se Cluster for movido antes dos hosts;
+- confirma `scope=None → hosts → scope alvo`;
+- bloqueia Cluster com membro fora do Site alvo sem HOST migration correspondente.
+
+## Compare NetBox × Hypervisor — 1.10.7
+
+**Estado:** NOT LIVE  
+**CI:** PENDENTE
+
+Novo modo oficial read-only:
+
+```bash
+netbox-discovery hypervisor run --compare
+```
+
+Objetivo: auditar estado parcial ou final do NetBox contra as sources/mappings sem qualquer PATCH/POST.
+
+Compara:
+
+```text
+HOST
+VM
+CLUSTER
+PREFIX
+```
+
+Estados:
+
+```text
+OK
+MISMATCH
+MISSING
+AMBIGUOUS
+```
+
+Para VMs, o Site efetivo é derivado do Cluster ou Device quando aplicável.
+
+Saída obrigatória:
+
+```text
+NetBox write: NÃO
+MULTI-hypervisor-compare-*.json
+```
 
 ## Hypervisor multi-contexto — estado geral
 
@@ -242,15 +364,22 @@ Já validado:
 - `NÃO RESOLVIDOS: 0`;
 - guarda contra duplicação;
 - reclassificação planejada automaticamente;
-- diagnóstico completo do PLAN no terminal.
+- diagnóstico completo do PLAN no terminal;
+- preflight global real antes da primeira escrita;
+- DCM APPLY real sem erros;
+- FAB reclassificação/APPLY real sem erros;
+- journal de falha parcial real.
 
 Ainda falta:
 
-- update real para 1.10.6;
-- dry-run 1.10.6;
-- primeiro APPLY multi-contexto real;
-- AUDIT;
-- segundo dry-run de idempotência.
+- CI da 1.10.7;
+- update real para 1.10.7;
+- compare read-only do estado parcial;
+- dry-run pós-falha;
+- novo APPLY retomando FBA e contextos posteriores;
+- AUDIT final;
+- segundo dry-run de idempotência;
+- compare final sem divergências.
 
 ## Network — persistência MAC V2
 
@@ -271,16 +400,19 @@ Não habilitar APPLY automático enquanto o fluxo multi-contexto completo não e
 ## Próxima homologação
 
 ```text
-1. publicar 1.10.6 na stable
-2. netbox-discovery update run
-3. confirmar version = 1.10.6
-4. hypervisor run SEM --apply
-5. confirmar REVIEW/BLOCKED = 0
-6. executar hypervisor run --apply
-7. confirmar PREFLIGHT GLOBAL: OK antes de qualquer write
-8. confirmar RECLASSIFY PREFLIGHT: OK nos contextos de migração
-9. acompanhar IMPORT
-10. confirmar AUDIT
-11. segundo dry-run
-12. confirmar idempotência/resíduos
+1. CI PASS da 1.10.7
+2. publicar 1.10.7 na stable
+3. netbox-discovery update run
+4. confirmar version = 1.10.7
+5. netbox-discovery hypervisor run --compare
+6. registrar estado parcial atual → esperado
+7. netbox-discovery hypervisor run SEM --apply
+8. confirmar REVIEW/BLOCKED = 0 ou analisar qualquer divergência
+9. somente depois executar --apply
+10. confirmar bridge de Cluster FBA: SCOPE RELEASE → HOSTS → SCOPE FBA
+11. acompanhar contextos restantes
+12. confirmar AUDIT
+13. segundo dry-run
+14. compare final
+15. promover fluxo completo para LIVE PASS somente se idempotente e sem divergência
 ```
