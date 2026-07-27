@@ -6,7 +6,7 @@ from collections import defaultdict
 
 from modules.hypervisor import engine_v3 as v3
 
-ENGINE_VERSION = "4.1-product"
+ENGINE_VERSION = "4.2-product"
 base = v3.base
 v2 = v3.v2
 NetBox = v3.NetBox
@@ -192,8 +192,6 @@ def _reclassify_preflight_state(ctx, subplan, nb):
 
 
 def _reclassify_identity_preflight(ctx, subplan, nb):
-    # Keep the 1.10.6 public/internal contract: callers only need a boolean.
-    # The 1.10.7 bridge uses the richer state through the private helper above.
     _reclassify_preflight_state(ctx, subplan, nb)
     return True
 
@@ -240,6 +238,89 @@ def _release_cluster_scopes(ctx, state, nb):
     return events
 
 
+def _vm_parent_preflight(ctx, vm_plan, nb, target_site_id):
+    rows = [
+        row for row in vm_plan.get("records") or []
+        if row.get("decision") == "READY" and row.get("action") == "RECLASSIFY_SAFE" and row.get("object_type") == "VM"
+    ]
+    if not rows:
+        return True
+
+    vms = base.query(nb, "virtualization/virtual-machines/", limit=20000)
+    devices = base.query(nb, "dcim/devices/", limit=20000)
+    clusters = base.query(nb, "virtualization/clusters/", limit=10000)
+    vm_by_id = dict((x.get("id"), x) for x in vms if x.get("id") is not None)
+    device_by_id = dict((x.get("id"), x) for x in devices if x.get("id") is not None)
+    cluster_by_id = dict((x.get("id"), x) for x in clusters if x.get("id") is not None)
+
+    for row in rows:
+        vm_id = row.get("existing_id")
+        vm = vm_by_id.get(vm_id)
+        if not vm:
+            raise RuntimeError("VM PARENT PREFLIGHT: VM ID {0} não encontrada".format(vm_id))
+
+        device_id = base.nested_id(vm.get("device"))
+        if device_id:
+            device = device_by_id.get(device_id)
+            if not device:
+                raise RuntimeError("VM PARENT PREFLIGHT: device ID {0} da VM {1} não encontrado".format(device_id, vm_id))
+            device_site_id = base.nested_id(device.get("site"))
+            if device_site_id != target_site_id:
+                raise RuntimeError(
+                    "VM PARENT PREFLIGHT: device {0} da VM {1} ainda está fora do Site alvo {2}; nenhuma VM deste contexto foi reclassificada".format(
+                        device.get("name") or device_id, row.get("desired_name") or vm.get("name") or vm_id, ctx.get("site")
+                    )
+                )
+
+        cluster_id = base.nested_id(vm.get("cluster"))
+        if cluster_id:
+            cluster = cluster_by_id.get(cluster_id)
+            if not cluster:
+                raise RuntimeError("VM PARENT PREFLIGHT: cluster ID {0} da VM {1} não encontrado".format(cluster_id, vm_id))
+            cluster_site_id = v3._scope_site_id(cluster)
+            if cluster_site_id not in (None, target_site_id):
+                raise RuntimeError(
+                    "VM PARENT PREFLIGHT: cluster {0} da VM {1} ainda está fora do Site alvo {2}; nenhuma VM deste contexto foi reclassificada".format(
+                        cluster.get("name") or cluster_id, row.get("desired_name") or vm.get("name") or vm_id, ctx.get("site")
+                    )
+                )
+
+    print("VM PARENT PREFLIGHT {0}/{1}: OK | VMs={2} | NetBox write: NÃO".format(
+        ctx.get("tenant"), ctx.get("site"), len(rows)
+    ))
+    return True
+
+
+def _apply_vm_reclassifications(ctx, vm_plan, nb):
+    rows = [
+        row for row in vm_plan.get("records") or []
+        if row.get("decision") == "READY" and row.get("action") == "RECLASSIFY_SAFE" and row.get("object_type") == "VM"
+    ]
+    if not rows:
+        return []
+
+    tenant, site = v3._target_objects(nb, ctx)
+    tenant_id = tenant["id"]
+    site_id = site["id"]
+    events = []
+    for row in rows:
+        object_id = row.get("existing_id")
+        if not object_id:
+            raise RuntimeError("VM RECLASSIFY sem existing_id: {0}".format(row.get("asset_id")))
+        nb.patch("virtualization/virtual-machines/{0}/".format(object_id), {
+            "tenant": tenant_id,
+            "site": site_id,
+        })
+        events.append({
+            "phase": "RECLASSIFY", "object_type": "VM", "action": "RECLASSIFIED_SAFE",
+            "name": row.get("desired_name") or row.get("name") or row.get("asset_id"),
+            "object_id": object_id,
+            "detail": "tenant={0}; site={1}".format(ctx.get("tenant"), ctx.get("site")),
+        })
+        v3._patch_owned_ip_tenant(nb, "VM", object_id, tenant_id, events)
+    return events
+
+
 def _safe_apply_reclassifications(ctx, subplan, nb):
     state = _reclassify_preflight_state(ctx, subplan, nb)
     rows = state.get("rows") or []
@@ -265,9 +346,14 @@ def _safe_apply_reclassifications(ctx, subplan, nb):
     if cluster_plan["records"]:
         events.extend(_ORIGINAL_RECLASSIFY(ctx, cluster_plan, nb))
 
+    # VMs inherit the authoritative Tenant/Site of their Host/Cluster. Re-read
+    # the live parents after Host/Cluster migration, revalidate VM identity, then
+    # patch tenant+site atomically so NetBox never sees device/site inconsistency.
     vm_plan = _subset_plan(subplan, ("VM",))
     if vm_plan["records"]:
-        events.extend(_ORIGINAL_RECLASSIFY(ctx, vm_plan, nb))
+        vm_state = _reclassify_preflight_state(ctx, vm_plan, nb)
+        _vm_parent_preflight(ctx, vm_plan, nb, vm_state["site"].get("id"))
+        events.extend(_apply_vm_reclassifications(ctx, vm_plan, nb))
 
     return events
 

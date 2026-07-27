@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.7 — Comandos rápidos
+# netbox-discovery 1.10.8 — Comandos rápidos
 
 ## Versão e saúde
 
@@ -52,7 +52,7 @@ REVIEW/BLOCKED: N
 NetBox write: NÃO
 ```
 
-**Não usar Python auxiliar para abrir/filtrar o PLAN na operação normal.** O produto deve mostrar isso sozinho.
+**Não usar Python auxiliar para abrir/filtrar o PLAN na operação normal.**
 
 ## Hypervisor — comparar NetBox × source
 
@@ -72,19 +72,19 @@ AMBIGUOUS
 NetBox write: NÃO
 ```
 
-Lista automaticamente `atual=Tenant/Site` versus `esperado=Tenant/Site` para Hosts, VMs, Clusters e Prefixes.
+Lista `atual=Tenant/Site` versus `esperado=Tenant/Site` para Hosts, VMs, Clusters e Prefixes.
 
 Não executa POST/PATCH.
 
 ## Hypervisor — APPLY
 
-Somente depois de revisar dry-run e, quando necessário, compare:
+Somente depois de revisar dry-run/compare:
 
 ```bash
 netbox-discovery hypervisor run --apply
 ```
 
-Antes da primeira escrita, o APPLY obrigatoriamente mostra:
+Antes da primeira escrita:
 
 ```text
 ===== HYPERVISOR PREFLIGHT GLOBAL MULTI-CONTEXT =====
@@ -97,14 +97,11 @@ Para cada contexto com migração:
 
 ```text
 RECLASSIFY PREFLIGHT Tenant/Site: OK
-NetBox write: NÃO
 ```
 
-Se o conjunto `RECLASSIFY_SAFE`, o `existing_id`, a identidade forte ou o Tenant/Site alvo mudar, o APPLY aborta antes da escrita.
+Se o conjunto `RECLASSIFY_SAFE`, `existing_id`, identidade ou alvo mudar, o APPLY aborta.
 
 ### Cluster mudando de Site — 1.10.7
-
-Quando um Cluster e seus Devices-host precisam mudar juntos de Site, o produto executa:
 
 ```text
 RECLASSIFY PREFLIGHT
@@ -114,30 +111,44 @@ RECLASSIFY PREFLIGHT
 → continua VMs
 ```
 
-O preflight bloqueia se existir host membro fora do Site alvo sem `HOST / RECLASSIFY_SAFE` correspondente.
+### VM seguindo Host/Cluster — 1.10.8
+
+Antes de reclassificar VMs vinculadas:
+
+```text
+revalida identidade da VM
+→ relê Device/Cluster
+→ confirma parent no Site alvo
+→ VM PARENT PREFLIGHT: OK
+→ PATCH tenant + site juntos
+→ ajusta Tenant dos IPs
+```
+
+Se Device/Cluster ainda estiver em outro Site, nenhuma VM daquele contexto é reclassificada.
 
 ## Falha parcial de APPLY
 
 ```text
 1. NÃO repetir --apply cegamente
-2. NÃO corrigir dezenas de objetos manualmente
-3. rodar: netbox-discovery hypervisor run --compare
-4. rodar: netbox-discovery hypervisor run
-5. revisar o estado atual
-6. somente então autorizar novo --apply
+2. NÃO corrigir objetos em massa manualmente
+3. confirmar que processo/lock terminou
+4. rodar: netbox-discovery hypervisor run --compare
+5. rodar dry-run se necessário
+6. revisar o estado real
+7. somente então autorizar novo --apply
 ```
 
-O journal do APPLY registra as escritas que já concluíram.
+O journal registra escritas concluídas. Objetos já corretos devem reaparecer como `NOOP`.
 
 ## Política
 
 ```text
 READY / CREATE            → cria somente com --apply e após preflight
 READY / UPDATE_SAFE       → atualiza somente com --apply e após preflight
-READY / RECLASSIFY_SAFE   → reclassifica somente após preflight global + identidade
+READY / RECLASSIFY_SAFE   → reclassifica após preflight global + identidade/parent
 REVIEW                    → não escreve
 BLOCKED                   → não escreve
-COMPARE                    → somente leitura
+COMPARE                   → somente leitura
 DELETE automático         → NÃO
 ```
 
@@ -153,14 +164,14 @@ DELETE automático: NÃO
 
 ## VMware — placement
 
-Regra de rede autoritativa:
-
 ```text
 1. IP que corresponde ao FQDN/nome do ESXi
 2. vmk0 management
 3. única rede candidata
 4. ambiguidade → REVIEW
 ```
+
+VM herda Tenant/Site do Host.
 
 ## Schedulers
 

@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.10.7
+**Versão da política:** 1.10.8
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; **dados operacionais e credenciais de clientes não podem**.
 
@@ -13,9 +13,8 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 - senha/segredo VMware, Proxmox ou Hyper-V;
 - chave SSH privada;
 - `.env` com credenciais;
-- relatórios de discovery/plan/import/audit/compare de clientes;
-- logs de clientes;
-- backups de configuração de clientes.
+- relatórios reais de discovery/plan/import/audit/compare;
+- logs e backups de clientes.
 
 ## Comportamento seguro
 
@@ -23,7 +22,7 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 - `netbox-discovery hypervisor run` é dry-run por padrão;
 - `netbox-discovery hypervisor run --compare` é somente leitura;
 - escrita manual exige `--apply`;
-- somente `READY` é elegível para escrita;
+- somente `READY` escreve;
 - `REVIEW` não escreve;
 - `BLOCKED` não escreve;
 - AUDIT é read-only;
@@ -31,92 +30,95 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 - Network, Hypervisor, Compare e Update compartilham lock global;
 - retry automático é reservado a GETs seguros;
 - POST/PATCH não recebem retry cego;
-- falha parcial de APPLY Hypervisor mantém journal das escritas;
+- falha parcial de APPLY mantém journal;
 - schedulers Network/Hypervisor são opt-in.
 
-## Recuperação após APPLY parcial — 1.10.7
+## Recuperação após APPLY parcial
 
 Uma falha depois de algumas escritas não autoriza rollback cego nem repetição imediata do `--apply`.
 
-Procedimento seguro:
-
 ```text
-1. preservar o estado atual e o journal
-2. não corrigir objetos em massa manualmente
-3. executar compare read-only
-4. executar novo dry-run
-5. revisar divergências
-6. somente depois considerar novo APPLY
+1. preservar estado e journal
+2. confirmar que processo/lock terminou
+3. não corrigir objetos em massa manualmente
+4. executar compare read-only
+5. executar dry-run se necessário
+6. revisar divergências
+7. somente depois considerar novo APPLY
 ```
 
-Comando oficial:
+Comando:
 
 ```bash
 netbox-discovery hypervisor run --compare
 ```
 
-O compare:
+O compare não executa POST/PATCH.
 
-- reutiliza o planner/identity guard de produção;
-- lê estado atual do NetBox e das sources;
-- compara Tenant/Site atual e esperado;
-- não executa POST/PATCH;
-- usa o lock global;
-- gera relatório JSON para auditoria.
+## Preflight global — 1.10.6+
+
+Antes da primeira escrita Hypervisor:
+
+1. reconstruir PLAN contra o estado atual do NetBox;
+2. abortar se surgir `REVIEW`/`BLOCKED`;
+3. confirmar conjunto `RECLASSIFY_SAFE` inalterado;
+4. confirmar `existing_id`, Tenant e Site alvo;
+5. revalidar identidade forte imediatamente antes da reclassificação;
+6. somente então permitir POST/PATCH.
+
+Qualquer drift bloqueia a escrita correspondente.
 
 ## Migração coordenada de Cluster/Site — 1.10.7
 
-Quando um Cluster com `scope` de Site e seus Devices-host precisam mudar juntos de Site, existe dependência circular de validação: não é seguro mover o Cluster enquanto hosts continuam no Site antigo, nem mover hosts enquanto o Cluster continua scoped no Site antigo.
-
-A transição permitida pelo produto é:
+Quando Cluster scoped e Devices-host precisam mudar juntos de Site:
 
 ```text
 RECLASSIFY PREFLIGHT
-→ validar todos os membros
-→ remover temporariamente o scope opcional do Cluster
+→ validar membros
+→ remover temporariamente scope do Cluster
 → mover Devices-host
 → reaplicar Tenant/scope do Cluster no Site alvo
 → continuar VMs
 ```
 
-Travas obrigatórias:
+Travas:
 
-- cada Device-host fora do Site alvo deve ter `HOST / RECLASSIFY_SAFE` correspondente no mesmo contexto;
-- Cluster deve permanecer correspondência global única;
-- identidade dos Hosts deve permanecer forte e apontar para o mesmo ID;
-- host com rack/location não muda automaticamente de Site;
-- mudança na composição esperada do Cluster deve abortar o contexto;
-- nenhuma etapa executa DELETE.
+- todos os hosts membros fora do Site alvo precisam ter `HOST / RECLASSIFY_SAFE` no mesmo contexto;
+- Cluster deve permanecer único;
+- identidade dos Hosts deve continuar forte;
+- rack/location bloqueia mudança automática de Site;
+- composição inesperada do Cluster aborta o contexto;
+- sem DELETE automático.
 
-## Preflight antes da primeira escrita — 1.10.6+
+## VM vinculada acompanha Parent — 1.10.8
 
-Nenhum `RECLASSIFY_SAFE`, `CREATE` ou `UPDATE_SAFE` pode iniciar antes do preflight global multi-contexto.
+Uma VM herda Tenant/Site do Host/Cluster autoritativo. Reclassificar apenas o Tenant enquanto o Device já mudou de Site produz um estado inválido no NetBox.
 
-O APPLY deve obrigatoriamente:
+A sequência segura é:
 
-1. reconstruir o PLAN contra o estado atual do NetBox;
-2. abortar se surgir qualquer `REVIEW` ou `BLOCKED`;
-3. confirmar que o conjunto de `RECLASSIFY_SAFE` permaneceu idêntico;
-4. confirmar o mesmo `existing_id`, Tenant alvo e Site alvo;
-5. executar uma revalidação de identidade forte imediatamente antes de cada lote de reclassificação;
-6. somente então permitir POST/PATCH.
+```text
+Host/Cluster já migrado
+→ revalidar identidade da VM
+→ reler Device/Cluster atual
+→ confirmar Parent no Site alvo
+→ PATCH VM tenant + site atomicamente
+→ ajustar Tenant dos IPs vinculados
+```
 
-A revalidação de identidade deve confirmar novamente:
+Travas:
 
-- serial/UUID;
-- IP/MAC vinculados;
-- unicidade do objeto;
-- `existing_id` esperado;
-- Cluster/Prefix único quando aplicável;
-- Tenant/Site alvo existente e único.
+- Device associado precisa estar no Site alvo;
+- Cluster associado não pode estar scoped em outro Site;
+- identidade da VM é revalidada após a migração do Parent;
+- `existing_id` deve permanecer igual;
+- se o Parent estiver fora do alvo, nenhuma VM daquele contexto é reclassificada;
+- sem DELETE automático.
 
-Qualquer drift entre PLAN e APPLY aborta antes da escrita correspondente.
+A lógica é genérica e não depende de cliente, Site ou IP específico.
 
-## Transparência do PLAN — 1.10.5+
+## Transparência do PLAN
 
-A segurança não deve depender de comandos ad-hoc executados pelo operador.
-
-O próprio dry-run Hypervisor deve mostrar no terminal:
+O dry-run deve mostrar no terminal:
 
 - todos os `READY/CREATE`;
 - todos os `READY/UPDATE_SAFE`;
@@ -125,28 +127,28 @@ O próprio dry-run Hypervisor deve mostrar no terminal:
 - todos os `BLOCKED`;
 - resumo explícito com `NetBox write: NÃO`.
 
-O JSON continua sendo evidência/auditoria, mas não deve ser necessário para descobrir objetos que seriam criados.
+JSON é evidência/auditoria, não requisito para descobrir ações do PLAN.
 
 ## Multi-Tenant / multi-Site
 
 - Host é resolvido por rede de gerenciamento autoritativa;
-- VM herda o contexto do Host como primeira escolha;
+- VM herda contexto do Host como primeira escolha;
 - sem mapping confiável o objeto vira `REVIEW`;
-- o produto não adivinha Tenant/Site pelo nome da VM.
+- nome da VM sozinho nunca decide Tenant/Site.
 
-## Reclassificação segura — 1.10.4+
+## Reclassificação segura
 
-`RECLASSIFY_SAFE` só pode ficar `READY` quando a identidade global é inequívoca por evidência forte:
+`RECLASSIFY_SAFE` exige identidade inequívoca por:
 
 - serial/UUID único;
-- IP já vinculado ao mesmo objeto;
-- MAC já vinculado ao mesmo objeto.
+- IP vinculado ao mesmo objeto;
+- MAC vinculado ao mesmo objeto.
 
 Proteções:
 
 - nome sozinho nunca autoriza migração;
-- serial/UUID duplicado globalmente → `REVIEW`;
-- mais de um dono de IP/MAC → `REVIEW`;
+- serial/UUID duplicado → `REVIEW`;
+- múltiplos donos de IP/MAC → `REVIEW`;
 - serial e IP/MAC apontando para objetos diferentes → `REVIEW`;
 - o mesmo ID é preservado;
 - nenhuma reclassificação executa DELETE.
@@ -179,13 +181,13 @@ Requisitos:
 - permissão `0600`;
 - proprietário root quando executado como root;
 - segredos mascarados em saídas públicas;
-- nunca publicar esse arquivo.
+- nunca publicar o arquivo real.
 
 ## Atualização
 
 O updater `stable`:
 
-- faz backup antes da troca;
+- cria backup;
 - valida candidato;
 - preserva configuração;
 - executa rollback quando a validação pós-instalação falha;
@@ -195,8 +197,6 @@ O updater `stable`:
 ## Homologação
 
 `CI PASS` não significa `LIVE PASS`.
-
-Matriz oficial:
 
 ```text
 docs/HOMOLOGACAO.md
