@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.5 — Comandos rápidos
+# netbox-discovery 1.10.6 — Comandos rápidos
 
 ## Versão e saúde
 
@@ -31,7 +31,7 @@ netbox-discovery hypervisor check
 netbox-discovery hypervisor run
 ```
 
-A partir da 1.10.5 o próprio comando mostra automaticamente:
+O próprio comando mostra automaticamente:
 
 ```text
 HYPERVISOR NOVOS OBJETOS READY
@@ -62,12 +62,30 @@ Somente depois de revisar o dry-run:
 netbox-discovery hypervisor run --apply
 ```
 
+Na 1.10.6, antes da primeira escrita, o APPLY obrigatoriamente mostra:
+
+```text
+===== HYPERVISOR PREFLIGHT GLOBAL MULTI-CONTEXT =====
+PREFLIGHT GLOBAL: OK
+REVIEW/BLOCKED: 0
+NetBox write até aqui: NÃO
+```
+
+Para cada contexto com migração:
+
+```text
+RECLASSIFY PREFLIGHT Tenant/Site: OK
+NetBox write: NÃO
+```
+
+Se o conjunto `RECLASSIFY_SAFE`, o `existing_id`, a identidade forte ou o Tenant/Site alvo mudar, o APPLY aborta antes da escrita.
+
 ## Política
 
 ```text
-READY / CREATE            → cria somente com --apply
-READY / UPDATE_SAFE       → atualiza somente com --apply
-READY / RECLASSIFY_SAFE   → migra/reclassifica somente com --apply
+READY / CREATE            → cria somente com --apply e após preflight
+READY / UPDATE_SAFE       → atualiza somente com --apply e após preflight
+READY / RECLASSIFY_SAFE   → reclassifica somente após preflight global + identidade
 REVIEW                    → não escreve
 BLOCKED                   → não escreve
 DELETE automático         → NÃO
