@@ -74,7 +74,7 @@ def execute(apply_mode):
         run_step("CLASSIFY_RECONCILE_PLAN_V2", [py, os.path.join(BASE, "modules/inventory/pipeline.py")], stages)
         if apply_mode:
             run_step("IMPORT", [py, os.path.join(BASE, "modules/importers/importer_v2.py"), "--apply"], stages)
-            run_step("AUDIT", [py, os.path.join(BASE, "modules/auditors/inventory.py")], stages)
+            run_step("AUDIT", [py, os.path.join(BASE, "modules/auditors/auditor_v2.py")], stages)
             audit_files = glob.glob(os.path.join(REPORTS, "{0}-audit-*.json".format(site)))
             status = "PASS"
             if audit_files:
