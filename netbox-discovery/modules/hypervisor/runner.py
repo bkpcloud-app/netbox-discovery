@@ -12,7 +12,7 @@ import sys
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 LOCK_FILE = "/var/lock/netbox-discovery-global.lock"
-RUNNER_VERSION = "2.2-product"
+RUNNER_VERSION = "2.3-product"
 
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
@@ -43,23 +43,40 @@ engine.base.NetBox = TracingNetBox
 def plan_issue_lines(plan):
     records = (plan or {}).get("records") or []
     issues = [row for row in records if row.get("decision") in ("REVIEW", "BLOCKED")]
+    residuals = [row for row in records if row.get("decision") == "READY" and row.get("action") == "UPDATE_SAFE"]
     lines = []
-    if not issues:
-        return ["HYPERVISOR PENDÊNCIAS: nenhuma"]
 
-    lines.append("===== HYPERVISOR PENDÊNCIAS DO PLAN =====")
-    for pos, row in enumerate(issues, 1):
-        name = row.get("desired_name") or row.get("name") or row.get("prefix") or row.get("asset_id") or "?"
-        lines.append("[{0}/{1}] {2} | {3} | {4} | {5}".format(
-            pos,
-            len(issues),
-            row.get("decision") or "?",
-            row.get("object_type") or "?",
-            name,
-            row.get("action") or "?",
-        ))
-        lines.append("  Motivo: {0}".format(row.get("reason") or "não informado"))
-    lines.append("PENDÊNCIAS TOTAIS: {0}".format(len(issues)))
+    if not issues and not residuals:
+        return ["HYPERVISOR PENDÊNCIAS/AJUSTES: nenhum"]
+
+    if issues:
+        lines.append("===== HYPERVISOR PENDÊNCIAS DO PLAN =====")
+        for pos, row in enumerate(issues, 1):
+            name = row.get("desired_name") or row.get("name") or row.get("prefix") or row.get("asset_id") or "?"
+            lines.append("[{0}/{1}] {2} | {3} | {4} | {5}".format(
+                pos,
+                len(issues),
+                row.get("decision") or "?",
+                row.get("object_type") or "?",
+                name,
+                row.get("action") or "?",
+            ))
+            lines.append("  Motivo: {0}".format(row.get("reason") or "não informado"))
+        lines.append("PENDÊNCIAS TOTAIS: {0}".format(len(issues)))
+
+    if residuals:
+        lines.append("===== HYPERVISOR AJUSTES SEGUROS PENDENTES =====")
+        for pos, row in enumerate(residuals, 1):
+            name = row.get("desired_name") or row.get("name") or row.get("asset_id") or "?"
+            lines.append("[{0}/{1}] READY | {2} | {3} | UPDATE_SAFE".format(
+                pos, len(residuals), row.get("object_type") or "?", name
+            ))
+            detail = row.get("pending_reason") or row.get("reason") or "ajuste seguro pendente"
+            lines.append("  Motivo: {0}".format(detail))
+            if row.get("reason") and row.get("reason") != detail:
+                lines.append("  Correspondência: {0}".format(row.get("reason")))
+        lines.append("AJUSTES PENDENTES: {0}".format(len(residuals)))
+
     return lines
 
 
