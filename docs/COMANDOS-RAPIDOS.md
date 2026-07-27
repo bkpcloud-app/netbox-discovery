@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.6 — Comandos rápidos
+# netbox-discovery 1.10.7 — Comandos rápidos
 
 ## Versão e saúde
 
@@ -54,15 +54,37 @@ NetBox write: NÃO
 
 **Não usar Python auxiliar para abrir/filtrar o PLAN na operação normal.** O produto deve mostrar isso sozinho.
 
+## Hypervisor — comparar NetBox × source
+
+Depois de falha parcial ou antes de novo APPLY:
+
+```bash
+netbox-discovery hypervisor run --compare
+```
+
+Saída:
+
+```text
+OK
+MISMATCH
+MISSING
+AMBIGUOUS
+NetBox write: NÃO
+```
+
+Lista automaticamente `atual=Tenant/Site` versus `esperado=Tenant/Site` para Hosts, VMs, Clusters e Prefixes.
+
+Não executa POST/PATCH.
+
 ## Hypervisor — APPLY
 
-Somente depois de revisar o dry-run:
+Somente depois de revisar dry-run e, quando necessário, compare:
 
 ```bash
 netbox-discovery hypervisor run --apply
 ```
 
-Na 1.10.6, antes da primeira escrita, o APPLY obrigatoriamente mostra:
+Antes da primeira escrita, o APPLY obrigatoriamente mostra:
 
 ```text
 ===== HYPERVISOR PREFLIGHT GLOBAL MULTI-CONTEXT =====
@@ -80,6 +102,33 @@ NetBox write: NÃO
 
 Se o conjunto `RECLASSIFY_SAFE`, o `existing_id`, a identidade forte ou o Tenant/Site alvo mudar, o APPLY aborta antes da escrita.
 
+### Cluster mudando de Site — 1.10.7
+
+Quando um Cluster e seus Devices-host precisam mudar juntos de Site, o produto executa:
+
+```text
+RECLASSIFY PREFLIGHT
+→ CLUSTER SCOPE RELEASE
+→ move HOSTS
+→ reaplica scope do CLUSTER no Site alvo
+→ continua VMs
+```
+
+O preflight bloqueia se existir host membro fora do Site alvo sem `HOST / RECLASSIFY_SAFE` correspondente.
+
+## Falha parcial de APPLY
+
+```text
+1. NÃO repetir --apply cegamente
+2. NÃO corrigir dezenas de objetos manualmente
+3. rodar: netbox-discovery hypervisor run --compare
+4. rodar: netbox-discovery hypervisor run
+5. revisar o estado atual
+6. somente então autorizar novo --apply
+```
+
+O journal do APPLY registra as escritas que já concluíram.
+
 ## Política
 
 ```text
@@ -88,6 +137,7 @@ READY / UPDATE_SAFE       → atualiza somente com --apply e após preflight
 READY / RECLASSIFY_SAFE   → reclassifica somente após preflight global + identidade
 REVIEW                    → não escreve
 BLOCKED                   → não escreve
+COMPARE                    → somente leitura
 DELETE automático         → NÃO
 ```
 
