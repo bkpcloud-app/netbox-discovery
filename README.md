@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.10.2 — PRODUCT V1  
+**Versão atual:** 1.10.3 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -67,40 +67,55 @@ Cada source possui um modo de inventário:
 
 Sources criadas antes da 1.10 permanecem em `single_site` por compatibilidade até serem editadas.
 
-## Wizard multi-contexto — 1.10.2
+## Rede de gerenciamento autoritativa VMware — 1.10.3
 
-No VMware, um ESXi pode expor vários vmkernel com o serviço `management` habilitado. Portanto **rede de management não é automaticamente sinônimo de Site**.
+Um ESXi pode ter vários vmkernel com o serviço VMware `management` habilitado. Isso **não significa** que todas essas redes são redes de gerenciamento autoritativas do Host nem que devem virar mappings Tenant/Site.
 
-A partir da 1.10.2 o configurador:
-
-1. conecta no hypervisor;
-2. coleta Hosts, Datacenter, Cluster e vmkernel de gerenciamento;
-3. agrupa as redes que pertencem claramente ao mesmo VMware Datacenter;
-4. pergunta Tenant/Site **uma vez por grupo de Datacenter**;
-5. grava internamente um mapping para cada CIDR daquele grupo;
-6. se o Datacenter não representar um único Site, permite abrir o grupo e mapear rede por rede;
-7. redes sem Datacenter único ou compartilhadas entre Datacenters continuam em revisão individual;
-8. cria ou reutiliza Tenant Group, Tenant e Site quando autorizado.
-
-Exemplo:
+A partir da 1.10.3 o resolver separa:
 
 ```text
-Datacenter: DCM
-Hosts: vm-ae01, vm-ae02, vm-ae03, vm-ae04
-Redes VMware com serviço management (11):
-10.1.1.0/24, ...
-
-Usar um único Tenant/Site para todas estas redes deste Datacenter? [S/n]: S
-Tenant Group: POLIMIX
-Tenant: MIZU
-Site: DCM
+vmkernel com serviço management
+            ≠
+rede autoritativa usada para posicionar o ESXi no Site
 ```
 
-Isso reduz erro humano e evita pedir o mesmo Tenant/Site repetidamente quando vários vmkernel pertencem ao mesmo conjunto de Hosts.
+Para VMware, a seleção é conservadora:
+
+1. prefere o vmkernel cujo IP corresponde à resolução do FQDN/nome do ESXi;
+2. se não houver essa evidência, prefere `vmk0` quando ela está marcada como management;
+3. se restar somente uma rede management candidata, usa essa rede;
+4. se houver várias candidatas sem evidência forte, não adivinha: o Host fica sem resolução de contexto e deve aparecer em `REVIEW`.
+
+As demais interfaces/vmkernel continuam sendo evidência de inventário. Elas apenas deixam de decidir Tenant/Site.
+
+Caso real que originou a correção no DCM:
+
+```text
+4 Hosts ESXi
+Datacenter: DCM
+management service observado em 11 redes
+rede de gestão conhecida dos Hosts: 10.1.1.0/24
+redes auxiliares observadas: 192.168.140/141/142/143/160/161/180/181/190/191
+```
+
+A 1.10.2 agrupava as 11 redes por Datacenter. A 1.10.3 corrige a causa: somente a rede autoritativa participa do mapping de Site.
+
+## Wizard multi-contexto
+
+O configurador:
+
+1. conecta no hypervisor;
+2. coleta Hosts, Datacenter, Cluster e interfaces;
+3. seleciona a rede autoritativa de gerenciamento de cada Host;
+4. agrupa redes autoritativas que pertencem claramente ao mesmo VMware Datacenter;
+5. pergunta Tenant/Site uma vez por grupo de Datacenter;
+6. grava internamente um mapping para cada CIDR autoritativo daquele grupo;
+7. se um Datacenter realmente tiver várias redes de gestão válidas e não representar um único Site, permite abrir o grupo e mapear por rede;
+8. cria ou reutiliza Tenant Group, Tenant e Site quando autorizado.
 
 No runtime:
 
-- o Host é resolvido pelos mappings de rede de gerenciamento;
+- o Host é resolvido somente pela rede de gerenciamento autoritativa;
 - a VM herda o contexto Tenant/Site do Host onde está rodando;
 - IP da VM é fallback;
 - sem resolução confiável o objeto vira `REVIEW`;
@@ -214,7 +229,7 @@ Backups:                /opt/netbox-discovery/backups
 
 A matriz oficial fica em `docs/HOMOLOGACAO.md`.
 
-Na 1.10.2, o agrupamento por Datacenter foi criado após a primeira tentativa real no DCM mostrar 11 redes VMware `management` para apenas 4 Hosts. A lógica passou CI antes de promoção, mas só deve ser marcada `LIVE PASS` depois da repetição do wizard no DCM.
+Na 1.10.3, a seleção autoritativa de rede VMware possui regressões automatizadas para o caso real observado no DCM, mas só deve ser marcada `LIVE PASS` depois de repetir o wizard no ambiente real e confirmar que apenas a rede correta é apresentada para mapping.
 
 ## Documentação obrigatória
 

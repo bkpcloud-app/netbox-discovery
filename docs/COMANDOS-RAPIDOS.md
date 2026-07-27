@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.2 — Comandos rápidos
+# netbox-discovery 1.10.3 — Comandos rápidos
 
 ## Versão e saúde
 
@@ -51,23 +51,30 @@ Modo da source:
 3 - multi_tenant
 ```
 
-### VMware multi-contexto — 1.10.2
+### VMware multi-contexto — 1.10.3
 
-O wizard não pergunta mais Tenant/Site cegamente para cada vmkernel `management`.
+Para decidir Tenant/Site, **não use toda rede que aparece como serviço `management` no VMware**.
 
-Ele primeiro agrupa por VMware Datacenter quando a associação é inequívoca:
+O resolver escolhe uma rede de gerenciamento autoritativa por Host:
 
 ```text
-Datacenter: DCM
-Hosts: ESX01, ESX02, ESX03, ESX04
-Redes VMware com serviço management (11): ...
-Usar um único Tenant/Site para todas estas redes deste Datacenter? [S/n]:
+1. IP que corresponde ao FQDN/nome do ESXi
+2. vmk0 marcada como management
+3. única rede management candidata
+4. várias candidatas sem evidência forte → REVIEW
 ```
 
-- `S` → pergunta Tenant/Site uma vez e aplica aos CIDRs daquele grupo;
-- `N` → abre revisão detalhada por rede;
-- rede sem Datacenter único continua individual;
-- sources antigas permanecem `single_site` até edição explícita.
+Exemplo real do DCM que motivou a correção:
+
+```text
+vmk0 / rede de gestão: 10.1.1.0/24
+vmkernel auxiliares também marcados management:
+192.168.140/141/142/143/160/161/180/181/190/191
+```
+
+Na 1.10.3 essas redes auxiliares podem continuar no inventário, mas **não viram mappings de Site**.
+
+Sources antigas permanecem `single_site` até edição explícita.
 
 ## Hypervisor — validar e dry-run
 
@@ -175,7 +182,7 @@ CI verde ≠ automaticamente homologado ao vivo.
 1. atualizar para a stable atual
 2. editar uma source por vez
 3. escolher multi_tenant quando o manager atender vários Tenants/Sites
-4. revisar grupos de Datacenter e redes management
+4. confirmar que o wizard mostra somente a rede de gestão autoritativa do ESXi
 5. confirmar Tenant/Site
 6. repetir na segunda source
 7. hypervisor check

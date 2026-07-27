@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.10.2
+**Versão da política:** 1.10.3
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; **dados operacionais e credenciais de clientes não podem**.
 
@@ -70,7 +70,7 @@ Dependências Python ficam isoladas em:
 
 ## Multi-Tenant / multi-Site — 1.10+
 
-- Host é resolvido por mappings de rede de gerenciamento;
+- Host é resolvido por mappings de rede de gerenciamento autoritativa;
 - VM herda o contexto do Host como primeira escolha;
 - sem mapping confiável o objeto vira `REVIEW`;
 - o produto não deve adivinhar Tenant/Site pelo nome da VM;
@@ -78,19 +78,25 @@ Dependências Python ficam isoladas em:
 - reclassificação/migração de objeto existente não é automática;
 - criação/reuso de Tenant Group/Tenant/Site durante o wizard é estrutural e explícita; não equivale a importar Hosts/VMs.
 
-### Agrupamento VMware 1.10.2
+### VMware — rede autoritativa 1.10.3
 
-Um ESXi pode possuir múltiplos vmkernel com o serviço VMware `management` habilitado. A 1.10.2 não trata cada CIDR automaticamente como um Site diferente.
+Um ESXi pode ter vários vmkernel com o serviço VMware `management` habilitado. A presença desse serviço é **evidência de interface**, não autorização para transformar todas essas redes em mappings de Site.
 
-O wizard pode agrupar redes quando todas apontam inequivocamente para o mesmo VMware Datacenter. O usuário confirma se o grupo pertence a um único Tenant/Site. Se responder não, o produto abre revisão por rede.
+Para posicionamento Tenant/Site, a 1.10.3 seleciona conservadoramente a rede autoritativa do Host:
+
+1. IP de vmkernel que corresponde à resolução do FQDN/nome do ESXi;
+2. `vmk0` marcada como management;
+3. única rede management candidata;
+4. múltiplas candidatas sem evidência forte → sem resolução automática / `REVIEW`.
 
 Regras de segurança:
 
-- rede associada a mais de um Datacenter não é agrupada automaticamente;
+- redes auxiliares continuam disponíveis no inventário, mas não decidem Site;
+- mappings não são criados para todas as interfaces somente porque `management=True`;
 - mappings existentes divergentes não são consolidados silenciosamente;
 - Tenant/Site continua sendo confirmação explícita;
-- o agrupamento altera apenas configuração estrutural/mappings, não executa IMPORT de Hosts/VMs;
-- qualquer incerteza deve terminar em revisão, não em inferência silenciosa.
+- o configurador não executa IMPORT de Hosts/VMs;
+- qualquer incerteza termina em revisão, não em inferência silenciosa.
 
 ## Dados de cliente em mappings
 
