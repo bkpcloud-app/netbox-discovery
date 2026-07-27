@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.10.6 — PRODUCT V1  
+**Versão atual:** 1.10.7 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -31,6 +31,7 @@ DISCOVER → CLASSIFY → RECONCILE → PLAN → IMPORT → AUDIT
 netbox-discovery hypervisor configure
 netbox-discovery hypervisor check
 netbox-discovery hypervisor run
+netbox-discovery hypervisor run --compare
 netbox-discovery hypervisor run --apply
 netbox-discovery hypervisor status
 ```
@@ -49,7 +50,64 @@ multi_site
 multi_tenant
 ```
 
-## Preflight global antes de qualquer escrita — 1.10.6
+## Migração coordenada de Cluster/Site — 1.10.7
+
+A 1.10.7 corrige a migração de clusters NetBox já existentes quando o Cluster e seus Devices-host precisam sair de um Site antigo e ir para outro Site.
+
+O NetBox exige que um Device host pertença ao mesmo Site do Cluster quando o Cluster possui `scope` de Site. Portanto não é seguro mover simplesmente o Cluster antes dos Hosts nem mover os Hosts enquanto o Cluster ainda está preso ao Site antigo.
+
+A sequência 1.10.7 é:
+
+```text
+RECLASSIFY PREFLIGHT
+→ valida todos os hosts membros do Cluster
+→ remove temporariamente o scope opcional do Cluster
+→ move os Devices-host para o Site alvo
+→ reaplica o scope do Cluster no Site alvo
+→ continua a reconciliação de VMs
+```
+
+Proteções:
+
+- todos os hosts do Cluster que estão fora do Site alvo precisam estar cobertos por `HOST / RECLASSIFY_SAFE`;
+- host com rack/location não muda de Site automaticamente;
+- se a composição do Cluster mudar, o preflight bloqueia;
+- falha parcial mantém journal e pode ser reavaliada antes de nova tentativa;
+- nenhuma rotina executa DELETE automático.
+
+Essa correção foi adicionada após o APPLY real de 27/07/2026 parar corretamente no NetBox com HTTP 400 ao tentar mover o Cluster `FBA` enquanto dois Devices-host ainda estavam em `DCM`.
+
+## Comparação NetBox × Hypervisor — 1.10.7
+
+O modo oficial read-only:
+
+```bash
+netbox-discovery hypervisor run --compare
+```
+
+coleta o estado atual das sources, lê o NetBox e compara Tenant/Site atual versus Tenant/Site esperado pelos mappings.
+
+A saída mostra:
+
+```text
+OK
+MISMATCH
+MISSING
+AMBIGUOUS
+```
+
+para Hosts, VMs, Clusters e Prefixes, além de listar todas as divergências no terminal.
+
+Regras:
+
+- não executa POST/PATCH;
+- usa o lock global e não roda durante APPLY/Update;
+- VMs associadas a Cluster usam o scope do Cluster como Site efetivo;
+- VMs associadas diretamente a Device usam o Site do Device;
+- gera relatório `MULTI-hypervisor-compare-*.json`;
+- `NetBox write: NÃO`.
+
+## Preflight global antes de qualquer escrita — 1.10.6+
 
 A partir da 1.10.6, `hypervisor run --apply` não inicia nenhuma escrita logo após o PLAN apresentado ao operador.
 
@@ -78,7 +136,7 @@ RECLASSIFY PREFLIGHT Tenant/Site: OK
 NetBox write: NÃO
 ```
 
-Se identidade, `existing_id`, Tenant/Site alvo ou conjunto de migrações mudar entre dry-run e APPLY, o processo aborta **antes da primeira escrita**.
+Se identidade, `existing_id`, Tenant/Site alvo ou conjunto de migrações mudar entre dry-run e APPLY, o processo aborta antes da primeira escrita.
 
 ## Diagnóstico automático do PLAN — 1.10.5+
 
@@ -211,6 +269,7 @@ Tenant Group [opcional]
 ```text
 run sem --apply             = dry-run
 hypervisor run sem --apply  = dry-run
+hypervisor run --compare    = comparação read-only
 --apply                      = escrita somente de READY após preflight global
 REVIEW                       = não escreve
 BLOCKED                      = não escreve
@@ -248,6 +307,7 @@ netbox-discovery update run
 
 netbox-discovery hypervisor check
 netbox-discovery hypervisor run
+netbox-discovery hypervisor run --compare
 netbox-discovery hypervisor status
 ```
 

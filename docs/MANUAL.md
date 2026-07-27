@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.10.6 — PRODUCT V1  
+**Versão:** 1.10.7 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -34,6 +34,7 @@ DISCOVER → CLASSIFY → RECONCILE → PLAN → IMPORT → AUDIT
 netbox-discovery hypervisor configure
 netbox-discovery hypervisor check
 netbox-discovery hypervisor run
+netbox-discovery hypervisor run --compare
 netbox-discovery hypervisor run --apply
 netbox-discovery hypervisor status
 ```
@@ -120,9 +121,9 @@ netbox-discovery hypervisor run --apply
 
 ---
 
-## 4. Preflight global multi-contexto — 1.10.6
+## 4. Preflight global multi-contexto — 1.10.6+
 
-O `--apply` possui uma trava adicional **antes da primeira escrita**.
+O `--apply` possui uma trava adicional antes da primeira escrita.
 
 Depois de receber a autorização do operador, o produto ainda não escreve. Primeiro ele executa:
 
@@ -158,7 +159,7 @@ Se qualquer evidência mudar:
 PREFLIGHT ... nenhuma escrita iniciada
 ```
 
-A ordem operacional passa a ser:
+A ordem operacional é:
 
 ```text
 DISCOVER
@@ -172,7 +173,122 @@ DISCOVER
 
 ---
 
-## 5. Endpoint NetBox
+## 5. Migração coordenada de Cluster/Site — 1.10.7
+
+### Problema
+
+No NetBox, um Device que é host de Cluster só pode permanecer associado ao Cluster quando ambos estão coerentes com o mesmo Site, caso o Cluster possua `scope` de Site.
+
+Durante o primeiro APPLY multi-contexto real em 27/07/2026, o contexto `MIZU/FBA` chegou com:
+
+```text
+Cluster FBA → scope DCM
+Hosts FBA   → Site DCM
+Alvo        → MIZU/FBA
+```
+
+A 1.10.6 tentava reclassificar o Cluster antes dos Hosts e o NetBox bloqueou corretamente:
+
+```text
+HTTP 400
+2 devices are assigned as hosts for this cluster but are not in site FBA
+```
+
+Nenhum contexto posterior a FBA foi escrito naquela execução.
+
+### Sequência segura 1.10.7
+
+Como o `scope` do Cluster é opcional, a migração coordenada passa a usar:
+
+```text
+1. RECLASSIFY PREFLIGHT
+2. validar todos os Devices-host do Cluster
+3. remover temporariamente o scope do Cluster
+4. mover os Devices-host para o Site alvo
+5. reaplicar Tenant + scope do Cluster no Site alvo
+6. continuar com VMs e reconciliação normal
+```
+
+Saída esperada:
+
+```text
+RECLASSIFY PREFLIGHT MIZU/FBA: OK
+CLUSTER SCOPE RELEASE FBA: OK | NetBox write: SIM
+...
+```
+
+### Travas
+
+Antes de soltar o scope do Cluster:
+
+- o Cluster precisa continuar sendo correspondência global única;
+- cada Device-host fora do Site alvo precisa possuir `HOST / RECLASSIFY_SAFE` no mesmo contexto;
+- Device-host com rack/location não é migrado automaticamente;
+- identidade forte dos Hosts continua sendo revalidada;
+- se a composição do Cluster mudar, o processo aborta antes da migração daquele contexto.
+
+### Recuperação após falha parcial
+
+O produto mantém journal das escritas. Não existe rollback cego de objetos já gravados.
+
+Depois de uma falha:
+
+1. não repetir `--apply` cegamente;
+2. executar comparação read-only;
+3. rodar novo dry-run;
+4. somente continuar depois de revisar o estado real do NetBox.
+
+---
+
+## 6. Comparação NetBox × Hypervisor — 1.10.7
+
+Comando oficial:
+
+```bash
+netbox-discovery hypervisor run --compare
+```
+
+Esse modo é somente leitura.
+
+Ele:
+
+1. coleta novamente as sources Hypervisor;
+2. resolve Tenant/Site pelos mappings atuais;
+3. lê Devices, VMs, Clusters e Prefixes do NetBox;
+4. compara o contexto atual contra o contexto esperado;
+5. lista apenas as divergências e entrega resumo completo.
+
+Estados:
+
+```text
+OK
+MISMATCH
+MISSING
+AMBIGUOUS
+```
+
+Exemplo:
+
+```text
+MISMATCH | HOST | 10.2.1.21 | atual=MIZU/DCM | esperado=MIZU/FBA
+```
+
+Para VMs:
+
+- se a VM estiver em Cluster, o Site efetivo vem do `scope` do Cluster;
+- se estiver ligada diretamente a Device, o Site efetivo vem do Device;
+- Tenant da VM é comparado diretamente.
+
+Proteções:
+
+- não usa POST/PATCH;
+- usa lock global e não roda durante APPLY/Update;
+- gera `MULTI-hypervisor-compare-*.json`;
+- termina com `NetBox write: NÃO`.
+
+---
+
+## 7. Endpoint NetBox
 
 O produto aceita somente:
 
@@ -182,7 +298,7 @@ https://inventory.bkpcloud.app.br:8080
 
 ---
 
-## 6. Hypervisor
+## 8. Hypervisor
 
 Plataformas:
 
@@ -209,7 +325,7 @@ multi_tenant
 
 ---
 
-## 7. VMware: rede de gerenciamento autoritativa
+## 9. VMware: rede de gerenciamento autoritativa
 
 Para Tenant/Site, não basta o VMware marcar uma interface como serviço `management`.
 
@@ -224,7 +340,7 @@ Interfaces auxiliares continuam no inventário, mas não posicionam o Host.
 
 ---
 
-## 8. Resolver Tenant/Site
+## 10. Resolver Tenant/Site
 
 ### Host
 
@@ -248,7 +364,7 @@ A localização no NetBox representa onde a VM está hospedada. Uma VM pode aten
 
 ---
 
-## 9. Reclassificação segura — 1.10.4+
+## 11. Reclassificação segura — 1.10.4+
 
 Problema resolvido:
 
@@ -290,7 +406,7 @@ Quando seguro:
 
 ---
 
-## 10. Delta de inventário — 1.10.4+
+## 12. Delta de inventário — 1.10.4+
 
 O discovery compara a coleta atual com o snapshot anterior.
 
@@ -307,12 +423,18 @@ Uma ausência nunca autoriza exclusão automática.
 
 ---
 
-## 11. APPLY
+## 13. APPLY
 
 Dry-run:
 
 ```bash
 netbox-discovery hypervisor run
+```
+
+Comparação read-only:
+
+```bash
+netbox-discovery hypervisor run --compare
 ```
 
 Escrita:
@@ -328,13 +450,14 @@ Regras:
 - `REVIEW` não escreve;
 - `BLOCKED` não escreve;
 - `RECLASSIFY_SAFE` exige revalidação de identidade imediatamente antes do PATCH;
+- migração de Cluster/Site usa bridge coordenada quando necessário;
 - APPLY mantém journal das escritas;
 - AUDIT é executado depois da escrita;
 - não existe DELETE automático no Hypervisor.
 
 ---
 
-## 12. Atualização
+## 14. Atualização
 
 ```bash
 netbox-discovery update status
@@ -353,7 +476,7 @@ Updater `stable`:
 
 ---
 
-## 13. Schedulers
+## 15. Schedulers
 
 Network e Hypervisor são opt-in.
 
@@ -367,7 +490,7 @@ Durante homologação de uma função de escrita nova, manter Hypervisor schedul
 
 ---
 
-## 14. Saúde
+## 16. Saúde
 
 ```bash
 netbox-discovery version
@@ -379,7 +502,7 @@ netbox-discovery health --json
 
 ---
 
-## 15. Caminhos
+## 17. Caminhos
 
 ```text
 Aplicação:              /opt/netbox-discovery
@@ -394,7 +517,7 @@ Lock global:            /var/lock/netbox-discovery-global.lock
 
 ---
 
-## 16. Homologação
+## 18. Homologação
 
 A matriz oficial é:
 

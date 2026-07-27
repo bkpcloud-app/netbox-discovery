@@ -1,3 +1,91 @@
+## V1.10.7 — Migração coordenada de Cluster/Site e compare read-only
+
+Hotfix criado a partir da evidência do primeiro APPLY multi-contexto real em 27/07/2026.
+
+### Evidência do APPLY parcial 1.10.6
+
+O preflight global passou corretamente antes da primeira escrita:
+
+```text
+PREFLIGHT GLOBAL: OK
+READY/CREATE: 12
+READY/UPDATE_SAFE: 53
+READY/RECLASSIFY_SAFE: 44
+REVIEW/BLOCKED: 0
+NetBox write até aqui: NÃO
+```
+
+`MIZU/DCM` concluiu com 4 Hosts, 124 VMs e 0 erros. `MIZU/FAB` reclassificou o Host `10.5.1.21` e concluiu com 1 Host, 4 VMs e 0 erros.
+
+Ao iniciar `MIZU/FBA`, o NetBox bloqueou a alteração do Cluster `FBA`:
+
+```text
+HTTP 400 /api/virtualization/clusters/4/
+{"scope":["2 devices are assigned as hosts for this cluster but are not in site FBA"]}
+```
+
+O pipeline parou e os contextos posteriores não foram escritos.
+
+### Causa raiz
+
+A 1.10.6 ordenava reclassificações como:
+
+```text
+PREFIX → CLUSTER → HOST → VM
+```
+
+Isso não funciona quando o Cluster possui scope no Site antigo e seus Devices-host também precisam mudar de Site: o NetBox exige coerência entre o Site do Cluster e o Site dos hosts.
+
+### Bridge segura de Cluster/Site
+
+A 1.10.7 usa a natureza opcional do scope do Cluster para uma transição coordenada:
+
+```text
+RECLASSIFY PREFLIGHT
+→ validar todos os Devices-host do Cluster
+→ remover temporariamente o scope do Cluster
+→ mover os Devices-host para o Site alvo
+→ reaplicar Tenant/scope do Cluster no Site alvo
+→ continuar VMs
+```
+
+Proteções adicionais:
+
+- todos os hosts membros fora do Site alvo precisam estar cobertos por `HOST / RECLASSIFY_SAFE` no mesmo contexto;
+- Device-host com rack/location bloqueia migração automática de Site;
+- Cluster e identidades fortes são revalidados imediatamente antes da escrita;
+- composição inesperada do Cluster aborta a migração do contexto;
+- nenhuma rotina executa DELETE automático.
+
+### Compare oficial NetBox × Hypervisor
+
+Novo modo read-only:
+
+```bash
+netbox-discovery hypervisor run --compare
+```
+
+Ele reutiliza o mesmo planner/identity guard de produção para comparar o estado atual do NetBox contra Tenant/Site esperado pelas sources e mappings.
+
+Estados apresentados:
+
+```text
+OK
+MISMATCH
+MISSING
+AMBIGUOUS
+```
+
+Abrange Hosts, VMs, Clusters e Prefixes, mostra `atual=Tenant/Site` versus `esperado=Tenant/Site`, gera `MULTI-hypervisor-compare-*.json` e nunca executa POST/PATCH.
+
+Esse modo foi adicionado para auditoria após APPLY parcial e também pode ser usado antes/depois de uma escrita real.
+
+### Estado de homologação
+
+Na publicação inicial da 1.10.7, a bridge de Cluster/Site e o compare permanecem `CI PASS / NOT LIVE` até validação real no estado parcial do DCM. O APPLY multi-contexto completo continua `LIVE PARTIAL`.
+
+---
+
 ## V1.10.6 — Preflight global antes de qualquer escrita Hypervisor
 
 Hotfix de segurança identificado durante a revisão final imediatamente antes do primeiro APPLY multi-contexto real.
@@ -116,147 +204,4 @@ NetBox write: NÃO
 
 ### Regressão
 
-O CI passa a exigir que um registro `READY/CREATE` apareça na saída operacional do runner.
-
----
-
-## V1.10.4 — Reclassificação segura e delta de inventário Hypervisor
-
-Evolução do runtime multi-contexto após o dry-run real no DCM mostrar que o resolver posicionava corretamente Hosts/VMs em 12 contextos, porém objetos legados ainda existiam no Tenant/Site incorreto devido ao primeiro APPLY single-site.
-
-### Reclassificação segura
-
-O PLAN passa a suportar:
-
-```text
-READY / RECLASSIFY_SAFE
-```
-
-quando o mesmo objeto já existe no NetBox fora do contexto autoritativo e a identidade global é inequívoca.
-
-Evidências fortes:
-
-- serial/UUID único;
-- IP vinculado ao mesmo objeto;
-- MAC vinculado ao mesmo objeto;
-- combinação coerente dessas evidências.
-
-Proteções:
-
-- nome sozinho nunca autoriza migração;
-- identidade global ambígua permanece `REVIEW`;
-- serial e IP/MAC apontando para objetos diferentes permanece `REVIEW`;
-- o mesmo ID é preservado;
-- nenhuma migração executa DELETE.
-
-### Delta de inventário
-
-VM presente anteriormente e ausente agora:
-
-```text
-REMOVED/REVIEW
-REVIEW / NOOP
-DELETE automático: NÃO
-```
-
-### Evidência real 1.10.4
-
-Dry-run no DCM em 27/07/2026:
-
-```text
-22/22 Hosts resolvidos
-245/245 VMs resolvidas
-12 contextos
-NÃO RESOLVIDOS: 0
-Objetos planejados: 281
-READY: 281
-REVIEW: 0
-BLOCKED: 0
-CREATE: 12
-UPDATE_SAFE: 50
-RECLASSIFY_SAFE: 44
-NOOP: 175
-NetBox write: NÃO
-```
-
----
-
-## V1.10.3 — Rede de gerenciamento autoritativa VMware
-
-Para VMware, Tenant/Site passa a usar uma rede de gerenciamento autoritativa por Host:
-
-1. IP de vmkernel correspondente ao FQDN/nome do ESXi;
-2. `vmk0` marcada como management;
-3. única candidata management;
-4. múltiplas candidatas sem evidência forte → `REVIEW`.
-
-Interfaces auxiliares continuam no inventário, mas não decidem Site/Tenant.
-
-Validação real no DCM confirmou `10.1.1.0/24` como rede autoritativa dos quatro Hosts do Datacenter DCM, ignorando os vmkernel auxiliares `192.168.x` para placement.
-
----
-
-## V1.10.2 — Agrupamento de redes VMware por Datacenter
-
-- agrupa evidências de placement por VMware Datacenter;
-- pergunta Tenant/Site uma vez por grupo quando seguro;
-- mantém rede ambígua separada;
-- não altera política de escrita/DELETE.
-
----
-
-## V1.10.1 — Documentação obrigatória da release
-
-- README, Manual, Comandos Rápidos, Security, Release Notes e Matriz de Homologação passam a acompanhar `VERSION`;
-- self-test/CI bloqueiam release documentalmente inconsistente;
-- `CI PASS` e `LIVE PASS` passam a ser estados explicitamente separados.
-
----
-
-## V1.10.0 — Hypervisor multi-Tenant / multi-Site
-
-Modos:
-
-```text
-single_site
-multi_site
-multi_tenant
-```
-
-- Host resolvido por rede de gerenciamento;
-- VM herda contexto do Host;
-- IP da VM é fallback;
-- sem resolução confiável → `REVIEW`;
-- proteção global impede CREATE duplicado fora do contexto alvo.
-
----
-
-## V1.9.x — Consolidação anterior
-
-Principais marcos:
-
-- 1.9.8: diagnóstico visível de resíduos;
-- 1.9.7: consistência V2 entre dry-run, preflight e audit;
-- 1.9.6: política de IP autoritativo de VM;
-- 1.9.4: carregamento VMware no mesmo processo;
-- 1.9.3: dependências VMware isoladas;
-- 1.9.2: Tenant Group genérico;
-- 1.9.0: identidade física, auto-update e hardening operacional.
-
----
-
-## V1.8.0
-
-Hypervisor integrado e endpoint BKPCLOUD fixo.
-
-## V1.7.0
-
-Estabilização de classificação e inventário.
-
-## V1.6.0
-
-Reconciliação segura e descoberta CFTV.
-
-## V1.5.x
-
-Consolidação inicial do PRODUCT V1, instalador, preservação de configuração e correções de DNS/versão.
+O CI exige que registros `READY/CREATE` apareçam na saída operacional do runner.

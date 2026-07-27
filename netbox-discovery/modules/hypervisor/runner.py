@@ -12,7 +12,7 @@ import sys
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 LOCK_FILE = "/var/lock/netbox-discovery-global.lock"
-RUNNER_VERSION = "3.3-product"
+RUNNER_VERSION = "3.4-product"
 
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
@@ -20,6 +20,7 @@ if BASE not in sys.path:
 from lib.netbox import NetBox as RealNetBox
 from modules.hypervisor.config import load_hypervisor_config
 from modules.hypervisor import engine_v4 as engine
+from modules.hypervisor import compare as compare_module
 
 WRITE_JOURNAL = []
 
@@ -204,9 +205,15 @@ def scheduled():
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Pipeline independente de virtualização do netbox-discovery")
-    ap.add_argument("--apply", action="store_true", help="habilita escrita READY no NetBox")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true", help="habilita escrita READY no NetBox")
+    mode.add_argument("--compare", action="store_true", help="compara NetBox atual com Tenant/Site esperado; somente leitura")
     ap.add_argument("--scheduled", action="store_true", help="usa automation.enabled/apply do hypervisors.json")
     args = ap.parse_args(argv)
+    if args.scheduled and args.compare:
+        ap.error("--scheduled não pode ser combinado com --compare")
+    if args.compare:
+        return compare_module.compare()
     if args.scheduled:
         return scheduled()
     return execute(args.apply)

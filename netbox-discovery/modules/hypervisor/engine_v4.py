@@ -6,7 +6,7 @@ from collections import defaultdict
 
 from modules.hypervisor import engine_v3 as v3
 
-ENGINE_VERSION = "4.0-product"
+ENGINE_VERSION = "4.1-product"
 base = v3.base
 v2 = v3.v2
 NetBox = v3.NetBox
@@ -71,16 +71,51 @@ def _global_preflight(discovery, original_plan, nb):
     return live_plan
 
 
-def _reclassify_identity_preflight(ctx, subplan, nb):
+def _cluster_member_preflight(ctx, rows, devices, clusters, target_site_id):
+    host_rows_by_id = dict(
+        (row.get("existing_id"), row)
+        for row in rows
+        if row.get("object_type") == "HOST" and row.get("existing_id")
+    )
+
+    for row in rows:
+        if row.get("object_type") != "CLUSTER":
+            continue
+        cluster_id = row.get("existing_id")
+        candidates = [x for x in clusters if x.get("id") == cluster_id]
+        if len(candidates) != 1:
+            raise RuntimeError("RECLASSIFY PREFLIGHT: Cluster ID {0} não está mais único/presente".format(cluster_id))
+
+        members = [x for x in devices if base.nested_id(x.get("cluster")) == cluster_id]
+        for device in members:
+            current_site_id = base.nested_id(device.get("site"))
+            if current_site_id == target_site_id:
+                continue
+            if device.get("id") not in host_rows_by_id:
+                raise RuntimeError(
+                    "RECLASSIFY PREFLIGHT: Cluster {0} possui host {1} fora do Site alvo sem HOST RECLASSIFY_SAFE; nenhuma escrita deste contexto iniciada".format(
+                        row.get("name") or row.get("desired_name") or cluster_id,
+                        device.get("name") or device.get("id"),
+                    )
+                )
+            if base.nested_id(device.get("rack")) or base.nested_id(device.get("location")):
+                raise RuntimeError(
+                    "RECLASSIFY PREFLIGHT: Host {0} do Cluster {1} possui rack/location e não pode mudar de Site automaticamente".format(
+                        device.get("name") or device.get("id"),
+                        row.get("name") or row.get("desired_name") or cluster_id,
+                    )
+                )
+
+
+def _reclassify_preflight_state(ctx, subplan, nb):
     rows = [
         row for row in subplan.get("records") or []
         if row.get("decision") == "READY" and row.get("action") == "RECLASSIFY_SAFE"
     ]
     if not rows:
-        return True
+        return {"rows": [], "tenant": None, "site": None, "devices": [], "clusters": []}
 
-    # Target Tenant/Site must still be unique and present immediately before writes.
-    v3._target_objects(nb, ctx)
+    target_tenant, target_site = v3._target_objects(nb, ctx)
 
     devices = base.query(nb, "dcim/devices/", limit=20000)
     vms = base.query(nb, "virtualization/virtual-machines/", limit=20000)
@@ -142,22 +177,104 @@ def _reclassify_identity_preflight(ctx, subplan, nb):
 
         raise RuntimeError("RECLASSIFY PREFLIGHT: tipo não suportado: {0}".format(kind))
 
+    _cluster_member_preflight(ctx, rows, devices, clusters, target_site.get("id"))
+
     print("RECLASSIFY PREFLIGHT {0}/{1}: OK | objetos={2} | NetBox write: NÃO".format(
         ctx.get("tenant"), ctx.get("site"), len(rows)
     ))
+    return {
+        "rows": rows,
+        "tenant": target_tenant,
+        "site": target_site,
+        "devices": devices,
+        "clusters": clusters,
+    }
+
+
+def _reclassify_identity_preflight(ctx, subplan, nb):
+    # Keep the 1.10.6 public/internal contract: callers only need a boolean.
+    # The 1.10.7 bridge uses the richer state through the private helper above.
+    _reclassify_preflight_state(ctx, subplan, nb)
     return True
 
 
+def _subset_plan(subplan, kinds):
+    allowed = set(kinds)
+    return {
+        "stage": subplan.get("stage") or "HYPERVISOR_PLAN",
+        "records": [
+            row for row in subplan.get("records") or []
+            if row.get("decision") == "READY"
+            and row.get("action") == "RECLASSIFY_SAFE"
+            and row.get("object_type") in allowed
+        ],
+        "netbox_write": False,
+    }
+
+
+def _release_cluster_scopes(ctx, state, nb):
+    events = []
+    cluster_by_id = dict((x.get("id"), x) for x in state.get("clusters") or [] if x.get("id") is not None)
+    for row in state.get("rows") or []:
+        if row.get("object_type") != "CLUSTER":
+            continue
+        cluster_id = row.get("existing_id")
+        current = cluster_by_id.get(cluster_id) or {}
+        if not base.nested_id(current.get("scope")) and not current.get("scope_id"):
+            continue
+        nb.patch("virtualization/clusters/{0}/".format(cluster_id), {
+            "scope_type": None,
+            "scope_id": None,
+        })
+        events.append({
+            "phase": "RECLASSIFY", "object_type": "CLUSTER", "action": "SCOPE_RELEASED_SAFE",
+            "name": row.get("name") or row.get("desired_name") or row.get("asset_id"),
+            "object_id": cluster_id,
+            "detail": "scope temporariamente removido antes de mover hosts para {0}/{1}".format(
+                ctx.get("tenant"), ctx.get("site")
+            ),
+        })
+        print("CLUSTER SCOPE RELEASE {0}: OK | NetBox write: SIM".format(
+            row.get("name") or row.get("desired_name") or cluster_id
+        ))
+    return events
+
+
 def _safe_apply_reclassifications(ctx, subplan, nb):
-    _reclassify_identity_preflight(ctx, subplan, nb)
-    return _ORIGINAL_RECLASSIFY(ctx, subplan, nb)
+    state = _reclassify_preflight_state(ctx, subplan, nb)
+    rows = state.get("rows") or []
+    if not rows:
+        return []
+
+    events = []
+
+    prefix_plan = _subset_plan(subplan, ("PREFIX",))
+    if prefix_plan["records"]:
+        events.extend(_ORIGINAL_RECLASSIFY(ctx, prefix_plan, nb))
+
+    # NetBox enforces Site consistency in both directions between a scoped
+    # Cluster and its host Devices. Use an unscoped Cluster as the safe bridge.
+    cluster_plan = _subset_plan(subplan, ("CLUSTER",))
+    if cluster_plan["records"]:
+        events.extend(_release_cluster_scopes(ctx, state, nb))
+
+    host_plan = _subset_plan(subplan, ("HOST",))
+    if host_plan["records"]:
+        events.extend(_ORIGINAL_RECLASSIFY(ctx, host_plan, nb))
+
+    if cluster_plan["records"]:
+        events.extend(_ORIGINAL_RECLASSIFY(ctx, cluster_plan, nb))
+
+    vm_plan = _subset_plan(subplan, ("VM",))
+    if vm_plan["records"]:
+        events.extend(_ORIGINAL_RECLASSIFY(ctx, vm_plan, nb))
+
+    return events
 
 
 def apply_plan(discovery, plan, nb=None):
     active_nb = nb or NetBox()
 
-    # No write is allowed until the entire multi-context plan is rebuilt from live
-    # NetBox state and all reclassification identities are unchanged.
     live_plan = _global_preflight(discovery, plan, active_nb)
 
     previous = v3._apply_reclassifications

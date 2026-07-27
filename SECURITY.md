@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.10.6
+**Versão da política:** 1.10.7
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; **dados operacionais e credenciais de clientes não podem**.
 
@@ -13,7 +13,7 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 - senha/segredo VMware, Proxmox ou Hyper-V;
 - chave SSH privada;
 - `.env` com credenciais;
-- relatórios de discovery/plan/import/audit de clientes;
+- relatórios de discovery/plan/import/audit/compare de clientes;
 - logs de clientes;
 - backups de configuração de clientes.
 
@@ -21,19 +21,74 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 
 - `netbox-discovery run` é dry-run por padrão;
 - `netbox-discovery hypervisor run` é dry-run por padrão;
+- `netbox-discovery hypervisor run --compare` é somente leitura;
 - escrita manual exige `--apply`;
 - somente `READY` é elegível para escrita;
 - `REVIEW` não escreve;
 - `BLOCKED` não escreve;
 - AUDIT é read-only;
 - Hypervisor não executa DELETE automático;
-- Network, Hypervisor e Update compartilham lock global;
+- Network, Hypervisor, Compare e Update compartilham lock global;
 - retry automático é reservado a GETs seguros;
 - POST/PATCH não recebem retry cego;
 - falha parcial de APPLY Hypervisor mantém journal das escritas;
 - schedulers Network/Hypervisor são opt-in.
 
-## Preflight antes da primeira escrita — 1.10.6
+## Recuperação após APPLY parcial — 1.10.7
+
+Uma falha depois de algumas escritas não autoriza rollback cego nem repetição imediata do `--apply`.
+
+Procedimento seguro:
+
+```text
+1. preservar o estado atual e o journal
+2. não corrigir objetos em massa manualmente
+3. executar compare read-only
+4. executar novo dry-run
+5. revisar divergências
+6. somente depois considerar novo APPLY
+```
+
+Comando oficial:
+
+```bash
+netbox-discovery hypervisor run --compare
+```
+
+O compare:
+
+- reutiliza o planner/identity guard de produção;
+- lê estado atual do NetBox e das sources;
+- compara Tenant/Site atual e esperado;
+- não executa POST/PATCH;
+- usa o lock global;
+- gera relatório JSON para auditoria.
+
+## Migração coordenada de Cluster/Site — 1.10.7
+
+Quando um Cluster com `scope` de Site e seus Devices-host precisam mudar juntos de Site, existe dependência circular de validação: não é seguro mover o Cluster enquanto hosts continuam no Site antigo, nem mover hosts enquanto o Cluster continua scoped no Site antigo.
+
+A transição permitida pelo produto é:
+
+```text
+RECLASSIFY PREFLIGHT
+→ validar todos os membros
+→ remover temporariamente o scope opcional do Cluster
+→ mover Devices-host
+→ reaplicar Tenant/scope do Cluster no Site alvo
+→ continuar VMs
+```
+
+Travas obrigatórias:
+
+- cada Device-host fora do Site alvo deve ter `HOST / RECLASSIFY_SAFE` correspondente no mesmo contexto;
+- Cluster deve permanecer correspondência global única;
+- identidade dos Hosts deve permanecer forte e apontar para o mesmo ID;
+- host com rack/location não muda automaticamente de Site;
+- mudança na composição esperada do Cluster deve abortar o contexto;
+- nenhuma etapa executa DELETE.
+
+## Preflight antes da primeira escrita — 1.10.6+
 
 Nenhum `RECLASSIFY_SAFE`, `CREATE` ou `UPDATE_SAFE` pode iniciar antes do preflight global multi-contexto.
 
