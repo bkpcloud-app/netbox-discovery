@@ -7,6 +7,7 @@ import csv
 import datetime
 import json
 import os
+import re
 import socket
 import sys
 
@@ -20,7 +21,7 @@ if BASE not in sys.path:
 
 import classifier as base
 
-CLASSIFIER_VERSION = "3.0-product"
+CLASSIFIER_VERSION = "3.1-product"
 SPECIAL_TCP_PORTS = (3570, 51000)
 TOPDATA_OUI = "00:18:E2"
 
@@ -78,6 +79,27 @@ def _has_topdata_mac(d):
     return any(mac.startswith(TOPDATA_OUI) for mac in _normalized_macs(d))
 
 
+def _entity_model_text(d):
+    values = []
+    primary = d.get("snmp_entity_primary") or {}
+    for key in ("model", "name", "description"):
+        if clean(primary.get(key)):
+            values.append(clean(primary.get(key)))
+    for row in d.get("snmp_entity_inventory") or []:
+        for key in ("model", "name", "description"):
+            if clean(row.get(key)):
+                values.append(clean(row.get(key)))
+    return " ".join(values)
+
+
+def _dell_switch_fingerprint(d):
+    """Recognize Dell switch product families from hardware identity, not SSH OS."""
+    model_text = _entity_model_text(d).upper()
+    if re.search(r"\b(?:N\d{4}[A-Z0-9-]*|S\d{4}[A-Z0-9-]*|Z\d{4}[A-Z0-9-]*|PCT?\d{4}[A-Z0-9-]*|POWERCONNECT\s*\d{4}[A-Z0-9-]*)\b", model_text):
+        return True
+    return False
+
+
 def normalize_manufacturer(v):
     raw = clean(v)
     low = raw.lower()
@@ -104,6 +126,11 @@ def classify_role(d, text):
     low = clean(text).lower()
     topdata = _has_topdata_mac(d) or "topdata" in low or "inner " in low
 
+    # Hardware model outranks generic SSH/Linux fingerprints. Dell OS10 is
+    # Linux-based, but the managed asset is still a network switch.
+    if _dell_switch_fingerprint(d):
+        return "NETWORK_SWITCH", 98, ["Dell network-switch hardware model fingerprint"]
+
     # OUI sozinho identifica fabricante, nunca função.
     if topdata and any(term in low for term in (
         "catraca", "turnstile", "controlecatraca", "catraca revolution",
@@ -125,6 +152,8 @@ def classify_role(d, text):
 
 
 def infer_manufacturer(d, text, ent, role):
+    if _dell_switch_fingerprint(d):
+        return "Dell", "hardware-model-fingerprint"
     if _has_topdata_mac(d):
         return "Topdata", "mac-oui"
     low = clean(text).lower()
