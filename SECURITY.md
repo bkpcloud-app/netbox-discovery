@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.10.5
+**Versão da política:** 1.10.6
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; **dados operacionais e credenciais de clientes não podem**.
 
@@ -33,7 +33,31 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 - falha parcial de APPLY Hypervisor mantém journal das escritas;
 - schedulers Network/Hypervisor são opt-in.
 
-## Transparência do PLAN — 1.10.5
+## Preflight antes da primeira escrita — 1.10.6
+
+Nenhum `RECLASSIFY_SAFE`, `CREATE` ou `UPDATE_SAFE` pode iniciar antes do preflight global multi-contexto.
+
+O APPLY deve obrigatoriamente:
+
+1. reconstruir o PLAN contra o estado atual do NetBox;
+2. abortar se surgir qualquer `REVIEW` ou `BLOCKED`;
+3. confirmar que o conjunto de `RECLASSIFY_SAFE` permaneceu idêntico;
+4. confirmar o mesmo `existing_id`, Tenant alvo e Site alvo;
+5. executar uma revalidação de identidade forte imediatamente antes de cada lote de reclassificação;
+6. somente então permitir POST/PATCH.
+
+A revalidação de identidade deve confirmar novamente:
+
+- serial/UUID;
+- IP/MAC vinculados;
+- unicidade do objeto;
+- `existing_id` esperado;
+- Cluster/Prefix único quando aplicável;
+- Tenant/Site alvo existente e único.
+
+Qualquer drift entre PLAN e APPLY aborta antes da escrita correspondente.
+
+## Transparência do PLAN — 1.10.5+
 
 A segurança não deve depender de comandos ad-hoc executados pelo operador.
 

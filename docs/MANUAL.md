@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.10.5 — PRODUCT V1  
+**Versão:** 1.10.6 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -59,7 +59,7 @@ Ações:
 
 ---
 
-## 3. Diagnóstico automático do dry-run — 1.10.5
+## 3. Diagnóstico automático do dry-run — 1.10.5+
 
 O operador não deve usar scripts auxiliares para descobrir o conteúdo do PLAN.
 
@@ -120,7 +120,59 @@ netbox-discovery hypervisor run --apply
 
 ---
 
-## 4. Endpoint NetBox
+## 4. Preflight global multi-contexto — 1.10.6
+
+O `--apply` possui uma trava adicional **antes da primeira escrita**.
+
+Depois de receber a autorização do operador, o produto ainda não escreve. Primeiro ele executa:
+
+```text
+===== HYPERVISOR PREFLIGHT GLOBAL MULTI-CONTEXT =====
+```
+
+O preflight:
+
+1. reconstrói o PLAN usando o estado atual do NetBox;
+2. aborta se surgir qualquer `REVIEW` ou `BLOCKED`;
+3. exige que o conjunto de `RECLASSIFY_SAFE` seja o mesmo apresentado no dry-run;
+4. confirma o mesmo `existing_id`, Tenant alvo e Site alvo;
+5. usa o plano recém-recalculado como plano efetivo do APPLY.
+
+Antes de uma reclassificação, o contexto recebe uma segunda validação:
+
+```text
+RECLASSIFY PREFLIGHT Tenant/Site: OK
+```
+
+Ela revalida imediatamente:
+
+- serial/UUID;
+- vínculo inequívoco de IP/MAC;
+- `existing_id` esperado;
+- Cluster/Prefix único quando aplicável;
+- existência e unicidade do Tenant/Site alvo.
+
+Se qualquer evidência mudar:
+
+```text
+PREFLIGHT ... nenhuma escrita iniciada
+```
+
+A ordem operacional passa a ser:
+
+```text
+DISCOVER
+→ PLAN
+→ autorização --apply
+→ PREFLIGHT GLOBAL (sem escrita)
+→ RECLASSIFY PREFLIGHT por contexto (sem escrita)
+→ RECLASSIFY_SAFE / CREATE / UPDATE_SAFE
+→ AUDIT
+```
+
+---
+
+## 5. Endpoint NetBox
 
 O produto aceita somente:
 
@@ -130,7 +182,7 @@ https://inventory.bkpcloud.app.br:8080
 
 ---
 
-## 5. Hypervisor
+## 6. Hypervisor
 
 Plataformas:
 
@@ -157,7 +209,7 @@ multi_tenant
 
 ---
 
-## 6. VMware: rede de gerenciamento autoritativa
+## 7. VMware: rede de gerenciamento autoritativa
 
 Para Tenant/Site, não basta o VMware marcar uma interface como serviço `management`.
 
@@ -172,7 +224,7 @@ Interfaces auxiliares continuam no inventário, mas não posicionam o Host.
 
 ---
 
-## 7. Resolver Tenant/Site
+## 8. Resolver Tenant/Site
 
 ### Host
 
@@ -196,7 +248,7 @@ A localização no NetBox representa onde a VM está hospedada. Uma VM pode aten
 
 ---
 
-## 8. Reclassificação segura — 1.10.4+
+## 9. Reclassificação segura — 1.10.4+
 
 Problema resolvido:
 
@@ -238,7 +290,7 @@ Quando seguro:
 
 ---
 
-## 9. Delta de inventário — 1.10.4+
+## 10. Delta de inventário — 1.10.4+
 
 O discovery compara a coleta atual com o snapshot anterior.
 
@@ -255,7 +307,7 @@ Uma ausência nunca autoriza exclusão automática.
 
 ---
 
-## 10. APPLY
+## 11. APPLY
 
 Dry-run:
 
@@ -272,15 +324,17 @@ netbox-discovery hypervisor run --apply
 Regras:
 
 - somente `READY` escreve;
+- antes da primeira escrita, o PLAN é reconstruído no preflight global;
 - `REVIEW` não escreve;
 - `BLOCKED` não escreve;
+- `RECLASSIFY_SAFE` exige revalidação de identidade imediatamente antes do PATCH;
 - APPLY mantém journal das escritas;
 - AUDIT é executado depois da escrita;
 - não existe DELETE automático no Hypervisor.
 
 ---
 
-## 11. Atualização
+## 12. Atualização
 
 ```bash
 netbox-discovery update status
@@ -299,7 +353,7 @@ Updater `stable`:
 
 ---
 
-## 12. Schedulers
+## 13. Schedulers
 
 Network e Hypervisor são opt-in.
 
@@ -313,7 +367,7 @@ Durante homologação de uma função de escrita nova, manter Hypervisor schedul
 
 ---
 
-## 13. Saúde
+## 14. Saúde
 
 ```bash
 netbox-discovery version
@@ -325,7 +379,7 @@ netbox-discovery health --json
 
 ---
 
-## 14. Caminhos
+## 15. Caminhos
 
 ```text
 Aplicação:              /opt/netbox-discovery
@@ -340,7 +394,7 @@ Lock global:            /var/lock/netbox-discovery-global.lock
 
 ---
 
-## 15. Homologação
+## 16. Homologação
 
 A matriz oficial é:
 

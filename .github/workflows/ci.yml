@@ -17,7 +17,7 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.10.5"
+          test "$(cat VERSION)" = "1.10.6"
 
       - name: Documentation sync
         run: |
@@ -47,6 +47,9 @@ jobs:
 
       - name: Hypervisor 1.10 regressions
         run: python3 tests/test_hypervisor_1_10.py
+
+      - name: Hypervisor 1.10.6 preflight regressions
+        run: python3 tests/test_hypervisor_1_10_6.py
 
       - name: Secret sanity check
         run: |
