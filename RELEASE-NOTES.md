@@ -1,3 +1,73 @@
+## V1.10.6 — Preflight global antes de qualquer escrita Hypervisor
+
+Hotfix de segurança identificado durante a revisão final imediatamente antes do primeiro APPLY multi-contexto real.
+
+### Gap encontrado
+
+Na 1.10.5 o PLAN estava limpo (`REVIEW=0`, `BLOCKED=0`), porém o engine V3 executava `RECLASSIFY_SAFE` antes de chamar o preflight V2 do contexto.
+
+Nenhum APPLY 1.10.5 foi executado no ambiente real. A produção foi bloqueada antes de qualquer escrita.
+
+### Correção
+
+A 1.10.6 adiciona um wrapper V4 de preflight na frente do engine V3 já validado.
+
+Antes do primeiro POST/PATCH:
+
+```text
+DISCOVER
+→ PLAN
+→ autorização --apply
+→ PREFLIGHT GLOBAL MULTI-CONTEXT
+→ REVIEW/BLOCKED = 0
+→ conjunto RECLASSIFY_SAFE inalterado
+→ RECLASSIFY PREFLIGHT por contexto
+→ identidade forte / existing_id / Tenant / Site revalidados
+→ somente então escrita
+```
+
+O preflight global reconstrói o PLAN contra o estado atual do NetBox e aborta sem escrita se:
+
+- surgir `REVIEW` ou `BLOCKED`;
+- o conjunto de `RECLASSIFY_SAFE` mudar;
+- `existing_id`, Tenant alvo ou Site alvo mudarem.
+
+Antes de cada lote de reclassificação, o produto revalida novamente:
+
+- serial/UUID;
+- IP/MAC vinculados;
+- unicidade da identidade;
+- mesmo `existing_id`;
+- Cluster/Prefix único quando aplicável;
+- Tenant/Site alvo existente e único.
+
+### Saída operacional
+
+Antes da primeira escrita:
+
+```text
+===== HYPERVISOR PREFLIGHT GLOBAL MULTI-CONTEXT =====
+PREFLIGHT GLOBAL: OK
+NetBox write até aqui: NÃO
+```
+
+Nos contextos com migração:
+
+```text
+RECLASSIFY PREFLIGHT Tenant/Site: OK
+NetBox write: NÃO
+```
+
+### Regressões
+
+- conjunto idêntico de `RECLASSIFY_SAFE` passa;
+- mudança de `existing_id` aborta;
+- novo `REVIEW/BLOCKED` aborta antes de qualquer write;
+- identidade forte é revalidada imediatamente antes de reclassificar;
+- identity drift aborta.
+
+---
+
 ## V1.10.5 — Diagnóstico completo do PLAN no terminal
 
 Correção de UX/operabilidade identificada durante a homologação real da 1.10.4.
