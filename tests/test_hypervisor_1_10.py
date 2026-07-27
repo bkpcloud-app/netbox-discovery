@@ -10,14 +10,22 @@ from modules.hypervisor import resolver
 from modules.hypervisor import config as hv_config
 
 
-def host(name, ip, prefix=24, cluster=""):
+def host(name, ip, prefix=24, cluster="", datacenter="", extra_management=None):
+    interfaces = [{
+        "name": "vmk0", "management": True, "mac": "",
+        "ips": [{"address": ip, "prefix_length": prefix, "primary": True}],
+    }]
+    for pos, item in enumerate(extra_management or [], 1):
+        address, item_prefix = item
+        interfaces.append({
+            "name": "vmk{0}".format(pos), "management": True, "mac": "",
+            "ips": [{"address": address, "prefix_length": item_prefix, "primary": True}],
+        })
     return {
         "name": name,
         "cluster": cluster,
-        "interfaces": [{
-            "name": "vmk0", "management": True, "mac": "",
-            "ips": [{"address": ip, "prefix_length": prefix, "primary": True}],
-        }],
+        "datacenter": datacenter,
+        "interfaces": interfaces,
     }
 
 
@@ -30,6 +38,45 @@ def test_management_network_grouping():
     raw = {"hosts": [host("ESX-DCM", "10.1.1.21"), host("ESX-FBA", "10.2.1.21")]}
     groups = resolver.management_network_groups(raw)
     assert [x["network"] for x in groups] == ["10.1.1.0/24", "10.2.1.0/24"]
+
+
+def test_management_placement_groups_collapse_same_datacenter():
+    raw = {"hosts": [
+        host("ESX01", "10.1.1.21", cluster="Cluster", datacenter="DCM", extra_management=[("10.1.2.21", 24), ("10.1.3.21", 24)]),
+        host("ESX02", "10.1.1.22", cluster="Cluster", datacenter="DCM", extra_management=[("10.1.2.22", 24), ("10.1.3.22", 24)]),
+    ]}
+    groups = resolver.management_placement_groups(raw)
+    assert len(groups) == 1
+    group = groups[0]
+    assert group["kind"] == "datacenter"
+    assert group["label"] == "DCM"
+    assert group["hosts"] == ["ESX01", "ESX02"]
+    assert group["networks"] == ["10.1.1.0/24", "10.1.2.0/24", "10.1.3.0/24"]
+
+
+def test_management_placement_groups_keep_datacenters_separate():
+    raw = {"hosts": [
+        host("ESX-DCM", "10.1.1.21", datacenter="DCM"),
+        host("ESX-FBA", "10.2.1.21", datacenter="FBA"),
+    ]}
+    groups = resolver.management_placement_groups(raw)
+    assert [(x["kind"], x["label"], x["networks"]) for x in groups] == [
+        ("datacenter", "DCM", ["10.1.1.0/24"]),
+        ("datacenter", "FBA", ["10.2.1.0/24"]),
+    ]
+
+
+def test_management_placement_group_does_not_merge_ambiguous_network():
+    shared = "10.99.1.0/24"
+    raw = {"hosts": [
+        host("ESX-A", "10.99.1.21", datacenter="DC-A"),
+        host("ESX-B", "10.99.1.22", datacenter="DC-B"),
+    ]}
+    groups = resolver.management_placement_groups(raw)
+    assert len(groups) == 1
+    assert groups[0]["kind"] == "network"
+    assert groups[0]["label"] == shared
+    assert sorted(groups[0]["datacenters"]) == ["DC-A", "DC-B"]
 
 
 def test_vm_inherits_host_context():
@@ -111,6 +158,9 @@ def test_global_identity_guard_blocks_duplicate_create():
 def main():
     tests = [
         test_management_network_grouping,
+        test_management_placement_groups_collapse_same_datacenter,
+        test_management_placement_groups_keep_datacenters_separate,
+        test_management_placement_group_does_not_merge_ambiguous_network,
         test_vm_inherits_host_context,
         test_unmapped_host_is_not_guessed,
         test_multi_site_uses_default_tenant,
