@@ -17,7 +17,17 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.10.0"
+          test "$(cat VERSION)" = "1.10.1"
+
+      - name: Documentation sync
+        run: |
+          V="$(cat VERSION)"
+          grep -Fq "**Versão atual:** $V" README.md
+          grep -Fq "**Versão:** $V" docs/MANUAL.md
+          grep -Fq "# netbox-discovery $V" docs/COMANDOS-RAPIDOS.md
+          grep -Fq "# netbox-discovery $V" docs/HOMOLOGACAO.md
+          grep -Fq "## V$V" RELEASE-NOTES.md
+          grep -Fq "**Versão da política:** $V" SECURITY.md
 
       - name: Shell syntax
         run: |
