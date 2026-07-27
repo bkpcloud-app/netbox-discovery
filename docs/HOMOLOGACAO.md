@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.5 — Matriz de Homologação
+# netbox-discovery 1.10.6 — Matriz de Homologação
 
 Este arquivo separa **implementação/CI** de **validação real ao vivo**.
 
@@ -38,6 +38,8 @@ NetBox: https://inventory.bkpcloud.app.br:8080
 1.10.3 source 2 mapping multi-Tenant/multi-Site
 1.10.3 hypervisor check multi-contexto
 1.10.3 discovery/resolver multi-contexto dry-run
+1.10.4 RECLASSIFY_SAFE em dry-run
+1.10.5 diagnóstico automático completo do PLAN em dry-run
 ```
 
 ## Mappings LIVE
@@ -89,9 +91,7 @@ Os 43 REVIEW eram legado do primeiro APPLY single-site:
 
 **Estado:** LIVE PASS para dry-run / NOT LIVE para APPLY completo
 
-CI 1.10.4: PASS.
-
-Dry-run real em 27/07/2026:
+Dry-run real:
 
 ```text
 Versão: 1.10.4
@@ -111,9 +111,7 @@ READY: 281
 REVIEW: 0
 BLOCKED: 0
 CREATE: 12
-UPDATE_SAFE: 50
 RECLASSIFY_SAFE: 44
-NOOP: 175
 NetBox write: NÃO
 ```
 
@@ -125,58 +123,109 @@ Os 44 `RECLASSIFY_SAFE` observados ao vivo:
 1 Cluster FBA
 ```
 
-A ação preserva identidade global e não cria duplicata.
-
-**Ainda falta para LIVE PASS completo da reclassificação:**
-
-```text
-1. APPLY controlado
-2. AUDIT
-3. novo dry-run
-4. confirmar idempotência/resíduos
-```
-
 ## Diagnóstico automático do PLAN — 1.10.5
 
-**Estado:** NOT LIVE  
-**CI:** PENDENTE até o PR da 1.10.5 concluir
+**Estado:** LIVE PASS para dry-run  
+**CI:** PASS
 
-Objetivo: eliminar qualquer procedimento operacional com Python auxiliar para abrir o JSON do PLAN.
-
-O próprio:
-
-```bash
-netbox-discovery hypervisor run
-```
-
-deve mostrar:
+Validação real em 27/07/2026:
 
 ```text
-HYPERVISOR NOVOS OBJETOS READY
-READY / CREATE
+Versão instalada: 1.10.5
+source 1: 4/4 Hosts | 124/124 VMs
+source 2: 18/18 Hosts | 121/121 VMs
+Contextos: 12
+NÃO RESOLVIDOS: 0
+VMs adicionadas: 0
+VMs ausentes: 0
+DELETE automático: NÃO
+```
 
-HYPERVISOR AJUSTES/MIGRAÇÕES SEGURAS PENDENTES
-READY / UPDATE_SAFE
-READY / RECLASSIFY_SAFE
+Plano multi-contexto:
 
-HYPERVISOR PENDÊNCIAS DO PLAN
-REVIEW
-BLOCKED
-
-RESUMO DE ESCRITA DO DRY-RUN
-CREATE READY: N
-UPDATE_SAFE/RECLASSIFY_SAFE READY: N
-REVIEW/BLOCKED: N
+```text
+Objetos planejados: 281
+READY: 281
+REVIEW: 0
+BLOCKED: 0
+CREATE: 12
+UPDATE_SAFE: 51
+RECLASSIFY_SAFE: 44
+NOOP: 174
 NetBox write: NÃO
 ```
 
-Regressão obrigatória:
+O terminal mostrou automaticamente os 12 `READY/CREATE`:
 
-- `READY/CREATE` precisa aparecer no terminal;
-- `UPDATE_SAFE` continua aparecendo;
-- `RECLASSIFY_SAFE` continua aparecendo;
-- `REVIEW/BLOCKED` continuam aparecendo;
-- dry-run continua sem escrita.
+```text
+11 Prefixes dos Sites
+1 VM SRV-ISO04 em MIZU/FSO
+```
+
+Também mostrou automaticamente os 51 `UPDATE_SAFE`, 44 `RECLASSIFY_SAFE`, resumo de escrita e `REVIEW/BLOCKED: 0`.
+
+**Conclusão 1.10.5:** diagnóstico automático do PLAN = LIVE PASS.
+
+## Gap identificado antes do primeiro APPLY — 1.10.5
+
+Durante a revisão final do código antes de autorizar escrita real, foi identificado que o engine V3 executava `_apply_reclassifications()` antes de chamar o preflight V2 do contexto.
+
+Portanto:
+
+```text
+PLAN 1.10.5 está limpo
+mas
+RECLASSIFY_SAFE podia iniciar PATCH antes do preflight V2 do contexto
+```
+
+Nenhum APPLY 1.10.5 foi executado no DCM. Nenhuma escrita ocorreu.
+
+O fluxo foi bloqueado propositalmente antes de produção.
+
+## Preflight global multi-contexto — 1.10.6
+
+**Estado:** NOT LIVE  
+**CI:** PENDENTE até conclusão do PR 1.10.6
+
+Objetivo: garantir que **nenhum POST/PATCH**, inclusive `RECLASSIFY_SAFE`, ocorra antes de validação atualizada do estado real.
+
+Ordem 1.10.6:
+
+```text
+DISCOVER
+→ PLAN
+→ autorização --apply
+→ PREFLIGHT GLOBAL MULTI-CONTEXT (NetBox write: NÃO)
+→ validar REVIEW/BLOCKED = 0
+→ validar conjunto RECLASSIFY_SAFE inalterado
+→ RECLASSIFY PREFLIGHT por contexto (NetBox write: NÃO)
+→ revalidar identidade forte + existing_id + Tenant/Site alvo
+→ somente então iniciar escrita
+→ APPLY V3/V2
+→ AUDIT
+```
+
+O preflight global aborta antes da primeira escrita se:
+
+- surgir `REVIEW` ou `BLOCKED`;
+- o conjunto `RECLASSIFY_SAFE` mudar;
+- `existing_id`, Tenant ou Site alvo divergirem.
+
+O preflight de reclassificação aborta antes do PATCH se:
+
+- serial/UUID não reencontrar o mesmo ID;
+- IP/MAC não confirmar o mesmo objeto;
+- identidade ficar ambígua;
+- Cluster/Prefix deixar de ser único;
+- Tenant/Site alvo deixar de ser único/existente.
+
+Regressões obrigatórias 1.10.6:
+
+- preflight aceita conjunto de reclassificação idêntico;
+- mudança de `existing_id` aborta;
+- `REVIEW` novo aborta antes de escrita;
+- identidade forte é revalidada imediatamente antes de reclassificar;
+- identity drift aborta.
 
 ## Hypervisor multi-contexto — estado geral
 
@@ -191,12 +240,15 @@ Já validado:
 - todas as VMs retornadas pelas sources resolvidas;
 - `NÃO RESOLVIDOS: 0`;
 - guarda contra duplicação;
-- reclassificação planejada automaticamente no dry-run 1.10.4.
+- reclassificação planejada automaticamente;
+- diagnóstico completo do PLAN no terminal.
 
 Ainda falta:
 
-- publicar/validar terminal automático 1.10.5;
-- APPLY multi-contexto real;
+- CI PASS da 1.10.6;
+- update real para 1.10.6;
+- dry-run 1.10.6;
+- primeiro APPLY multi-contexto real;
 - AUDIT;
 - segundo dry-run de idempotência.
 
@@ -219,14 +271,16 @@ Não habilitar APPLY automático enquanto o fluxo multi-contexto completo não e
 ## Próxima homologação
 
 ```text
-1. publicar 1.10.5 somente após CI PASS
+1. publicar 1.10.6 somente após CI PASS
 2. netbox-discovery update run
-3. confirmar version = 1.10.5
-4. hypervisor check
-5. hypervisor run SEM --apply
-6. confirmar que CREATE aparece automaticamente no terminal
-7. revisar CREATE/UPDATE_SAFE/RECLASSIFY_SAFE/REVIEW/BLOCKED
-8. somente depois considerar --apply
-9. AUDIT
-10. segundo dry-run
+3. confirmar version = 1.10.6
+4. hypervisor run SEM --apply
+5. confirmar REVIEW/BLOCKED = 0
+6. executar hypervisor run --apply
+7. confirmar PREFLIGHT GLOBAL: OK antes de qualquer write
+8. confirmar RECLASSIFY PREFLIGHT: OK nos contextos de migração
+9. acompanhar IMPORT
+10. confirmar AUDIT
+11. segundo dry-run
+12. confirmar idempotência/resíduos
 ```
