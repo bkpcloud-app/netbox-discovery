@@ -1,3 +1,149 @@
+## V1.10.1 — Documentação como parte obrigatória da release
+
+Release de hardening documental. Não altera a lógica de inventário multi-contexto criada na 1.10.0.
+
+### Documentação
+
+- atualiza `README.md` para a arquitetura 1.10;
+- reescreve `docs/MANUAL.md` para o produto atual;
+- atualiza `docs/COMANDOS-RAPIDOS.md`;
+- atualiza `SECURITY.md`;
+- adiciona `docs/HOMOLOGACAO.md` separando CI de validação real;
+- remove documentação antiga que tratava `MIZU → POLIMIX` como regra conhecida/hardcoded;
+- documenta explicitamente que Tenant Group é configuração genérica.
+
+### Trava de release
+
+- `self-test` passa a validar que a documentação obrigatória corresponde ao `VERSION`;
+- CI valida a mesma regra;
+- uma release não deve entrar em `stable` com manual/README/release notes de versão anterior.
+
+### Transparência de homologação
+
+- `CI PASS` e `LIVE PASS` passam a ser estados diferentes na documentação;
+- Hypervisor multi-Tenant/multi-Site da linha 1.10 permanece `CI PASS / NOT LIVE` até homologação real no DCM;
+- persistência MAC V2 do pipeline de rede continua marcada como não homologada ao vivo.
+
+---
+
+## V1.10.0 — Hypervisor multi-Tenant / multi-Site
+
+Evolução arquitetural do Hypervisor para managers centrais que atendem vários Sites ou vários Tenants.
+
+### Modos de source
+
+```text
+single_site
+multi_site
+multi_tenant
+```
+
+- sources antigas permanecem `single_site` por compatibilidade até serem editadas;
+- `multi_site` atende vários Sites do Tenant principal;
+- `multi_tenant` permite mapping para vários Tenants/Sites.
+
+### Wizard de mapping
+
+- coleta hosts do hypervisor;
+- agrupa por rede de gerenciamento;
+- mostra Hosts/Datacenters/Clusters como evidência;
+- solicita Tenant Group/Tenant/Site por rede;
+- cria ou reutiliza a estrutura NetBox quando autorizado;
+- salva os mappings na source.
+
+### Resolver V3
+
+- Host é resolvido por rede de gerenciamento;
+- VM herda o contexto do Host onde está rodando;
+- IP da VM é fallback;
+- sem resolução confiável → `REVIEW`;
+- inventário é dividido em contextos Tenant/Site e processado pelo PLAN/APPLY/AUDIT por contexto.
+
+### Proteção global
+
+- serial/UUID já existente fora do contexto alvo impede CREATE duplicado;
+- registro vira `REVIEW` para reclassificação/migração segura;
+- nenhuma rotina automática de DELETE/movimentação foi adicionada.
+
+### Testes
+
+- regressões antigas continuam no CI;
+- testes novos cobrem grouping por rede de gerenciamento, herança de Site pela VM, host sem mapping, multi-site, multi-tenant e guarda contra duplicação global.
+
+**Estado na publicação inicial:** CI PASS; homologação real multi-contexto ainda pendente.
+
+---
+
+## V1.9.8 — Diagnóstico visível de resíduos
+
+- dry-run Hypervisor passa a listar `REVIEW/BLOCKED` no terminal;
+- lista também `READY/UPDATE_SAFE` residuais;
+- mostra nome, tipo, ação, motivo e campos pendentes;
+- AUDIT passa a expor WARN/FAIL sem exigir leitura manual de JSON.
+
+---
+
+## V1.9.7 — Consistência V2 entre dry-run, preflight e audit
+
+- corrige APPLY que recompunha preflight usando planner antigo;
+- preflight e audit passam a usar a mesma política V2 do dry-run;
+- preserva o cliente NetBox rastreado pelo runner e journal das escritas;
+- validado ao vivo em import real de dois vCenters, porém o pós-audit revelou resíduos e o desenho single-site mostrou-se inadequado para managers multi-Site.
+
+---
+
+## V1.9.6 — Política de IP autoritativo de VM
+
+- mantém todos os IPs no discovery para auditoria;
+- PLAN usa IP primário e/ou IP pertencente às redes relevantes como identidade/vínculo autoritativo;
+- IP secundário interno fora dessas redes não bloqueia VM;
+- elimina falso conflito observado com bridge/container IP repetido `172.18.0.1` sem criar exceção específica para esse endereço.
+
+---
+
+## V1.9.5 — Pendências Hypervisor no terminal
+
+- `hypervisor run` passa a exibir automaticamente cada `REVIEW/BLOCKED`;
+- mostra nome, tipo, ação e motivo;
+- evita exigir scripts manuais para abrir o JSON do PLAN.
+
+---
+
+## V1.9.4 — Dependência VMware visível na mesma execução
+
+- remove import prematuro do collector no configurador;
+- adiciona carregamento tardio após criação do `vendor`;
+- corrige falha em que pyVmomi era instalado, mas não ficava visível no mesmo processo;
+- configuração/conexão/save VMware validada ao vivo no DCM.
+
+---
+
+## V1.9.3 — Dependências VMware isoladas
+
+- VMware deixa de instalar dependências Hyper-V desnecessárias;
+- conjunto top-level VMware compatível com Python 3.6: `six==1.16.0` e `pyvmomi==7.0.3`;
+- remove do caminho VMware a dependência acidental de cryptography/Rust;
+- isolamento validado ao vivo no DCM.
+
+---
+
+## V1.9.2 — Tenant Group genérico
+
+- remove qualquer hardcode de cliente/Tenant Group;
+- Tenant Group passa a ser explícito/opcional;
+- troca de Tenant não herda grupo antigo implicitamente;
+- estrutura `Tenant Group → Tenant → Site` validada ao vivo no DCM.
+
+---
+
+## V1.9.1 — Provisionamento da estrutura base
+
+- `init` passa a garantir Tenant Group opcional, Tenant e Site no NetBox;
+- criação/reuso é idempotente;
+- vínculos conflitantes são bloqueados em vez de sobrescritos silenciosamente.
+
+---
+
 ## V1.9.0 — Identidade física, auto-update e hardening operacional
 
 Release de consolidação do produto para operação em escala, preservando a política de dry-run, preflight, idempotência e ausência de DELETE automático.
@@ -62,6 +208,8 @@ netbox-discovery update scheduler {enable|disable|status}
 - `health --json` fornece saída simples para Zabbix e outras ferramentas;
 - CI valida sincronismo dos arquivos VERSION, sintaxe shell, compilação Python, self-test e regressões de identidade física.
 
+---
+
 ## V1.8.0 — Hypervisor integrado e endpoint BKPCLOUD
 
 Release de produto que adiciona inventário de virtualização sem alterar o pipeline de rede existente.
@@ -79,10 +227,9 @@ Release de produto que adiciona inventário de virtualização sem alterar o pip
 - comandos `configure`, `check`, `run`, `run --apply`, `status` e `scheduler`;
 - scheduler independente do pipeline de rede;
 - não existe `full-run`;
-- escopo padrão por redes configuradas do Site, permitindo vCenter/manager central;
-- cria/reconcilia Prefixes explícitos do Site, Clusters, hosts, VMs/containers, interfaces, MACs e IPs;
+- cria/reconcilia Prefixes explícitos, Clusters, hosts, VMs/containers, interfaces, MACs e IPs;
 - Proxmox usa UUID quando disponível e identidade estável baseada em source/VMID como fallback;
-- disco de VM é convertido corretamente para MB no modelo NetBox.
+- disco de VM é convertido para MB no modelo NetBox.
 
 ### Segurança e idempotência
 
@@ -90,139 +237,46 @@ Release de produto que adiciona inventário de virtualização sem alterar o pip
 - replanejamento/preflight antes da primeira escrita;
 - conflitos de IP, MAC, identidade, Role e Cluster Type viram REVIEW/bloqueio antes da escrita;
 - preserva nomes manuais de Devices, VMs e interfaces já vinculadas;
-- atualiza pinning de VM migrada entre hosts do mesmo cluster;
+- atualiza pinning de VM migrada quando comprovado pela API;
 - não executa DELETE;
-- credenciais Hypervisor ficam em `/etc/netbox-discovery/hypervisors.json` com proteção root-only;
-- dependências de VMware/Hyper-V são instaladas juntas sob `/opt/netbox-discovery/vendor` somente quando um desses conectores é necessário.
+- credenciais Hypervisor ficam em `/etc/netbox-discovery/hypervisors.json` com proteção root-only.
+
+---
 
 ## V1.7.0 — Estabilização de classificação e inventário
 
-Release consolidada após a homologação do FFT, sem alteração da política de escrita: somente itens `READY` podem ser aplicados.
+- reconhece WEG SRW01-ETH, Siemens PAC3220/SCALANCE e outros footprints observados;
+- melhora classificação CFTV conservadora;
+- prioriza identidade física sobre banners de aplicação/TLS;
+- ignora nomes/seriais genéricos;
+- adiciona probes CFTV direcionados e padroniza timestamps;
+- mantém as proteções de escrita da linha 1.6.
 
-### Classificação e identidade
-
-- reconhece WEG SRW01-ETH com evidência industrial forte;
-- reconhece Siemens PAC3220 e SCALANCE XM416-4C;
-- reconhece YTEK Monitory e interface web Aruba/HPE;
-- reconhece o footprint CFTV observado (RTSP 554 + server port 8000 + UI Hikvision) como `VIDEO_SURVEILLANCE_DEVICE` HIGH sem inventar CAMERA/NVR/DVR;
-- prioriza identidade física (ENTITY-MIB, SNMP e OUI) sobre banners de aplicação/TLS para fabricante;
-- ignora nomes genéricos como `sysName Not Set`;
-- aproveita modelo/serial explícitos de APC e Siemens S7;
-- aproveita service tag válido do iDRAC quando o certificado contém apenas `SVCTAG`.
-
-### Discovery e operação
-
-- adiciona probe CFTV direcionado antes do Deep TCP 1000;
-- mantém o Deep TCP 1000 como fallback;
-- padroniza o timestamp do DISCOVER em UTC;
-- PLAN passa a destacar ações realmente elegíveis para escrita (`READY`).
-
-### Segurança
-
-- preserva as proteções da V1.6.0 para MAC inválido, serial genérico, rede/broadcast e identidade LLDP;
-- IP já atribuído a objeto externo do NetBox continua em `REVIEW`;
-- nenhuma rotina de descoberta autentica em câmeras ou tenta credenciais padrão.
+---
 
 ## V1.6.0 — Reconciliação segura e descoberta CFTV
 
-Release de produto com correções de identidade observadas na homologação FFT e
-enriquecimento de descoberta/classificação para câmeras IP e gravadores.
+- MAC broadcast, zerado e multicast não são usados como identidade;
+- seriais genéricos são ignorados;
+- LLDP chassis-id válido pode ser evidência forte;
+- endereços de rede/broadcast e exclusões são respeitados;
+- amplia fingerprints/probes CFTV sem autenticação forçada;
+- discovery permanece read-only até `--apply`.
 
-### Reconciliação
-
-- MAC broadcast `FF:FF:FF:FF:FF:FF` nunca é usado como identidade;
-- MAC zerado e MAC multicast/group nunca provocam merge;
-- seriais genéricos como `SVCTAG`, `SERIALNUMBER`, `UNKNOWN` e similares são ignorados;
-- LLDP chassis-id válido continua sendo evidência forte e pode gerar identidade estável;
-- serial inválido não é propagado ao PLAN;
-- evita o merge falso de dispositivos distintos observado no FFT.
-
-### Endereçamento
-
-- o resultado do discovery é restrito aos hosts válidos dos prefixos configurados;
-- endereços IPv4 de rede e broadcast não entram no pipeline mesmo que Nmap receba resposta;
-- exclusões configuradas também são aplicadas ao resultado do discovery primário.
-
-### CFTV
-
-- adiciona TCP 8000 e portas complementares de CFTV ao discovery/rescue;
-- adiciona UDP 3702 e `wsdd-discover` seguro para WS-Discovery/ONVIF;
-- mantém RTSP 554, 34567 e 37777 como evidências;
-- fingerprints para Hikvision, Dahua, Axis, Vivotek, Hanwha Vision, Bosch, Pelco,
-  Uniview, Reolink, Intelbras, Avigilon, TP-Link VIGI/Tapo e Ubiquiti Protect;
-- classifica `CAMERA`, `NVR`, `DVR`, `VIDEO_ENCODER`;
-- quando há fabricante/portas de CFTV mas não há prova do papel exato, usa
-  `VIDEO_SURVEILLANCE_DEVICE` com confiança MEDIUM para forçar REVIEW, em vez de
-  assumir câmera incorretamente;
-- adiciona modelos genéricos e roles correspondentes no PLAN.
-
-### Segurança operacional
-
-- nenhuma tentativa de senha padrão;
-- nenhuma autenticação forçada;
-- nenhuma alteração em câmera/NVR/DVR;
-- discovery continua read-only até `run --apply`.
+---
 
 ## V1.5.2 — Correção do instalador e sincronização de versão
 
-Correções identificadas durante a homologação de upgrade em proxy:
-
-- sincroniza `VERSION` da raiz e `netbox-discovery/VERSION`;
-- corrige o loop do `install.sh`: `config.ymbin` passa a ser `config.yml bin`;
-- o código novo em `bin`, `lib` e `modules` volta a ser instalado corretamente;
-- corrige a detecção de `/opt/netbox-discovery/config.yml` no `bootstrap.sh`;
-- mantém a configuração operacional existente durante upgrade;
-- preserva a correção de DNS reverso da V1.5.1.
+- sincroniza `VERSION` da raiz e do pacote;
+- corrige instalação de `config.yml`, `bin`, `lib` e `modules`;
+- preserva configuração operacional existente durante upgrade.
 
 ## V1.5.1 — Correção de DNS reverso
 
-Homologação em um proxy novo identificou uma dependência de DNS reverso
-não tratada pelo produto.
+- instala `dig` automaticamente quando necessário;
+- reverse DNS vira enriquecimento não fatal;
+- ausência de PTR não interrompe DISCOVER.
 
-Correções:
+## V1.5.0 — PRODUCT V1
 
-- `dig` passa a ser instalado automaticamente pelo bootstrap;
-- RHEL/CentOS utiliza `bind-utils`;
-- Debian/Ubuntu utiliza `dnsutils`;
-- reverse DNS passa a ser enriquecimento não fatal;
-- ausência de PTR, timeout ou falha de resolução não interrompe `DISCOVER`;
-- upgrades preservam a configuração existente.
-
-Erro que originou a correção:
-
-```text
-FileNotFoundError: [Errno 2] No such file or directory: 'dig'
-```
-
-# netbox-discovery 1.5.0 — PRODUCT V1
-
-Consolida Evidence V4 + CLASSIFY + RECONCILE + PLAN + IMPORT 4.1 + AUDIT 5.1 e corrige a última inconsistência de identidade/contagem encontrada na homologação FBA.
-
-Esta release substitui o fluxo de instalação por stages.
-
-## Distribuição oficial
-
-A versão 1.5.0 passa a ser distribuída pelo repositório público:
-
-```text
-bkpcloud-app/netbox-discovery
-```
-
-Foi validada instalação real em Proxy zerado, onde `git`, Python, Nmap e utilitários SNMP não estavam previamente disponíveis.
-
-O fluxo oficial agora:
-
-```text
-GitHub público
-→ install-from-github.sh
-→ instala Git quando necessário
-→ clone HTTPS
-→ bootstrap
-→ dependências
-→ produto
-→ init
-```
-
-O `bootstrap.sh` também foi ajustado para não apresentar `CONFIG: ERRO` como se fosse falha em uma instalação nova. Antes do `init`, a ausência de `config.yml` é comportamento esperado.
-
-Para upgrade em um Proxy já configurado, o instalador preserva a configuração operacional existente. O scheduler é instalado, porém fica desabilitado até ação explícita.
+Consolidação inicial do pipeline público distribuído por GitHub com instalação/bootstrap, configuração preservada em upgrade e scheduler desabilitado até ação explícita.
