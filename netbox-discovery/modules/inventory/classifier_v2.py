@@ -24,6 +24,14 @@ CLASSIFIER_VERSION = "3.0-product"
 SPECIAL_TCP_PORTS = (3570, 51000)
 TOPDATA_OUI = "00:18:E2"
 
+ORIG_NORMALIZE_MANUFACTURER = base.normalize_manufacturer
+ORIG_CLASSIFY_ROLE = base.classify_role
+ORIG_INFER_MANUFACTURER = base.infer_manufacturer
+ORIG_INFER_MODEL = base.infer_model
+ORIG_ASSET_CLASS = base.asset_class
+ORIG_CLASSIFY_DEVICE = base.classify_device
+ORIG_WRITE_OUTPUTS = base.write_outputs
+
 
 def clean(v):
     return "" if v is None else str(v).strip()
@@ -43,11 +51,7 @@ def _normalized_macs(d):
 
 
 def derive_management_mac(d):
-    """Prefer the MAC of the SNMP interface that owns this discovered IP.
-
-    Fallback is the directly observed L2 MAC. Bridge/other interface MACs stay
-    secondary evidence and are never promoted just because they exist.
-    """
+    """Prefer the MAC of the SNMP interface that owns the discovered IP."""
     target_ip = clean(d.get("ip"))
     ifindex = ""
     for row in d.get("snmp_ip_addresses") or []:
@@ -92,7 +96,7 @@ def normalize_manufacturer(v):
     for terms, target in extra:
         if any(term in low for term in terms):
             return target
-    return base.normalize_manufacturer(v)
+    return ORIG_NORMALIZE_MANUFACTURER(v)
 
 
 def classify_role(d, text):
@@ -100,8 +104,7 @@ def classify_role(d, text):
     low = clean(text).lower()
     topdata = _has_topdata_mac(d) or "topdata" in low or "inner " in low
 
-    # Exact function requires explicit product/function evidence. An OUI alone
-    # identifies the manufacturer, never the role.
+    # OUI sozinho identifica fabricante, nunca função.
     if topdata and any(term in low for term in (
         "catraca", "turnstile", "controlecatraca", "catraca revolution",
     )):
@@ -118,7 +121,7 @@ def classify_role(d, text):
     if topdata and 3570 in tcp:
         return "ACCESS_CONTROL", 90, ["Topdata identity + TCP/3570"]
 
-    return base.classify_role(d, text)
+    return ORIG_CLASSIFY_ROLE(d, text)
 
 
 def infer_manufacturer(d, text, ent, role):
@@ -127,12 +130,12 @@ def infer_manufacturer(d, text, ent, role):
     low = clean(text).lower()
     if "topdata" in low or "inner " in low:
         return "Topdata", "device-fingerprint"
-    manufacturer, source = base.infer_manufacturer(d, text, ent, role)
+    manufacturer, source = ORIG_INFER_MANUFACTURER(d, text, ent, role)
     return normalize_manufacturer(manufacturer), source
 
 
 def infer_model(d, text, ent, role):
-    model, source = base.infer_model(d, text, ent, role)
+    model, source = ORIG_INFER_MODEL(d, text, ent, role)
     if model:
         return model, source
     if role in ("TIME_ATTENDANCE", "ACCESS_CONTROL", "TURNSTILE"):
@@ -152,11 +155,10 @@ def infer_model(d, text, ent, role):
 def asset_class(d, role, text):
     if role in ("TIME_ATTENDANCE", "ACCESS_CONTROL", "TURNSTILE"):
         return "PHYSICAL_DEVICE"
-    return base.asset_class(d, role, text)
+    return ORIG_ASSET_CLASS(d, role, text)
 
 
 def classify_device(d):
-    # Patch the base classifier globals only for the duration of this process.
     old_norm = base.normalize_manufacturer
     old_role = base.classify_role
     old_mfg = base.infer_manufacturer
@@ -169,7 +171,7 @@ def classify_device(d):
         base.infer_model = infer_model
         base.asset_class = asset_class
         base.CLASSIFIER_VERSION = CLASSIFIER_VERSION
-        out = base.classify_device(d)
+        out = ORIG_CLASSIFY_DEVICE(d)
     finally:
         base.normalize_manufacturer = old_norm
         base.classify_role = old_role
@@ -220,7 +222,8 @@ def enrich_special_ports(records):
                 targets.append((ip, port))
     if not targets:
         return
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(32, max(1, len(targets)))) as pool:
+    workers = min(32, max(1, len(targets)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         for ip, port, opened in pool.map(_probe_one, targets):
             if not opened:
                 continue
@@ -228,20 +231,10 @@ def enrich_special_ports(records):
             if row is None:
                 continue
             row.setdefault("open_services", []).append({
-                "port": port,
-                "protocol": "tcp",
-                "service": "unknown",
-                "product": "",
-                "version": "",
-                "extrainfo": "",
-                "hostname": "",
-                "ostype": "",
-                "devicetype": "",
-                "tunnel": "",
-                "method": "connect",
-                "confidence": "",
-                "cpes": [],
-                "scripts": {},
+                "port": port, "protocol": "tcp", "service": "unknown",
+                "product": "", "version": "", "extrainfo": "", "hostname": "",
+                "ostype": "", "devicetype": "", "tunnel": "", "method": "connect",
+                "confidence": "", "cpes": [], "scripts": {},
                 "scan_sources": ["identity-v2-special-port"],
             })
 
@@ -259,16 +252,11 @@ def write_outputs(source, report, output_dir):
     roles = Counter(x["role"] for x in devices)
     conf = Counter(x["confidence"] for x in devices)
     data = {
-        "mode": "DRY-RUN",
-        "stage": "CLASSIFY",
+        "mode": "DRY-RUN", "stage": "CLASSIFY",
         "classification_version": CLASSIFIER_VERSION,
-        "source_discovery": source,
-        "client": clean(report.get("client")),
-        "site": site,
-        "total": len(devices),
-        "role_summary": dict(sorted(roles.items())),
-        "confidence_summary": dict(sorted(conf.items())),
-        "records": devices,
+        "source_discovery": source, "client": clean(report.get("client")), "site": site,
+        "total": len(devices), "role_summary": dict(sorted(roles.items())),
+        "confidence_summary": dict(sorted(conf.items())), "records": devices,
         "netbox_write": False,
     }
     with open(jpath, "w") as handle:
@@ -292,7 +280,6 @@ def write_outputs(source, report, output_dir):
 
 
 def main(argv=None):
-    # Reuse base argument parsing, but replace the output function globally.
     old_write = base.write_outputs
     old_classify = base.classify_device
     try:
