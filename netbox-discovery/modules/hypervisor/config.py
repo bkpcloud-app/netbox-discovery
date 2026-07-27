@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 
+import ipaddress
 import json
 import os
 import re
@@ -9,7 +10,8 @@ import tempfile
 
 CONFIG_DIR = "/etc/netbox-discovery"
 CONFIG_FILE = os.path.join(CONFIG_DIR, "hypervisors.json")
-CONFIG_VERSION = 1
+CONFIG_VERSION = 2
+INVENTORY_MODES = ("single_site", "multi_site", "multi_tenant")
 
 
 def clean(value):
@@ -70,6 +72,9 @@ def load_hypervisor_config(path=CONFIG_FILE, required=False):
 
     seen = set()
     for source in data["sources"]:
+        # Backward compatibility: pre-1.10 sources remain single-site until edited.
+        source.setdefault("inventory_mode", "single_site")
+        source.setdefault("mappings", [])
         validate_source(source)
         sid = clean(source.get("id")).lower()
         if sid in seen:
@@ -113,20 +118,51 @@ def save_hypervisor_config(data, path=CONFIG_FILE):
         raise
 
 
+def _validate_mapping(source, mapping):
+    sid = clean(source.get("id"))
+    mode = clean(source.get("inventory_mode") or "single_site").lower()
+    if not isinstance(mapping, dict):
+        raise RuntimeError("Source {0}: mapping inválido".format(sid))
+    network = clean(mapping.get("network"))
+    try:
+        ipaddress.ip_network(network, strict=False)
+    except Exception:
+        raise RuntimeError("Source {0}: rede de mapping inválida: {1}".format(sid, network))
+    if not clean(mapping.get("site")):
+        raise RuntimeError("Source {0}: mapping {1} sem Site".format(sid, network))
+    if mode == "multi_tenant" and not clean(mapping.get("tenant")):
+        raise RuntimeError("Source {0}: mapping {1} sem Tenant".format(sid, network))
+
+
 def validate_source(source):
     if not isinstance(source, dict):
         raise RuntimeError("Source de hypervisor inválido")
     sid = clean(source.get("id"))
     stype = clean(source.get("type")).lower()
     endpoint = clean(source.get("endpoint"))
+    mode = clean(source.get("inventory_mode") or "single_site").lower()
     if not sid:
         raise RuntimeError("Source sem id")
     if stype not in ("vmware", "proxmox", "hyperv"):
         raise RuntimeError("Tipo de hypervisor inválido em {0}: {1}".format(sid, stype))
+    if mode not in INVENTORY_MODES:
+        raise RuntimeError("Source {0}: inventory_mode inválido: {1}".format(sid, mode))
     if not endpoint:
         raise RuntimeError("Source {0} sem endpoint".format(sid))
     if not clean(source.get("username")):
         raise RuntimeError("Source {0} sem username".format(sid))
+    mappings = source.get("mappings") or []
+    if not isinstance(mappings, list):
+        raise RuntimeError("Source {0}: mappings deve ser lista".format(sid))
+    seen_networks = set()
+    for mapping in mappings:
+        _validate_mapping(source, mapping)
+        key = clean(mapping.get("network"))
+        if key in seen_networks:
+            raise RuntimeError("Source {0}: mapping duplicado para {1}".format(sid, key))
+        seen_networks.add(key)
+    if mode != "single_site" and not mappings:
+        raise RuntimeError("Source {0}: modo {1} exige ao menos um mapping".format(sid, mode))
     if stype == "proxmox":
         auth = clean(source.get("auth") or "token").lower()
         if auth not in ("token", "password"):
