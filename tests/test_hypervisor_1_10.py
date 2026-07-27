@@ -9,6 +9,7 @@ sys.path.insert(0, BASE)
 from modules.hypervisor import resolver
 from modules.hypervisor import config as hv_config
 from modules.hypervisor import configurator as hv_configurator
+from modules.hypervisor import engine_v3
 
 
 def host(name, ip, prefix=24, cluster="", datacenter="", extra_management=None, provider="vmware"):
@@ -203,25 +204,151 @@ def test_config_accepts_multi_tenant_mapping():
     hv_config.validate_source(source)
 
 
-def test_global_identity_guard_blocks_duplicate_create():
-    from modules.hypervisor import engine_v3
+def _fake_global_query(devices=None, vms=None, ips=None, macs=None, clusters=None, prefixes=None):
+    devices = devices or []
+    vms = vms or []
+    ips = ips or []
+    macs = macs or []
+    clusters = clusters or []
+    prefixes = prefixes or []
+
+    def fake_query(nb, endpoint, **kwargs):
+        if endpoint == "tenancy/tenants/":
+            return [{"id": 4, "name": "MIZU"}, {"id": 5, "name": "PXMETAIS"}]
+        if endpoint == "dcim/sites/":
+            return [{"id": 1, "name": "DCM"}, {"id": 17, "name": "FBA"}, {"id": 26, "name": "MAC"}]
+        if endpoint == "dcim/devices/":
+            return devices
+        if endpoint == "virtualization/virtual-machines/":
+            return vms
+        if endpoint == "ipam/ip-addresses/":
+            return ips
+        if endpoint == "dcim/mac-addresses/":
+            return macs
+        if endpoint == "virtualization/clusters/":
+            return clusters
+        if endpoint == "ipam/prefixes/":
+            return prefixes
+        return []
+
+    return fake_query
+
+
+def test_global_identity_becomes_safe_reclassification():
     old_query = engine_v3.base.query
     try:
-        def fake_query(nb, endpoint, **kwargs):
-            if endpoint == "dcim/devices/":
-                return [{"id": 77, "name": "ESX-OLD", "serial": "SERIAL-001"}]
-            if endpoint == "virtualization/virtual-machines/":
-                return []
-            return []
-        engine_v3.base.query = fake_query
+        engine_v3.base.query = _fake_global_query(devices=[{
+            "id": 77, "name": "ESX-OLD", "serial": "SERIAL-001",
+            "tenant": {"id": 4, "name": "MIZU"}, "site": {"id": 1, "name": "DCM"},
+        }])
         plan = {"records": [{
             "object_type": "HOST", "desired_name": "ESX-FBA", "serial": "SERIAL-001",
             "decision": "READY", "action": "CREATE", "target_tenant": "MIZU", "target_site": "FBA",
+            "interfaces": [],
         }]}
-        engine_v3._global_identity_guard(plan, object())
+        engine_v3._plan_reclassifications(plan, object())
+        row = plan["records"][0]
+        assert row["decision"] == "READY"
+        assert row["action"] == "RECLASSIFY_SAFE"
+        assert row["existing_id"] == 77
+    finally:
+        engine_v3.base.query = old_query
+
+
+def test_ambiguous_global_identity_never_auto_reclassifies():
+    old_query = engine_v3.base.query
+    try:
+        engine_v3.base.query = _fake_global_query(devices=[
+            {"id": 77, "name": "ESX-A", "serial": "SERIAL-001", "tenant": {"id": 4}, "site": {"id": 1}},
+            {"id": 78, "name": "ESX-B", "serial": "SERIAL-001", "tenant": {"id": 4}, "site": {"id": 1}},
+        ])
+        plan = {"records": [{
+            "object_type": "HOST", "desired_name": "ESX-FBA", "serial": "SERIAL-001",
+            "decision": "READY", "action": "CREATE", "target_tenant": "MIZU", "target_site": "FBA",
+            "interfaces": [],
+        }]}
+        engine_v3._plan_reclassifications(plan, object())
         row = plan["records"][0]
         assert row["decision"] == "REVIEW"
-        assert "reclassificação/migração" in row["reason"]
+        assert row["action"] == "CREATE"
+        assert "ambígua" in row["reason"]
+    finally:
+        engine_v3.base.query = old_query
+
+
+def test_cross_tenant_vm_ip_binding_becomes_safe_reclassification():
+    old_query = engine_v3.base.query
+    try:
+        existing_vm = {
+            "id": 467, "name": "SRV-PXM-HIKCENTRAL", "serial": "",
+            "tenant": {"id": 4, "name": "MIZU"}, "device": {"id": 312, "name": "10.36.1.21"},
+        }
+        iprow = {
+            "id": 9001, "address": "10.36.1.5/24", "tenant": {"id": 4, "name": "MIZU"},
+            "assigned_object_type": "virtualization.vminterface",
+            "assigned_object": {"id": 504, "virtual_machine": {"id": 467}},
+        }
+        engine_v3.base.query = _fake_global_query(vms=[existing_vm], ips=[iprow])
+        plan = {"records": [{
+            "object_type": "VM", "desired_name": "SRV-PXM-HIKCENTRAL", "serial": "",
+            "decision": "REVIEW", "action": "CREATE", "target_tenant": "PXMETAIS", "target_site": "MAC",
+            "interfaces": [{"name": "eth0", "ip": "10.36.1.5", "address": "10.36.1.5/24", "mac": ""}],
+        }]}
+        engine_v3._plan_reclassifications(plan, object())
+        row = plan["records"][0]
+        assert row["decision"] == "READY"
+        assert row["action"] == "RECLASSIFY_SAFE"
+        assert row["existing_id"] == 467
+    finally:
+        engine_v3.base.query = old_query
+
+
+def test_inventory_delta_never_deletes_removed_vm():
+    previous = {"contexts": [{
+        "tenant": "MIZU", "site": "FMN",
+        "results": [{"source_id": "vc1", "vms": [{"name": "OLD-VM", "serial": "UUID-OLD", "host_name": "10.7.1.21"}]}],
+    }]}
+    current = {"contexts": [{"tenant": "MIZU", "site": "FMN", "results": [{"source_id": "vc1", "vms": []}]}]}
+    changes = engine_v3._inventory_changes(previous, current, "/tmp/previous.json")
+    assert len(changes["vms_removed"]) == 1
+    assert changes["delete_automatic"] is False
+    records = []
+    engine_v3._append_inventory_change_reviews(records, {"inventory_changes": changes})
+    assert records[0]["decision"] == "REVIEW"
+    assert records[0]["action"] == "NOOP"
+    assert "remoção automática proibida" in records[0]["reason"]
+
+
+def test_apply_reclassification_moves_vm_and_owned_ip_tenant():
+    old_query = engine_v3.base.query
+
+    class FakeNB(object):
+        def __init__(self):
+            self.patches = []
+
+        def patch(self, endpoint, payload):
+            self.patches.append((endpoint, dict(payload)))
+            if endpoint.startswith("ipam/ip-addresses/"):
+                return {"id": 9001, "address": "10.36.1.5/24"}
+            return {"id": 467, "name": "SRV-PXM-HIKCENTRAL"}
+
+    try:
+        iprow = {
+            "id": 9001, "address": "10.36.1.5/24", "tenant": {"id": 4, "name": "MIZU"},
+            "assigned_object_type": "virtualization.vminterface",
+            "assigned_object": {"id": 504, "virtual_machine": {"id": 467}},
+        }
+        engine_v3.base.query = _fake_global_query(ips=[iprow])
+        nb = FakeNB()
+        ctx = {"tenant": "PXMETAIS", "site": "MAC"}
+        subplan = {"records": [{
+            "object_type": "VM", "desired_name": "SRV-PXM-HIKCENTRAL", "existing_id": 467,
+            "decision": "READY", "action": "RECLASSIFY_SAFE", "source": {"host_name": "10.36.1.21"},
+        }]}
+        events = engine_v3._apply_reclassifications(ctx, subplan, nb)
+        assert ("virtualization/virtual-machines/467/", {"tenant": 5}) in nb.patches
+        assert ("ipam/ip-addresses/9001/", {"tenant": 5}) in nb.patches
+        assert len(events) == 2
     finally:
         engine_v3.base.query = old_query
 
@@ -242,7 +369,11 @@ def main():
         test_multi_site_uses_default_tenant,
         test_config_requires_mapping_for_multi_mode,
         test_config_accepts_multi_tenant_mapping,
-        test_global_identity_guard_blocks_duplicate_create,
+        test_global_identity_becomes_safe_reclassification,
+        test_ambiguous_global_identity_never_auto_reclassifies,
+        test_cross_tenant_vm_ip_binding_becomes_safe_reclassification,
+        test_inventory_delta_never_deletes_removed_vm,
+        test_apply_reclassification_moves_vm_and_owned_ip_tenant,
     ]
     for test in tests:
         test()

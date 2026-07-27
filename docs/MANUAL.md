@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.10.3 — PRODUCT V1  
+**Versão:** 1.10.4 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -56,7 +56,7 @@ Não existe `full-run`.
 
 ---
 
-## 2. Decisões do PLAN
+## 2. Decisões e ações do PLAN
 
 | Decisão | Significado | Escrita |
 |---|---|---|
@@ -70,13 +70,15 @@ Ações:
 |---|---|
 | `CREATE` | Objeto não existe no contexto alvo |
 | `UPDATE_SAFE` | Ajuste considerado seguro |
-| `NOOP` | Já está coerente |
+| `RECLASSIFY_SAFE` | O mesmo objeto existe fora do contexto autoritativo e pode ser movido com identidade forte inequívoca |
+| `NOOP` | Já está coerente ou deve apenas permanecer em revisão sem escrita |
 
 Regras principais:
 
 - dry-run é o padrão;
 - APPLY replaneja antes da primeira escrita;
 - `REVIEW` e `BLOCKED` não escrevem;
+- `RECLASSIFY_SAFE` só escreve quando também está `READY` e o usuário executa `--apply`;
 - GETs podem receber retry seguro;
 - POST/PATCH não recebem retry cego;
 - Hypervisor não executa DELETE automático;
@@ -270,7 +272,7 @@ A rede de gestão conhecida dos Hosts é `10.1.1.0/24`. Portanto, usar todas as 
 
 ### Regra 1.10.3
 
-O produto passa a separar:
+O produto separa:
 
 ```text
 vmkernel com serviço management
@@ -291,7 +293,7 @@ As interfaces auxiliares continuam disponíveis no inventário. Elas apenas deix
 
 O wizard usa apenas redes autoritativas para criar grupos de posicionamento e mappings.
 
-Exemplo esperado para o DCM:
+Exemplo real validado no DCM:
 
 ```text
 Datacenter: DCM
@@ -340,7 +342,7 @@ IP da VM
 → mapping de rede
 ```
 
-A VM normalmente herda o Site do Host onde está executando.
+A VM normalmente herda o Site do Host onde está executando. O Site lógico atendido pela aplicação não muda a localização física da VM no inventário.
 
 ---
 
@@ -365,30 +367,118 @@ Dry-run:
 netbox-discovery hypervisor run
 ```
 
-A saída mostra contextos, `READY`, `REVIEW`, `BLOCKED`, `UPDATE_SAFE` e alvo Tenant/Site.
+A saída mostra contextos, `READY`, `REVIEW`, `BLOCKED`, `UPDATE_SAFE`, `RECLASSIFY_SAFE` e o alvo Tenant/Site.
 
 ---
 
-## 13. Proteção contra duplicação entre contextos
+## 13. Reclassificação segura — 1.10.4
 
-Antes de CREATE de Host/VM, existe guarda global de identidade forte.
+### Objetivo
 
-Se serial/UUID já existe fora do contexto alvo:
+Corrigir o caso em que o objeto já existe no NetBox, mas está no Tenant/Site errado por causa de uma importação anterior.
+
+Antes da 1.10.4:
 
 ```text
-CREATE
-→ cancelado
+mesma identidade fora do contexto alvo
+→ CREATE cancelado
 → REVIEW
-→ requer reclassificação/migração
+→ operador teria de migrar manualmente
 ```
 
-O produto não cria automaticamente uma segunda cópia para corrigir Site/Tenant.
+Na 1.10.4, quando a identidade global é inequívoca:
 
-Reclassificação/migração de objetos já existentes é uma operação distinta e não é automática na 1.10.3.
+```text
+mesma identidade fora do contexto alvo
+→ READY / RECLASSIFY_SAFE
+→ preserva o mesmo ID
+→ corrige Tenant/Site
+→ reconcilia campos/interfaces normalmente
+```
+
+### Evidência forte
+
+O produto pode reencontrar o objeto por:
+
+- serial/UUID único;
+- IP já vinculado inequivocamente ao objeto;
+- MAC já vinculado inequivocamente ao objeto;
+- combinação coerente das evidências acima.
+
+### Ambiguidade
+
+Nunca migrar automaticamente quando:
+
+- o mesmo serial/UUID aponta para mais de um objeto;
+- IP/MAC apontam para mais de um dono;
+- serial e IP/MAC apontam para objetos diferentes.
+
+Nesses casos:
+
+```text
+REVIEW
+```
+
+### O que pode ser reclassificado
+
+Quando seguro:
+
+- Host: `tenant` e `site`;
+- VM: `tenant`; o posicionamento físico continua associado ao Host/Cluster autoritativo;
+- IPs pertencentes ao Host/VM: `tenant` acompanha o objeto;
+- Cluster: `tenant` e escopo de Site quando existe uma única correspondência global segura;
+- Prefix: `tenant` e escopo de Site quando existe uma única correspondência exata segura.
+
+Depois da reclassificação, o pipeline V2 normal continua reconciliando role, platform, cluster, device, capacidade, interfaces, MACs e IPs.
+
+### Escrita
+
+`RECLASSIFY_SAFE` não escreve no dry-run.
+
+```bash
+netbox-discovery hypervisor run
+```
+
+Só escreve com:
+
+```bash
+netbox-discovery hypervisor run --apply
+```
+
+A funcionalidade 1.10.4 permanece **NOT LIVE** até a validação específica registrada em `docs/HOMOLOGACAO.md`.
 
 ---
 
-## 14. Schedulers
+## 14. Delta de inventário — 1.10.4
+
+O Hypervisor guarda relatórios de discovery em:
+
+```text
+/opt/netbox-discovery/reports
+```
+
+A coleta atual é comparada com o snapshot multi-contexto anterior.
+
+Quando uma VM desaparece entre duas coletas:
+
+```text
+HYPERVISOR INVENTORY CHANGE
+VMs ausentes desde a coleta anterior: N
+REMOVED/REVIEW: Tenant/Site | VM | source
+DELETE automático: NÃO
+```
+
+No PLAN, a ausência vira:
+
+```text
+REVIEW / NOOP
+```
+
+Isso serve para mostrar remoções/mudanças sem transformar uma ausência temporária do vCenter em exclusão destrutiva no NetBox.
+
+---
+
+## 15. Schedulers
 
 Network:
 
@@ -416,9 +506,11 @@ netbox-discovery update scheduler disable
 
 Network/Hypervisor são opt-in. Auto-update stable é habilitado por padrão.
 
+Durante homologação de reclassificação, manter Hypervisor scheduler/APPLY automático desabilitado.
+
 ---
 
-## 15. Operação e saúde
+## 16. Operação e saúde
 
 ```bash
 netbox-discovery version
@@ -432,7 +524,7 @@ netbox-discovery health --json
 
 ---
 
-## 16. Caminhos
+## 17. Caminhos
 
 ```text
 Aplicação:              /opt/netbox-discovery
@@ -447,7 +539,7 @@ Lock global:            /var/lock/netbox-discovery-global.lock
 
 ---
 
-## 17. Homologação
+## 18. Homologação
 
 A matriz oficial é:
 

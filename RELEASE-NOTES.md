@@ -1,3 +1,85 @@
+## V1.10.4 — Reclassificação segura e delta de inventário Hypervisor
+
+Evolução do runtime multi-contexto após o dry-run real no DCM mostrar que o resolver já posiciona corretamente Hosts/VMs em 12 contextos, porém 43 objetos legados ainda existiam no Tenant/Site incorreto devido ao primeiro APPLY single-site.
+
+### Reclassificação segura
+
+O PLAN passa a suportar:
+
+```text
+READY / RECLASSIFY_SAFE
+```
+
+quando o mesmo objeto já existe no NetBox fora do contexto autoritativo e a identidade global é inequívoca.
+
+Evidências fortes aceitas:
+
+- serial/UUID único;
+- IP já vinculado ao mesmo objeto;
+- MAC já vinculado ao mesmo objeto;
+- combinação coerente das evidências acima.
+
+Proteções:
+
+- nome sozinho nunca autoriza migração;
+- serial/UUID globalmente ambíguo permanece `REVIEW`;
+- mais de um dono de IP/MAC permanece `REVIEW`;
+- serial e IP/MAC apontando para objetos diferentes permanece `REVIEW`;
+- o mesmo ID do objeto é preservado;
+- nenhuma migração executa DELETE.
+
+No APPLY, a reclassificação ocorre antes da reconciliação V2 normal:
+
+- Host: Tenant/Site;
+- VM: Tenant e posicionamento coerente com Host/Cluster;
+- IPs vinculados: Tenant acompanha o objeto;
+- Cluster: Tenant/escopo de Site quando a correspondência global é única;
+- Prefix: Tenant/escopo de Site quando a correspondência exata é única e segura.
+
+Depois disso, role, platform, cluster, device, capacidade, interfaces, MACs e IPs continuam sendo reconciliados pelo fluxo V2.
+
+### Delta de inventário
+
+O discovery multi-contexto passa a comparar a coleta atual com o snapshot anterior.
+
+VM presente anteriormente e ausente agora:
+
+```text
+REMOVED/REVIEW
+REVIEW / NOOP
+DELETE automático: NÃO
+```
+
+Isso evita transformar ausência temporária ou remoção ainda não revisada em exclusão destrutiva do NetBox.
+
+### Motivação ao vivo
+
+Último dry-run 1.10.3 antes desta release:
+
+```text
+22/22 Hosts resolvidos
+245/245 VMs retornadas pelas sources resolvidas
+12 contextos
+NÃO RESOLVIDOS: 0
+Objetos planejados: 281
+READY: 238
+REVIEW: 43
+BLOCKED: 0
+```
+
+Os 43 REVIEW foram identificados como legado do APPLY single-site anterior:
+
+```text
+18 Hosts fora do Site alvo
+25 VMs PXMETAIS/MAC ainda sob Tenant MIZU
+```
+
+### Estado de homologação
+
+A implementação 1.10.4 é publicada somente após CI verde, mas **CI PASS não significa LIVE PASS**. A reclassificação precisa de novo dry-run real, APPLY controlado, AUDIT e segundo dry-run antes de ser promovida na matriz de homologação.
+
+---
+
 ## V1.10.3 — Rede de gerenciamento autoritativa VMware
 
 Correção do resolver multi-contexto após a homologação real mostrar que um ESXi pode expor vários vmkernel com o serviço VMware `management` habilitado, embora apenas uma rede seja adequada para posicionar o Host em Tenant/Site.
@@ -282,8 +364,6 @@ Release de consolidação do produto para operação em escala, preservando a po
 - prioriza identidade física;
 - ignora nomes/seriais genéricos;
 - mantém as proteções de escrita da linha 1.6.
-
----
 
 ## V1.6.0 — Reconciliação segura e descoberta CFTV
 

@@ -12,7 +12,7 @@ import sys
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 LOCK_FILE = "/var/lock/netbox-discovery-global.lock"
-RUNNER_VERSION = "3.0-product"
+RUNNER_VERSION = "3.1-product"
 
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
@@ -51,7 +51,7 @@ def _target_label(row):
 def plan_issue_lines(plan):
     records = (plan or {}).get("records") or []
     issues = [row for row in records if row.get("decision") in ("REVIEW", "BLOCKED")]
-    residuals = [row for row in records if row.get("decision") == "READY" and row.get("action") == "UPDATE_SAFE"]
+    residuals = [row for row in records if row.get("decision") == "READY" and row.get("action") in ("UPDATE_SAFE", "RECLASSIFY_SAFE")]
     lines = []
 
     if not issues and not residuals:
@@ -69,16 +69,21 @@ def plan_issue_lines(plan):
         lines.append("PENDÊNCIAS TOTAIS: {0}".format(len(issues)))
 
     if residuals:
-        lines.append("===== HYPERVISOR AJUSTES SEGUROS PENDENTES =====")
+        lines.append("===== HYPERVISOR AJUSTES/MIGRAÇÕES SEGURAS PENDENTES =====")
         for pos, row in enumerate(residuals, 1):
-            name = row.get("desired_name") or row.get("name") or row.get("asset_id") or "?"
-            lines.append("[{0}/{1}] READY | {2} | {3} | UPDATE_SAFE | alvo={4}".format(
-                pos, len(residuals), row.get("object_type") or "?", name, _target_label(row)
+            name = row.get("desired_name") or row.get("name") or row.get("prefix") or row.get("asset_id") or "?"
+            action = row.get("action") or "?"
+            lines.append("[{0}/{1}] READY | {2} | {3} | {4} | alvo={5}".format(
+                pos, len(residuals), row.get("object_type") or "?", name, action, _target_label(row)
             ))
             detail = row.get("pending_reason") or row.get("reason") or "ajuste seguro pendente"
             lines.append("  Motivo: {0}".format(detail))
-            if row.get("reason") and row.get("reason") != detail:
+            if row.get("migration_match"):
+                lines.append("  Correspondência global: {0}".format(row.get("migration_match")))
+            elif row.get("reason") and row.get("reason") != detail:
                 lines.append("  Correspondência: {0}".format(row.get("reason")))
+        # Keep the legacy terminal marker for operational parsers/tests while the heading
+        # above exposes that the list may also contain RECLASSIFY_SAFE records.
         lines.append("AJUSTES PENDENTES: {0}".format(len(residuals)))
 
     return lines

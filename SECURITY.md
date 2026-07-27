@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.10.3
+**Versão da política:** 1.10.4
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; **dados operacionais e credenciais de clientes não podem**.
 
@@ -74,22 +74,20 @@ Dependências Python ficam isoladas em:
 - VM herda o contexto do Host como primeira escolha;
 - sem mapping confiável o objeto vira `REVIEW`;
 - o produto não deve adivinhar Tenant/Site pelo nome da VM;
-- serial/UUID já existente fora do contexto alvo vira `REVIEW` em vez de CREATE duplicado;
-- reclassificação/migração de objeto existente não é automática;
 - criação/reuso de Tenant Group/Tenant/Site durante o wizard é estrutural e explícita; não equivale a importar Hosts/VMs.
 
 ### VMware — rede autoritativa 1.10.3
 
 Um ESXi pode ter vários vmkernel com o serviço VMware `management` habilitado. A presença desse serviço é **evidência de interface**, não autorização para transformar todas essas redes em mappings de Site.
 
-Para posicionamento Tenant/Site, a 1.10.3 seleciona conservadoramente a rede autoritativa do Host:
+Para posicionamento Tenant/Site, a seleção é conservadora:
 
 1. IP de vmkernel que corresponde à resolução do FQDN/nome do ESXi;
 2. `vmk0` marcada como management;
 3. única rede management candidata;
 4. múltiplas candidatas sem evidência forte → sem resolução automática / `REVIEW`.
 
-Regras de segurança:
+Regras:
 
 - redes auxiliares continuam disponíveis no inventário, mas não decidem Site;
 - mappings não são criados para todas as interfaces somente porque `management=True`;
@@ -97,6 +95,41 @@ Regras de segurança:
 - Tenant/Site continua sendo confirmação explícita;
 - o configurador não executa IMPORT de Hosts/VMs;
 - qualquer incerteza termina em revisão, não em inferência silenciosa.
+
+## Reclassificação segura — 1.10.4
+
+A ação `RECLASSIFY_SAFE` existe para corrigir um objeto que já está no NetBox sob Tenant/Site incorreto sem criar uma duplicata.
+
+Ela só pode ficar `READY` quando a identidade global é inequívoca por uma ou mais evidências fortes:
+
+- serial/UUID único;
+- IP já vinculado ao mesmo objeto;
+- MAC já vinculado ao mesmo objeto.
+
+Proteções obrigatórias:
+
+- nome sozinho nunca autoriza migração;
+- serial/UUID duplicado globalmente → `REVIEW`;
+- mais de um dono de IP/MAC → `REVIEW`;
+- serial e IP/MAC apontando para objetos diferentes → `REVIEW`;
+- `RECLASSIFY_SAFE` não escreve sem `--apply`;
+- o mesmo ID do objeto é preservado;
+- IPs vinculados ao objeto podem ter o Tenant ajustado para acompanhar o objeto;
+- Cluster/Prefix só são reclassificados quando existe uma única correspondência global segura;
+- nenhuma reclassificação executa DELETE.
+
+Até a homologação ao vivo da 1.10.4, manter APPLY automático Hypervisor desabilitado.
+
+## Delta de inventário — 1.10.4
+
+A ausência de uma VM entre o snapshot anterior e o discovery atual é tratada como evidência de mudança, não como autorização de exclusão.
+
+```text
+VM ausente → REVIEW / NOOP
+DELETE automático → NÃO
+```
+
+Isso protege contra exclusões causadas por indisponibilidade temporária, mudança de visibilidade do manager ou remoção ainda não revisada.
 
 ## Dados de cliente em mappings
 
