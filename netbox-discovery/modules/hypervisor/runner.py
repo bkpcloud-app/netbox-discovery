@@ -82,7 +82,9 @@ def plan_issue_lines(plan):
                 lines.append("  Correspondência global: {0}".format(row.get("migration_match")))
             elif row.get("reason") and row.get("reason") != detail:
                 lines.append("  Correspondência: {0}".format(row.get("reason")))
-        lines.append("AJUSTES/MIGRAÇÕES PENDENTES: {0}".format(len(residuals)))
+        # Keep the legacy terminal marker for operational parsers/tests while the heading
+        # above exposes that the list may also contain RECLASSIFY_SAFE records.
+        lines.append("AJUSTES PENDENTES: {0}".format(len(residuals)))
 
     return lines
 
