@@ -19,9 +19,12 @@ def check(base, package_root=""):
         "modules/discovery/network.py", "modules/inventory/classifier.py",
         "modules/inventory/classifier_v2.py", "modules/inventory/reconciler_v2.py",
         "modules/inventory/planner_v2.py", "modules/inventory/pipeline.py",
-        "modules/importers/importer_v2.py", "modules/product/runner.py",
+        "modules/importers/importer_v2.py", "modules/auditors/auditor_v2.py",
+        "modules/product/configurator_v2.py", "modules/product/runner.py",
         "modules/product/updater.py", "modules/product/health.py",
-        "modules/product/selftest.py", "modules/hypervisor/runner.py",
+        "modules/product/selftest.py", "modules/hypervisor/configurator_v2.py",
+        "modules/hypervisor/runner.py",
+        "systemd/netbox-discovery-update.service", "systemd/netbox-discovery-update.timer",
     ]
     for rel in required:
         if not os.path.isfile(os.path.join(base, rel)):
@@ -59,6 +62,7 @@ def check(base, package_root=""):
     if package_root:
         shell_files.extend([
             os.path.join(package_root, "bootstrap.sh"),
+            os.path.join(package_root, "install.sh"),
             os.path.join(package_root, "install-from-github.sh"),
         ])
     for path in shell_files:
