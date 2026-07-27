@@ -1,3 +1,55 @@
+## V1.10.3 — Rede de gerenciamento autoritativa VMware
+
+Correção do resolver multi-contexto após a homologação real mostrar que um ESXi pode expor vários vmkernel com o serviço VMware `management` habilitado, embora apenas uma rede seja adequada para posicionar o Host em Tenant/Site.
+
+### Problema observado ao vivo
+
+Na source VMware `10.1.1.20`, quatro Hosts do Datacenter `DCM` apresentaram 11 redes marcadas como `management`:
+
+```text
+10.1.1.0/24
+192.168.140.0/24
+192.168.141.0/24
+192.168.142.0/24
+192.168.143.0/24
+192.168.160.0/24
+192.168.161.0/24
+192.168.180.0/24
+192.168.181.0/24
+192.168.190.0/24
+192.168.191.0/24
+```
+
+A rede de gestão conhecida dos Hosts é `10.1.1.0/24`. Portanto, transformar todas as interfaces `management=True` em mappings Tenant/Site era incorreto.
+
+### Resolver 1.10.3
+
+Para VMware, o produto passa a selecionar uma rede de gerenciamento autoritativa por Host:
+
+1. IP de vmkernel que corresponde à resolução do FQDN/nome do ESXi;
+2. `vmk0` marcada como management;
+3. única rede management candidata;
+4. múltiplas candidatas sem evidência forte → sem resolução automática / REVIEW.
+
+Interfaces auxiliares continuam no inventário, mas não decidem Site/Tenant.
+
+### Regressões
+
+- reproduz o caso real `vmk0=10.1.1.x` + múltiplas `192.168.x` marcadas management;
+- confirma que somente `10.1.1.0/24` participa do grouping/mapping;
+- testa FQDN apontando para um vmkernel diferente de `vmk0`;
+- testa ambiguidade sem DNS/vmk0, que deve permanecer sem resolução;
+- mantém regressões de multi-Site/multi-Tenant e identidade global.
+
+### Segurança e documentação
+
+- nenhuma mudança na política de APPLY/DELETE;
+- não move objetos existentes automaticamente;
+- README, Manual, Comandos Rápidos, Security, Release Notes e Matriz de Homologação acompanham a versão;
+- CI PASS não equivale a LIVE PASS: a seleção 1.10.3 só vira LIVE PASS depois de repetida no DCM.
+
+---
+
 ## V1.10.2 — Agrupamento de redes VMware por Datacenter
 
 Correção de UX e segurança identificada durante a primeira homologação real do modo `multi_tenant` no DCM.
@@ -193,13 +245,6 @@ Release de consolidação do produto para operação em escala, preservando a po
 - conflito entre serial, MAC e IP continua bloqueando escrita automática;
 - AUDIT valida a persistência e a associação correta do MAC.
 
-### Impressoras e controle de acesso
-
-- melhora normalização de fabricantes de impressora;
-- mantém classificação conservadora;
-- adiciona evidência Topdata/Inner sem usar OUI sozinho para adivinhar função;
-- adiciona roles correspondentes quando necessários.
-
 ### Auto-update stable
 
 - instalação oficial passa a usar o canal `stable` por padrão;
@@ -208,9 +253,7 @@ Release de consolidação do produto para operação em escala, preservando a po
 - valida candidato antes de substituir o produto;
 - mantém backup da versão anterior e executa rollback se a nova versão falhar;
 - bloqueia downgrade automático;
-- versão que falha entra em quarentena;
-- timer diário usa atraso aleatório;
-- retenção conserva backups recentes e remove reports locais antigos.
+- versão que falha entra em quarentena.
 
 ### Hardening operacional
 
@@ -218,20 +261,7 @@ Release de consolidação do produto para operação em escala, preservando a po
 - retry/backoff apenas para GETs seguros da API NetBox;
 - POST/PATCH/DELETE não recebem retry cego;
 - Hypervisor registra journal de writes;
-- dependências usam fingerprint para reconstrução controlada do vendor;
 - adiciona status consolidado do produto, updater e pipelines.
-
-### Saúde e validação
-
-```text
-netbox-discovery self-test
-netbox-discovery health
-netbox-discovery health --json
-netbox-discovery update status
-netbox-discovery update check
-netbox-discovery update run
-netbox-discovery update scheduler {enable|disable|status}
-```
 
 ---
 
