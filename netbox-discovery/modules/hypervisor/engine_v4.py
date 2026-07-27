@@ -107,7 +107,7 @@ def _cluster_member_preflight(ctx, rows, devices, clusters, target_site_id):
                 )
 
 
-def _reclassify_identity_preflight(ctx, subplan, nb):
+def _reclassify_preflight_state(ctx, subplan, nb):
     rows = [
         row for row in subplan.get("records") or []
         if row.get("decision") == "READY" and row.get("action") == "RECLASSIFY_SAFE"
@@ -115,7 +115,6 @@ def _reclassify_identity_preflight(ctx, subplan, nb):
     if not rows:
         return {"rows": [], "tenant": None, "site": None, "devices": [], "clusters": []}
 
-    # Target Tenant/Site must still be unique and present immediately before writes.
     target_tenant, target_site = v3._target_objects(nb, ctx)
 
     devices = base.query(nb, "dcim/devices/", limit=20000)
@@ -192,6 +191,13 @@ def _reclassify_identity_preflight(ctx, subplan, nb):
     }
 
 
+def _reclassify_identity_preflight(ctx, subplan, nb):
+    # Keep the 1.10.6 public/internal contract: callers only need a boolean.
+    # The 1.10.7 bridge uses the richer state through the private helper above.
+    _reclassify_preflight_state(ctx, subplan, nb)
+    return True
+
+
 def _subset_plan(subplan, kinds):
     allowed = set(kinds)
     return {
@@ -221,9 +227,7 @@ def _release_cluster_scopes(ctx, state, nb):
             "scope_id": None,
         })
         events.append({
-            "phase": "RECLASSIFY",
-            "object_type": "CLUSTER",
-            "action": "SCOPE_RELEASED_SAFE",
+            "phase": "RECLASSIFY", "object_type": "CLUSTER", "action": "SCOPE_RELEASED_SAFE",
             "name": row.get("name") or row.get("desired_name") or row.get("asset_id"),
             "object_id": cluster_id,
             "detail": "scope temporariamente removido antes de mover hosts para {0}/{1}".format(
@@ -237,22 +241,19 @@ def _release_cluster_scopes(ctx, state, nb):
 
 
 def _safe_apply_reclassifications(ctx, subplan, nb):
-    state = _reclassify_identity_preflight(ctx, subplan, nb)
+    state = _reclassify_preflight_state(ctx, subplan, nb)
     rows = state.get("rows") or []
     if not rows:
         return []
 
     events = []
 
-    # Prefixes are independent and can be reconciled first.
     prefix_plan = _subset_plan(subplan, ("PREFIX",))
     if prefix_plan["records"]:
         events.extend(_ORIGINAL_RECLASSIFY(ctx, prefix_plan, nb))
 
-    # A NetBox cluster scoped to Site A cannot be moved to Site B while its host
-    # Devices are still in A; likewise a Device cannot move to B while its cluster
-    # remains scoped to A. The safe bridge is to temporarily remove the optional
-    # cluster scope, move the host Devices, then restore the cluster scope to B.
+    # NetBox enforces Site consistency in both directions between a scoped
+    # Cluster and its host Devices. Use an unscoped Cluster as the safe bridge.
     cluster_plan = _subset_plan(subplan, ("CLUSTER",))
     if cluster_plan["records"]:
         events.extend(_release_cluster_scopes(ctx, state, nb))
@@ -274,8 +275,6 @@ def _safe_apply_reclassifications(ctx, subplan, nb):
 def apply_plan(discovery, plan, nb=None):
     active_nb = nb or NetBox()
 
-    # No write is allowed until the entire multi-context plan is rebuilt from live
-    # NetBox state and all reclassification identities are unchanged.
     live_plan = _global_preflight(discovery, plan, active_nb)
 
     previous = v3._apply_reclassifications
