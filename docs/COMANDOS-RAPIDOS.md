@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.1 — Comandos rápidos
+# netbox-discovery 1.10.2 — Comandos rápidos
 
 ## Versão e saúde
 
@@ -51,9 +51,23 @@ Modo da source:
 3 - multi_tenant
 ```
 
-`multi_site` e `multi_tenant` usam mappings de rede de gerenciamento → Tenant/Site.
+### VMware multi-contexto — 1.10.2
 
-Sources antigas permanecem `single_site` até serem editadas.
+O wizard não pergunta mais Tenant/Site cegamente para cada vmkernel `management`.
+
+Ele primeiro agrupa por VMware Datacenter quando a associação é inequívoca:
+
+```text
+Datacenter: DCM
+Hosts: ESX01, ESX02, ESX03, ESX04
+Redes VMware com serviço management (11): ...
+Usar um único Tenant/Site para todas estas redes deste Datacenter? [S/n]:
+```
+
+- `S` → pergunta Tenant/Site uma vez e aplica aos CIDRs daquele grupo;
+- `N` → abre revisão detalhada por rede;
+- rede sem Datacenter único continua individual;
+- sources antigas permanecem `single_site` até edição explícita.
 
 ## Hypervisor — validar e dry-run
 
@@ -102,8 +116,6 @@ netbox-discovery run
 ```
 
 ## Rede — APPLY
-
-Após revisar o PLAN:
 
 ```bash
 netbox-discovery run --apply
@@ -157,16 +169,17 @@ docs/HOMOLOGACAO.md
 
 CI verde ≠ automaticamente homologado ao vivo.
 
-## DCM — situação atual
-
-Antes de novo APPLY Hypervisor multi-contexto:
+## DCM — sequência atual
 
 ```text
-1. atualizar
-2. editar sources e escolher o modo correto
-3. confirmar mappings Tenant/Site
-4. hypervisor check
-5. hypervisor run
-6. revisar
-7. NÃO usar --apply até a redistribuição estar correta
+1. atualizar para a stable atual
+2. editar uma source por vez
+3. escolher multi_tenant quando o manager atender vários Tenants/Sites
+4. revisar grupos de Datacenter e redes management
+5. confirmar Tenant/Site
+6. repetir na segunda source
+7. hypervisor check
+8. hypervisor run SEM --apply
+9. revisar redistribuição dos objetos já existentes
+10. só então considerar APPLY
 ```
