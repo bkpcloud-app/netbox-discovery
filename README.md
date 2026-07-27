@@ -2,14 +2,14 @@
 
 Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.10.4 — PRODUCT V1  
+**Versão atual:** 1.10.5 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
 
-> A documentação faz parte da release. Desde a 1.10.1 o self-test e o CI bloqueiam publicação quando a versão dos documentos obrigatórios diverge do `VERSION`.
+> A documentação faz parte da release. O self-test e o CI bloqueiam publicação quando os documentos obrigatórios divergem do `VERSION`.
 
-## Pipelines independentes
+## Pipelines
 
 ### Rede
 
@@ -24,17 +24,6 @@ Com escrita explícita:
 netbox-discovery run --apply
 DISCOVER → CLASSIFY → RECONCILE → PLAN → IMPORT → AUDIT
 ```
-
-Principais características:
-
-- dry-run por padrão;
-- identidade física por serial/MAC/IP e outras evidências;
-- `management_mac` preferencialmente por IP → SNMP ifIndex → MAC;
-- MACs secundários são evidência, não identidade forte isolada;
-- classificação conservadora;
-- `READY` pode escrever; `REVIEW` e `BLOCKED` não escrevem;
-- preflight antes da primeira escrita;
-- sem DELETE automático.
 
 ### Hypervisor
 
@@ -52,24 +41,55 @@ Conectores:
 - Proxmox VE;
 - Microsoft Hyper-V via WinRM/NTLM.
 
-Cada source possui um modo de inventário:
+Modos de source:
 
 ```text
-1 - single_site
-    Todos os hosts/VMs pertencem ao Tenant/Site principal desta instalação.
-
-2 - multi_site
-    O hypervisor atende vários Sites do mesmo Tenant.
-
-3 - multi_tenant
-    O hypervisor atende vários Tenants e Sites.
+single_site
+multi_site
+multi_tenant
 ```
 
-Sources criadas antes da 1.10 permanecem em `single_site` por compatibilidade até serem editadas.
+## Diagnóstico automático do PLAN — 1.10.5
 
-## Reclassificação segura multi-contexto — 1.10.4
+A partir da 1.10.5, o operador **não precisa abrir JSON nem executar Python auxiliar** para descobrir o que o Hypervisor pretende criar.
 
-A 1.10.4 adiciona uma etapa explícita de reclassificação para corrigir objetos que já existem no NetBox, mas foram gravados anteriormente no Tenant/Site errado.
+O próprio:
+
+```bash
+netbox-discovery hypervisor run
+```
+
+lista automaticamente no terminal:
+
+```text
+HYPERVISOR NOVOS OBJETOS READY
+READY / CREATE
+
+HYPERVISOR AJUSTES/MIGRAÇÕES SEGURAS PENDENTES
+READY / UPDATE_SAFE
+READY / RECLASSIFY_SAFE
+
+HYPERVISOR PENDÊNCIAS DO PLAN
+REVIEW
+BLOCKED
+```
+
+E fecha com um resumo de escrita do dry-run:
+
+```text
+CREATE READY: N
+UPDATE_SAFE/RECLASSIFY_SAFE READY: N
+REVIEW/BLOCKED: N
+NetBox write: NÃO
+```
+
+A análise é automática. A única ação manual obrigatória continua sendo a autorização de escrita real:
+
+```bash
+netbox-discovery hypervisor run --apply
+```
+
+## Reclassificação segura multi-contexto — 1.10.4+
 
 O PLAN pode produzir:
 
@@ -77,119 +97,77 @@ O PLAN pode produzir:
 READY / RECLASSIFY_SAFE
 ```
 
-Essa ação só é criada quando o produto reencontra **a mesma identidade forte** no NetBox. As evidências aceitas são serial/UUID e/ou vínculo inequívoco de IP/MAC ao mesmo objeto.
+quando o produto reencontra a mesma identidade forte no NetBox fora do Tenant/Site autoritativo.
 
-Exemplo:
+Evidências fortes:
 
-```text
-Device já existente: MIZU/DCM
-Rede autoritativa atual: 10.2.1.0/24
-Mapping atual: MIZU/FBA
+- serial/UUID único;
+- IP inequivocamente vinculado ao mesmo objeto;
+- MAC inequivocamente vinculado ao mesmo objeto;
+- combinação coerente dessas evidências.
 
-PLAN:
-READY / RECLASSIFY_SAFE
-MIZU/DCM → MIZU/FBA
-```
+Proteções:
 
-Regras de segurança:
-
-- identidade global ambígua nunca vira migração automática; fica `REVIEW`;
-- serial e IP/MAC apontando para objetos diferentes ficam `REVIEW`;
-- a reclassificação preserva o mesmo ID do objeto, em vez de criar duplicata;
+- nome sozinho nunca autoriza migração;
+- identidade global ambígua vira `REVIEW`;
+- serial e IP/MAC apontando para objetos diferentes vira `REVIEW`;
+- preserva o mesmo ID do objeto;
 - Host pode ter Tenant/Site corrigidos;
-- VM pode ter Tenant corrigido e continua vinculada ao Host/Cluster autoritativo;
-- IPs já pertencentes ao objeto acompanham a correção de Tenant;
-- Cluster/Prefix podem ser reclassificados somente quando a correspondência global é única e segura;
+- VM pode ter Tenant corrigido mantendo o posicionamento físico por Host/Cluster;
+- IPs vinculados acompanham o Tenant quando necessário;
 - não existe DELETE automático.
 
-O comando continua dry-run por padrão:
-
-```bash
-netbox-discovery hypervisor run
-```
-
-A escrita real continua exigindo:
-
-```bash
-netbox-discovery hypervisor run --apply
-```
-
-A funcionalidade `RECLASSIFY_SAFE` da 1.10.4 deve permanecer **NOT LIVE** até passar CI e ser validada em dry-run e APPLY controlado no ambiente real. Consulte `docs/HOMOLOGACAO.md`.
-
-## Delta de inventário Hypervisor — 1.10.4
+## Delta de inventário Hypervisor — 1.10.4+
 
 O discovery compara a coleta atual com o snapshot multi-contexto anterior.
 
-Quando uma VM existia na coleta anterior e não aparece mais na atual, a saída informa:
+VM presente anteriormente e ausente agora:
 
 ```text
 HYPERVISOR INVENTORY CHANGE
 REMOVED/REVIEW
+REVIEW / NOOP
 DELETE automático: NÃO
 ```
 
-A ausência vira `REVIEW/NOOP`. O produto **não apaga a VM do NetBox automaticamente**.
+Ausência nunca vira exclusão automática.
 
-## Rede de gerenciamento autoritativa VMware — 1.10.3
+## Rede de gerenciamento autoritativa VMware — 1.10.3+
 
-Um ESXi pode ter vários vmkernel com o serviço VMware `management` habilitado. Isso **não significa** que todas essas redes são redes de gerenciamento autoritativas do Host nem que devem virar mappings Tenant/Site.
+Um ESXi pode ter vários vmkernel com o serviço VMware `management` habilitado. Isso não significa que todas essas redes devam decidir Tenant/Site.
 
-A partir da 1.10.3 o resolver separa:
+Seleção conservadora:
 
-```text
-vmkernel com serviço management
-            ≠
-rede autoritativa usada para posicionar o ESXi no Site
-```
+1. IP de vmkernel que corresponde ao FQDN/nome do ESXi;
+2. `vmk0` marcada como management;
+3. única rede management candidata;
+4. múltiplas candidatas sem evidência forte → sem resolução automática / `REVIEW`.
 
-Para VMware, a seleção é conservadora:
+As demais interfaces continuam no inventário, mas não posicionam o Host.
 
-1. prefere o vmkernel cujo IP corresponde à resolução do FQDN/nome do ESXi;
-2. se não houver essa evidência, prefere `vmk0` quando ela está marcada como management;
-3. se restar somente uma rede management candidata, usa essa rede;
-4. se houver várias candidatas sem evidência forte, não adivinha: o Host fica sem resolução de contexto e deve aparecer em `REVIEW`.
+## Resolver multi-contexto
 
-As demais interfaces/vmkernel continuam sendo evidência de inventário. Elas apenas deixam de decidir Tenant/Site.
-
-Caso real que originou a correção no DCM:
+Host:
 
 ```text
-4 Hosts ESXi
-Datacenter: DCM
-management service observado em 11 redes
-rede de gestão conhecida dos Hosts: 10.1.1.0/24
-redes auxiliares observadas: 192.168.140/141/142/143/160/161/180/181/190/191
+rede de gerenciamento autoritativa
+→ mapping mais específico
+→ Tenant/Site
 ```
 
-A 1.10.2 agrupava as 11 redes por Datacenter. A 1.10.3 corrige a causa: somente a rede autoritativa participa do mapping de Site.
+VM:
 
-## Wizard multi-contexto
+```text
+VM
+→ Host onde está executando
+→ Tenant/Site do Host
+```
 
-O configurador:
-
-1. conecta no hypervisor;
-2. coleta Hosts, Datacenter, Cluster e interfaces;
-3. seleciona a rede autoritativa de gerenciamento de cada Host;
-4. agrupa redes autoritativas que pertencem claramente ao mesmo VMware Datacenter;
-5. pergunta Tenant/Site uma vez por grupo de Datacenter;
-6. grava internamente um mapping para cada CIDR autoritativo daquele grupo;
-7. se um Datacenter realmente tiver várias redes de gestão válidas e não representar um único Site, permite abrir o grupo e mapear por rede;
-8. cria ou reutiliza Tenant Group, Tenant e Site quando autorizado.
-
-No runtime:
-
-- o Host é resolvido somente pela rede de gerenciamento autoritativa;
-- a VM herda o contexto Tenant/Site do Host onde está rodando;
-- IP da VM é fallback;
-- sem resolução confiável o objeto vira `REVIEW`;
-- identidade forte já existente fora do contexto alvo pode virar `RECLASSIFY_SAFE` na 1.10.4, somente quando inequívoca;
-- o pipeline Hypervisor não executa DELETE automático.
+IP da VM é fallback. Sem evidência confiável, o objeto vira `REVIEW`.
 
 ## Estrutura Tenant/Site
 
-O produto é genérico. **Não existe hardcode de cliente como `MIZU → POLIMIX`.**
-
-No `init`, a relação é informada na configuração:
+O produto é genérico. Não existe hardcode de cliente.
 
 ```text
 Tenant Group [opcional]
@@ -197,64 +175,32 @@ Tenant Group [opcional]
     └── Site
 ```
 
-No modo Hypervisor multi-contexto, os mappings podem apontar para vários Tenants/Sites. Vínculos conflitantes são bloqueados; não são sobrescritos silenciosamente.
-
 ## Segurança operacional
 
 ```text
-run sem --apply             = leitura/PLAN, sem escrita de inventário
-hypervisor run sem --apply  = leitura/PLAN, sem escrita de inventário
+run sem --apply             = dry-run
+hypervisor run sem --apply  = dry-run
 --apply                      = escrita somente de READY
 REVIEW                       = não escreve
 BLOCKED                      = não escreve
+DELETE Hypervisor            = nunca automático
 ```
 
 Outras proteções:
 
 - Network, Hypervisor e Update compartilham lock global;
-- GETs podem receber retry seguro; POST/PATCH não recebem retry cego;
-- APPLY Hypervisor mantém journal das escritas concluídas;
+- GETs podem receber retry seguro;
+- POST/PATCH não recebem retry cego;
+- APPLY Hypervisor mantém journal das escritas;
 - credenciais Hypervisor ficam em arquivo root-only `0600`;
-- scheduler de Network e Hypervisor é opt-in;
-- auto-update `stable` é habilitado por padrão com backup, validação e rollback;
-- nenhuma rotina Hypervisor executa DELETE automático.
+- schedulers Network/Hypervisor são opt-in;
+- auto-update `stable` usa backup, validação e rollback.
 
-## Instalação em Proxy novo
-
-Como `root`:
+## Instalação
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/stable/install-from-github.sh | bash
 ```
-
-O instalador preserva configuração existente durante upgrades e não habilita os schedulers Network/Hypervisor.
-
-## Primeiro uso
-
-```bash
-netbox-discovery init
-netbox-discovery check
-```
-
-Quando existir virtualização:
-
-```bash
-netbox-discovery hypervisor configure
-netbox-discovery hypervisor check
-netbox-discovery hypervisor run
-# revisar PLAN antes de qualquer escrita
-netbox-discovery hypervisor run --apply
-```
-
-Depois, se desejado:
-
-```bash
-netbox-discovery run
-# revisar PLAN
-netbox-discovery run --apply
-```
-
-Não existe `full-run`.
 
 ## Operação
 
@@ -286,13 +232,11 @@ Relatórios:             /opt/netbox-discovery/reports
 Backups:                /opt/netbox-discovery/backups
 ```
 
-## Estado de homologação
+## Homologação
 
-**CI verde não significa automaticamente homologação ao vivo.**
+**CI PASS não equivale a LIVE PASS.**
 
 A matriz oficial fica em `docs/HOMOLOGACAO.md`.
-
-A seleção autoritativa VMware 1.10.3 possui evidência `LIVE PASS` no DCM. O resolver multi-contexto das duas sources e o dry-run real também já possuem evidência ao vivo. A nova reclassificação automática 1.10.4 permanece separada e só pode ser promovida após CI e validação real específica.
 
 ## Documentação obrigatória
 
