@@ -20,12 +20,6 @@ import configurator as base
 
 ORIG_WRITE_CONFIG = base.write_config
 
-# Relações de tenancy explicitamente conhecidas do produto. Não há fallback
-# genérico para grupo: tenants não mapeados são criados sem Tenant Group.
-KNOWN_TENANT_GROUPS = {
-    "MIZU": "POLIMIX",
-}
-
 
 def clean(value):
     return "" if value is None else str(value).strip()
@@ -75,39 +69,13 @@ def _related_id(value):
     return value
 
 
-def _tenant_group_for(tenant, cfg):
-    configured = clean(cfg.get("tenant_group"))
+def _tenant_group_for(cfg):
+    # Tenant Group is always explicit. Environment may override for automated
+    # deployment, otherwise only config.yml controls the relationship.
     env_group = clean(os.environ.get("NETBOX_DISCOVERY_TENANT_GROUP"))
     if env_group:
         return env_group
-    if configured:
-        return configured
-    return KNOWN_TENANT_GROUPS.get(clean(tenant).upper(), "")
-
-
-def _persist_tenant_group(group_name):
-    if not group_name or not os.path.isfile(base.CONFIG_FILE):
-        return
-    rows = open(base.CONFIG_FILE, "r").read().splitlines()
-    found = False
-    out = []
-    inserted = False
-    for row in rows:
-        if row.startswith("tenant_group:"):
-            out.append("tenant_group: {0}".format(group_name))
-            found = True
-            continue
-        out.append(row)
-        if not inserted and row.startswith("tenant:"):
-            out.append("tenant_group: {0}".format(group_name))
-            inserted = True
-    if not found and not inserted:
-        out.append("tenant_group: {0}".format(group_name))
-    temp = base.CONFIG_FILE + ".tmp"
-    with open(temp, "w") as handle:
-        handle.write("\n".join(out) + "\n")
-    os.chmod(temp, 0o600)
-    os.replace(temp, base.CONFIG_FILE)
+    return clean(cfg.get("tenant_group"))
 
 
 def ensure_netbox_structure():
@@ -119,7 +87,7 @@ def ensure_netbox_structure():
 
     from lib.netbox import NetBox
     nb = NetBox()
-    group_name = _tenant_group_for(tenant_name, cfg)
+    group_name = _tenant_group_for(cfg)
     group = None
 
     print("===== ESTRUTURA BASE NETBOX =====")
@@ -134,7 +102,8 @@ def ensure_netbox_structure():
             print("Tenant Group {0}: CRIADO ID={1}".format(group_name, group.get("id")))
         else:
             print("Tenant Group {0}: OK ID={1}".format(group_name, group.get("id")))
-        _persist_tenant_group(group_name)
+    else:
+        print("Tenant Group: NÃO INFORMADO")
 
     tenant = _query_name(nb, "tenancy/tenants/", tenant_name)
     if tenant is None:
