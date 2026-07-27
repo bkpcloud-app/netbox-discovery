@@ -12,14 +12,14 @@ import sys
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 LOCK_FILE = "/var/lock/netbox-discovery-global.lock"
-RUNNER_VERSION = "2.1-product"
+RUNNER_VERSION = "2.2-product"
 
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
 
 from lib.netbox import NetBox as RealNetBox
 from modules.hypervisor.config import load_hypervisor_config
-from modules.hypervisor import engine
+from modules.hypervisor import engine_v2 as engine
 
 WRITE_JOURNAL = []
 
@@ -37,6 +37,7 @@ class TracingNetBox(RealNetBox):
 
 
 engine.NetBox = TracingNetBox
+engine.base.NetBox = TracingNetBox
 
 
 def plan_issue_lines(plan):
