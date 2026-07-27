@@ -54,6 +54,23 @@ def test_management_placement_groups_collapse_same_datacenter():
     assert group["networks"] == ["10.1.1.0/24", "10.1.2.0/24", "10.1.3.0/24"]
 
 
+def test_live_shape_four_hosts_eleven_management_networks_collapse_to_one_datacenter():
+    names = ["vm-ae01.mizu.local", "vm-ae02.mizu.local", "vm-ae03.mizu.local", "vm-ae04.mizu.local"]
+    rows = []
+    for idx, name in enumerate(names, 21):
+        extras = [("10.1.{0}.{1}".format(net, idx), 24) for net in range(2, 12)]
+        rows.append(host(name, "10.1.1.{0}".format(idx), cluster="Cluster", datacenter="DCM", extra_management=extras))
+    groups = resolver.management_placement_groups({"hosts": rows})
+    assert len(groups) == 1
+    group = groups[0]
+    assert group["kind"] == "datacenter"
+    assert group["label"] == "DCM"
+    assert len(group["hosts"]) == 4
+    assert len(group["networks"]) == 11
+    assert "10.1.1.0/24" in group["networks"]
+    assert "10.1.11.0/24" in group["networks"]
+
+
 def test_management_placement_groups_keep_datacenters_separate():
     raw = {"hosts": [
         host("ESX-DCM", "10.1.1.21", datacenter="DCM"),
@@ -159,6 +176,7 @@ def main():
     tests = [
         test_management_network_grouping,
         test_management_placement_groups_collapse_same_datacenter,
+        test_live_shape_four_hosts_eleven_management_networks_collapse_to_one_datacenter,
         test_management_placement_groups_keep_datacenters_separate,
         test_management_placement_group_does_not_merge_ambiguous_network,
         test_vm_inherits_host_context,
