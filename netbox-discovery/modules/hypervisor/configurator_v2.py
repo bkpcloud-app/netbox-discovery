@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 
+import argparse
 import os
 import subprocess
 import sys
@@ -14,6 +15,7 @@ if BASE not in sys.path:
     sys.path.insert(0, BASE)
 
 import configurator as base
+from modules.hypervisor import scope as scope_tool
 
 ORIG_SAVE = base.save_hypervisor_config
 
@@ -45,7 +47,26 @@ def save_hypervisor_config(data, path=None):
     sync_scheduler(data)
 
 
-def main():
+def parse_args(argv=None):
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("--scope", choices=("site_networks", "all"))
+    ap.add_argument("--scope-status", action="store_true")
+    args, rest = ap.parse_known_args(argv)
+    if rest:
+        raise RuntimeError("argumento desconhecido: {0}".format(" ".join(rest)))
+    return args
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    if args.scope or args.scope_status:
+        cfg = base.load_hypervisor_config(required=True)
+        if args.scope_status:
+            scope_tool.show(cfg)
+            return 0
+        scope_tool.set_scope(cfg, args.scope)
+        return 0
+
     old = base.save_hypervisor_config
     try:
         base.save_hypervisor_config = save_hypervisor_config
