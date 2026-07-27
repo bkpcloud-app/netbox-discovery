@@ -18,6 +18,7 @@ import importer as base
 IMPORTER_VERSION = "5.0-product"
 ORIG_REMATCH = base.rematch_record
 ORIG_ENSURE_INTERFACE = base.ensure_interface
+ORIG_REFRESH_PLAN = base.refresh_plan
 
 
 def clean(v):
@@ -35,6 +36,18 @@ def norm_mac(value):
     if first & 1:
         return ""
     return ":".join(compact[i:i + 2] for i in range(0, 12, 2))
+
+
+def refresh_plan():
+    """Always re-plan with Device Identity V2 immediately before IMPORT."""
+    planner = os.path.join(BASE, "modules", "inventory", "planner_v2.py")
+    if not os.path.isfile(planner):
+        raise RuntimeError("Planner V2 não encontrado: {0}".format(planner))
+    base.subprocess.check_call([sys.executable, planner])
+    path = base.latest(os.path.join(base.REPORTS, "*-plan-*.json"))
+    if not path:
+        raise RuntimeError("PLAN V2 não gerou JSON")
+    return path
 
 
 def rematch_record(row, indexes):
@@ -131,15 +144,18 @@ def ensure_interface(nb, apply_mode, device, spec, report):
 def main(argv=None):
     old_rematch = base.rematch_record
     old_ensure = base.ensure_interface
+    old_refresh = base.refresh_plan
     old_version = base.IMPORTER_VERSION
     try:
         base.rematch_record = rematch_record
         base.ensure_interface = ensure_interface
+        base.refresh_plan = refresh_plan
         base.IMPORTER_VERSION = IMPORTER_VERSION
         return base.main(argv)
     finally:
         base.rematch_record = old_rematch
         base.ensure_interface = old_ensure
+        base.refresh_plan = old_refresh
         base.IMPORTER_VERSION = old_version
 
 
