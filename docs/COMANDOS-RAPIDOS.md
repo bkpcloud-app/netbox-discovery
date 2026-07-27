@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.3 — Comandos rápidos
+# netbox-discovery 1.10.4 — Comandos rápidos
 
 ## Versão e saúde
 
@@ -51,7 +51,7 @@ Modo da source:
 3 - multi_tenant
 ```
 
-### VMware multi-contexto — 1.10.3
+### VMware multi-contexto
 
 Para decidir Tenant/Site, **não use toda rede que aparece como serviço `management` no VMware**.
 
@@ -64,7 +64,7 @@ O resolver escolhe uma rede de gerenciamento autoritativa por Host:
 4. várias candidatas sem evidência forte → REVIEW
 ```
 
-Exemplo real do DCM que motivou a correção:
+Exemplo real do DCM:
 
 ```text
 vmk0 / rede de gestão: 10.1.1.0/24
@@ -72,9 +72,7 @@ vmkernel auxiliares também marcados management:
 192.168.140/141/142/143/160/161/180/181/190/191
 ```
 
-Na 1.10.3 essas redes auxiliares podem continuar no inventário, mas **não viram mappings de Site**.
-
-Sources antigas permanecem `single_site` até edição explícita.
+As redes auxiliares continuam no inventário, mas **não viram mappings de Site**.
 
 ## Hypervisor — validar e dry-run
 
@@ -93,8 +91,41 @@ READY
 REVIEW
 BLOCKED
 UPDATE_SAFE
+RECLASSIFY_SAFE
 alvo=Tenant/Site
 ```
+
+### `RECLASSIFY_SAFE` — 1.10.4
+
+Significa:
+
+```text
+mesma identidade forte já existe no NetBox
++ contexto atual diverge do mapping autoritativo
+= objeto pode ser reclassificado preservando o mesmo ID
+```
+
+Ação segura somente quando a identidade global é única por serial/UUID e/ou IP/MAC vinculado.
+
+Ambiguidade:
+
+```text
+REVIEW
+```
+
+Nunca usar nome sozinho para migrar Tenant/Site.
+
+### VM desapareceu entre coletas
+
+A 1.10.4 mostra automaticamente:
+
+```text
+HYPERVISOR INVENTORY CHANGE
+REMOVED/REVIEW
+DELETE automático: NÃO
+```
+
+Ausência de VM vira `REVIEW/NOOP`. Não existe exclusão automática.
 
 ## Hypervisor — APPLY
 
@@ -104,7 +135,9 @@ Somente após dry-run revisado:
 netbox-discovery hypervisor run --apply
 ```
 
-Nunca repetir APPLY cegamente quando o AUDIT deixar `REVIEW` ou `UPDATE_SAFE` residual.
+Durante homologação da 1.10.4, **não executar APPLY até revisar o dry-run ao vivo da própria 1.10.4**.
+
+Nunca repetir APPLY cegamente quando o AUDIT deixar `REVIEW`, `UPDATE_SAFE` ou `RECLASSIFY_SAFE` residual inesperado.
 
 ## Hypervisor — scheduler
 
@@ -139,10 +172,13 @@ netbox-discovery scheduler disable
 ## Política
 
 ```text
-READY   → elegível para escrita somente com --apply
-REVIEW  → não escreve
-BLOCKED → não escreve
-NOOP    → preserva
+READY            → elegível para escrita somente com --apply
+REVIEW           → não escreve
+BLOCKED          → não escreve
+CREATE           → cria quando READY
+UPDATE_SAFE      → atualiza quando READY
+RECLASSIFY_SAFE  → move contexto quando READY
+NOOP             → preserva
 ```
 
 Hypervisor não executa DELETE automático.
@@ -176,17 +212,17 @@ docs/HOMOLOGACAO.md
 
 CI verde ≠ automaticamente homologado ao vivo.
 
-## DCM — sequência atual
+## Sequência de homologação atual
 
 ```text
-1. atualizar para a stable atual
-2. editar uma source por vez
-3. escolher multi_tenant quando o manager atender vários Tenants/Sites
-4. confirmar que o wizard mostra somente a rede de gestão autoritativa do ESXi
-5. confirmar Tenant/Site
-6. repetir na segunda source
-7. hypervisor check
-8. hypervisor run SEM --apply
-9. revisar redistribuição dos objetos já existentes
-10. só então considerar APPLY
+1. publicar 1.10.4 somente após CI PASS
+2. atualizar o proxy pela stable
+3. netbox-discovery version
+4. netbox-discovery hypervisor check
+5. netbox-discovery hypervisor run SEM --apply
+6. revisar INVENTORY CHANGE
+7. revisar RECLASSIFY_SAFE e qualquer REVIEW/BLOCKED
+8. somente depois considerar --apply
+9. AUDIT
+10. novo dry-run para idempotência
 ```
