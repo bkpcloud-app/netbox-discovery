@@ -1,3 +1,67 @@
+## V1.9.0 — Identidade física, auto-update e hardening operacional
+
+Release de consolidação do produto para operação em escala, preservando a política de dry-run, preflight, idempotência e ausência de DELETE automático.
+
+### Identidade física de rede
+
+- adiciona `management_mac` derivado preferencialmente por IP → SNMP ifIndex → MAC;
+- usa o MAC observado diretamente em L2 como fallback;
+- MACs secundários/interface continuam como evidência, mas não fundem Devices sozinhos;
+- persiste MAC de gerenciamento no NetBox e o vincula à interface correspondente;
+- PLAN consulta os MACs existentes no NetBox e pode reencontrar o mesmo Device pelo MAC após mudança de IP;
+- conflito entre serial, MAC e IP continua bloqueando escrita automática;
+- AUDIT valida a persistência e a associação correta do MAC.
+
+### Impressoras e controle de acesso
+
+- melhora normalização de fabricantes de impressora, incluindo HP, Epson, Canon, Kyocera, Ricoh, Lexmark, Xerox, Zebra e OKI, preservando regras existentes;
+- mantém classificação conservadora: uma porta genérica isolada não deve inventar fabricante/modelo;
+- adiciona evidência Topdata/Inner sem usar OUI sozinho para adivinhar função;
+- TCP 3570 pode compor evidência de `ACCESS_CONTROL` quando combinado com identidade Topdata/Inner;
+- TCP 51000 pode compor evidência de `TIME_ATTENDANCE` quando combinado com identidade Topdata/Inner;
+- evidência explícita de catraca pode classificar `TURNSTILE`;
+- adiciona roles NetBox `TIME ATTENDANCE`, `ACCESS CONTROL` e `TURNSTILE` quando necessários.
+
+### Auto-update stable
+
+- instalação oficial passa a usar o canal `stable` por padrão;
+- auto-update é habilitado automaticamente na instalação;
+- Network e Hypervisor schedulers continuam desabilitados por padrão;
+- valida candidato antes de substituir o produto;
+- mantém backup da versão anterior e executa rollback se a nova versão falhar no self-test/check;
+- bloqueia downgrade automático;
+- versão que falha entra em quarentena e não é tentada novamente automaticamente até surgir outra versão ou execução manual com retry;
+- timer diário usa `RandomizedDelaySec=30m` para evitar atualização simultânea de todos os proxies;
+- retenção conserva os últimos cinco backups de update e remove reports locais antigos.
+
+### Hardening operacional
+
+- Network, Hypervisor e Update compartilham `/var/lock/netbox-discovery-global.lock`;
+- adiciona retry/backoff apenas para GETs seguros da API NetBox em erros transitórios;
+- POST/PATCH/DELETE não recebem retry cego;
+- Hypervisor registra journal de writes quando um APPLY falha depois de alterações parciais;
+- dependências VMware/Hyper-V passam a usar fingerprint SHA256 do conjunto de pacotes para decidir quando reconstruir o vendor;
+- configuração de scheduler e estado do systemd passam a ser sincronizados pelos configuradores;
+- adiciona status consolidado do produto, updater e pipelines.
+
+### Saúde e validação
+
+Novos comandos:
+
+```text
+netbox-discovery self-test
+netbox-discovery health
+netbox-discovery health --json
+netbox-discovery update status
+netbox-discovery update check
+netbox-discovery update run
+netbox-discovery update scheduler {enable|disable|status}
+```
+
+- `self-test` não depende de `config.yml`, permitindo validar instalação nova e candidato de upgrade;
+- `health --json` fornece saída simples para Zabbix e outras ferramentas;
+- CI valida sincronismo dos arquivos VERSION, sintaxe shell, compilação Python, self-test e regressões de identidade física.
+
 ## V1.8.0 — Hypervisor integrado e endpoint BKPCLOUD
 
 Release de produto que adiciona inventário de virtualização sem alterar o pipeline de rede existente.
