@@ -137,11 +137,12 @@ def write_config(values):
     write_lines(exclusions_file, values["exclusions"])
     write_lines(communities_file, values["communities"], 0o600)
 
-    text = """netbox:\n  url: {url}\n  token: {token}\n  verify_ssl: {verify_ssl}\n\ntenant: {tenant}\n\ndiscovery:\n  site: {site}\n  networks_file: {network_file}\n  exclusions_file: {exclusions_file}\n  communities_file: {communities_file}\n\npaths:\n  reports: {base}/reports\n  logs: {base}/logs\n  cache: {base}/cache\n  backups: {base}/backups\n\nautomation:\n  enabled: {auto_enabled}\n  apply: {auto_apply}\n  schedule: {schedule}\n""".format(
+    text = """netbox:\n  url: {url}\n  token: {token}\n  verify_ssl: {verify_ssl}\n\ntenant: {tenant}\ntenant_group: {tenant_group}\n\ndiscovery:\n  site: {site}\n  networks_file: {network_file}\n  exclusions_file: {exclusions_file}\n  communities_file: {communities_file}\n\npaths:\n  reports: {base}/reports\n  logs: {base}/logs\n  cache: {base}/cache\n  backups: {base}/backups\n\nautomation:\n  enabled: {auto_enabled}\n  apply: {auto_apply}\n  schedule: {schedule}\n""".format(
         url=values["url"].rstrip("/"),
         token=values["token"],
         verify_ssl=yaml_bool(values["verify_ssl"]),
         tenant=values["tenant"],
+        tenant_group=clean(values.get("tenant_group")),
         site=site,
         network_file=network_file,
         exclusions_file=exclusions_file,
@@ -176,6 +177,7 @@ def current_defaults():
         "token": clean((cfg.get("netbox") or {}).get("token")),
         "verify_ssl": bool((cfg.get("netbox") or {}).get("verify_ssl", True)),
         "tenant": clean(cfg.get("tenant")),
+        "tenant_group": clean(cfg.get("tenant_group")),
         "site": site,
         "networks": read_lines(os.path.join(site_dir, "networks.conf")) if site_dir else [],
         "exclusions": read_lines(os.path.join(site_dir, "exclusions.conf")) if site_dir else [],
@@ -190,6 +192,8 @@ def interactive_configure():
     cur = current_defaults()
     print("===== NETBOX-DISCOVERY CONFIGURAÇÃO =====")
     tenant = ask("Cliente/Tenant", cur["tenant"], True)
+    group_default = cur["tenant_group"] if tenant == cur["tenant"] else ""
+    tenant_group = ask("Tenant Group (opcional)", group_default, False)
     site = ask("Site", cur["site"], True)
     url = LOCKED_NETBOX_URL
     print("NetBox fixo: {0}".format(url))
@@ -201,7 +205,6 @@ def interactive_configure():
         raise RuntimeError("Token do NetBox é obrigatório")
     verify_ssl = yn("Validar certificado SSL?", cur["verify_ssl"])
 
-    # Existing lists are valid only when configuring the same site.
     same_site = site == cur["site"]
     networks = capture_list("redes CIDR", validate_network, cur["networks"] if same_site else [], True)
     exclusions = capture_list("exclusões (IP/CIDR)", None, cur["exclusions"] if same_site else [], False)
@@ -220,7 +223,7 @@ def interactive_configure():
         automation_apply = yn("Permitir IMPORT automático (escrita no NetBox)?", cur["automation_apply"])
 
     values = {
-        "tenant": tenant, "site": site, "url": url, "token": token,
+        "tenant": tenant, "tenant_group": tenant_group, "site": site, "url": url, "token": token,
         "verify_ssl": verify_ssl, "networks": networks, "exclusions": exclusions,
         "communities": communities, "automation_enabled": automation_enabled,
         "automation_apply": automation_apply, "schedule": schedule,
@@ -228,6 +231,7 @@ def interactive_configure():
 
     print("\n===== RESUMO =====")
     print("Tenant: {0}".format(tenant))
+    print("Tenant Group: {0}".format(tenant_group or "SEM GRUPO"))
     print("Site: {0}".format(site))
     print("NetBox: {0}".format(url))
     print("SSL verify: {0}".format("SIM" if verify_ssl else "NÃO"))
@@ -253,8 +257,17 @@ def interactive_configure():
 
 def noninteractive(args):
     cur = current_defaults()
+    tenant = args.tenant or cur["tenant"]
+    tenant_changed = bool(args.tenant) and clean(args.tenant) != cur["tenant"]
+    if args.tenant_group is not None:
+        tenant_group = clean(args.tenant_group)
+    elif tenant_changed:
+        tenant_group = ""
+    else:
+        tenant_group = cur["tenant_group"]
     values = {
-        "tenant": args.tenant or cur["tenant"],
+        "tenant": tenant,
+        "tenant_group": tenant_group,
         "site": args.site or cur["site"],
         "url": LOCKED_NETBOX_URL,
         "token": args.netbox_token or cur["token"],
@@ -286,6 +299,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Assistente de configuração do netbox-discovery")
     ap.add_argument("--non-interactive", action="store_true")
     ap.add_argument("--tenant")
+    ap.add_argument("--tenant-group", default=None, help="Tenant Group opcional; string vazia remove o grupo da configuração")
     ap.add_argument("--site")
     ap.add_argument("--netbox-url", help="compatibilidade: deve corresponder ao endpoint fixo BKPCLOUD")
     ap.add_argument("--netbox-token")
