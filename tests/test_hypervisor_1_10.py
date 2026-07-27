@@ -85,6 +85,29 @@ def test_config_accepts_multi_tenant_mapping():
     hv_config.validate_source(source)
 
 
+def test_global_identity_guard_blocks_duplicate_create():
+    from modules.hypervisor import engine_v3
+    old_query = engine_v3.base.query
+    try:
+        def fake_query(nb, endpoint, **kwargs):
+            if endpoint == "dcim/devices/":
+                return [{"id": 77, "name": "ESX-OLD", "serial": "SERIAL-001"}]
+            if endpoint == "virtualization/virtual-machines/":
+                return []
+            return []
+        engine_v3.base.query = fake_query
+        plan = {"records": [{
+            "object_type": "HOST", "desired_name": "ESX-FBA", "serial": "SERIAL-001",
+            "decision": "READY", "action": "CREATE", "target_tenant": "MIZU", "target_site": "FBA",
+        }]}
+        engine_v3._global_identity_guard(plan, object())
+        row = plan["records"][0]
+        assert row["decision"] == "REVIEW"
+        assert "reclassificação/migração" in row["reason"]
+    finally:
+        engine_v3.base.query = old_query
+
+
 def main():
     tests = [
         test_management_network_grouping,
@@ -93,6 +116,7 @@ def main():
         test_multi_site_uses_default_tenant,
         test_config_requires_mapping_for_multi_mode,
         test_config_accepts_multi_tenant_mapping,
+        test_global_identity_guard_blocks_duplicate_create,
     ]
     for test in tests:
         test()
