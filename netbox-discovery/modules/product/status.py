@@ -94,7 +94,8 @@ def main():
     if plan:
         ds = plan.get("decision_summary") or {}
         ac = plan.get("action_summary") or {}
-        print("PLAN: READY={0} REVIEW={1} BLOCKED={2}".format(val(ds, "READY"), val(ds, "REVIEW"), val(ds, "BLOCKED")))
+        print("PLAN: READY={0} DELEGATED={1} REVIEW={2} BLOCKED={3}".format(
+            val(ds, "READY"), val(ds, "DELEGATED"), val(ds, "REVIEW"), val(ds, "BLOCKED")))
         print("      CREATE={0} UPDATE_SAFE={1} NOOP={2}".format(val(ac, "CREATE"), val(ac, "UPDATE_SAFE"), val(ac, "NOOP")))
     else:
         print("PLAN: sem relatório")
