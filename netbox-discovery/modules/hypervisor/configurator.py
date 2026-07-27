@@ -11,7 +11,10 @@ BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
 
+from lib.config import load_config
 from modules.hypervisor.config import clean, load_hypervisor_config, save_hypervisor_config, slugify
+from modules.hypervisor.resolver import management_network_groups
+from modules.hypervisor.structure import ensure_structure
 
 
 def ask(prompt, default="", required=False):
@@ -59,6 +62,22 @@ def type_choice(default=""):
         print("Opção inválida.")
 
 
+def inventory_mode_choice(default="single_site"):
+    mapping = {"1": "single_site", "2": "multi_site", "3": "multi_tenant"}
+    reverse = dict((v, k) for k, v in mapping.items())
+    print("\nComo este hypervisor deve ser tratado?")
+    print("  1 - SITE ÚNICO: todos os hosts/VMs pertencem ao Tenant/Site atual")
+    print("  2 - MULTI-SITE: vários Sites do mesmo Tenant")
+    print("  3 - MULTI-TENANT / MULTI-SITE: vários Tenants e Sites")
+    while True:
+        value = input("Escolha [{0}]: ".format(reverse.get(default, "1"))).strip()
+        if not value:
+            return default
+        if value in mapping:
+            return mapping[value]
+        print("Opção inválida.")
+
+
 def default_source_id(stype, endpoint):
     host = clean(endpoint).replace("https://", "").replace("http://", "").split("/")[0]
     return slugify("{0}-{1}".format(stype, host))
@@ -72,13 +91,100 @@ def ensure_connector_deps(stype):
 
 
 def check_source_ready(source):
-    # O vendor pode ser criado durante esta mesma execução do configurador.
-    # Garanta que ele entre no sys.path antes de importar o collector.
     vendor = os.path.join(BASE, "vendor")
     if os.path.isdir(vendor) and vendor not in sys.path:
         sys.path.insert(0, vendor)
     from modules.hypervisor.collectors import check_source
     return check_source(source)
+
+
+def collect_source_ready(source):
+    vendor = os.path.join(BASE, "vendor")
+    if os.path.isdir(vendor) and vendor not in sys.path:
+        sys.path.insert(0, vendor)
+    from modules.hypervisor.collectors import collect_source
+    return collect_source(source)
+
+
+def product_defaults():
+    cfg = load_config()
+    return {
+        "tenant_group": clean(cfg.get("tenant_group")),
+        "tenant": clean(cfg.get("tenant")),
+        "site": clean((cfg.get("discovery") or {}).get("site")),
+    }
+
+
+def mapping_wizard(source, current=None):
+    current = current or {}
+    mode = clean(source.get("inventory_mode") or "single_site")
+    if mode == "single_site":
+        source["mappings"] = []
+        source["scope_mode"] = "all"
+        return source
+
+    existing = dict((clean(x.get("network")), x) for x in (current.get("mappings") or []))
+    default_review = not bool(existing)
+    if not yn("Descobrir/revisar agora os mapeamentos de Tenant/Site deste hypervisor?", default_review):
+        source["mappings"] = list(existing.values())
+        source["scope_mode"] = "all"
+        if not source["mappings"]:
+            raise RuntimeError("modo multi-site/multi-tenant exige mapeamentos")
+        return source
+
+    print("\n===== DESCOBERTA DE REDES DE GERENCIAMENTO =====")
+    raw = collect_source_ready(source)
+    groups = management_network_groups(raw)
+    if not groups:
+        raise RuntimeError("nenhuma rede de gerenciamento de host foi detectada")
+
+    defaults = product_defaults()
+    auto_create = yn("Criar/reutilizar automaticamente Tenant/Site no NetBox para os mapeamentos?", True)
+    mappings = []
+    seen = set()
+    for pos, group in enumerate(groups, 1):
+        network = group.get("network")
+        old = existing.get(network, {})
+        print("\n[{0}/{1}] Rede de gerenciamento: {2}".format(pos, len(groups), network))
+        print("  Hosts: {0}".format(", ".join(group.get("hosts") or []) or "?"))
+        if group.get("datacenters"):
+            print("  Datacenter(s): {0}".format(", ".join(group.get("datacenters"))))
+        if group.get("clusters"):
+            print("  Cluster(s): {0}".format(", ".join(group.get("clusters"))))
+
+        if mode == "multi_site":
+            tenant_group = clean(old.get("tenant_group")) or defaults["tenant_group"]
+            tenant = defaults["tenant"]
+            print("  Tenant fixo: {0}".format(tenant))
+        else:
+            tenant_group = ask("Tenant Group (opcional)", clean(old.get("tenant_group")) or defaults["tenant_group"])
+            tenant = ask("Tenant", clean(old.get("tenant")), True)
+        site = ask("Site", clean(old.get("site")), True)
+        mapping = {
+            "network": network,
+            "tenant_group": tenant_group,
+            "tenant": tenant,
+            "site": site,
+            "evidence": {
+                "hosts": list(group.get("hosts") or []),
+                "datacenters": list(group.get("datacenters") or []),
+                "clusters": list(group.get("clusters") or []),
+            },
+        }
+        mappings.append(mapping)
+        seen.add(network)
+        if auto_create:
+            print("  Provisionando estrutura NetBox...")
+            ensure_structure(tenant, site, tenant_group)
+
+    # Preserve mappings not visible in this discovery, useful for temporarily offline hosts.
+    for network, mapping in existing.items():
+        if network not in seen:
+            mappings.append(mapping)
+    source["mappings"] = mappings
+    source["scope_mode"] = "all"
+    print("\nMAPEAMENTOS SALVOS: {0}".format(len(mappings)))
+    return source
 
 
 def edit_source(current=None):
@@ -88,6 +194,7 @@ def edit_source(current=None):
     endpoint = ask("IP/FQDN do hypervisor/manager", current.get("endpoint", ""), True)
     sid = ask("ID da source", current.get("id") or default_source_id(stype, endpoint), True)
     username = ask("Usuário", current.get("username", ""), True)
+    mode = inventory_mode_choice(clean(current.get("inventory_mode") or "single_site"))
     source = {
         "id": sid,
         "type": stype,
@@ -95,7 +202,9 @@ def edit_source(current=None):
         "username": username,
         "secret": current.get("secret", ""),
         "enabled": True,
-        "scope_mode": "site_networks" if yn("Limitar hosts/VMs às redes configuradas deste Site?", clean(current.get("scope_mode") or "site_networks") != "all") else "all",
+        "inventory_mode": mode,
+        "mappings": list(current.get("mappings") or []),
+        "scope_mode": "all",
     }
 
     if stype == "vmware":
@@ -129,19 +238,20 @@ def edit_source(current=None):
     print("CONEXÃO: OK")
     print("Produto: {0}".format(result.get("product", "")))
     print("Versão: {0}".format(result.get("version", "")))
-    return source
+    return mapping_wizard(source, current)
 
 
 def show_sources(cfg):
     sources = cfg.get("sources") or []
     print("\nSources configuradas: {0}".format(len(sources)))
     for pos, row in enumerate(sources, 1):
-        print("  {0}. {1} | {2} | {3} | scope={4} | {5}".format(
+        print("  {0}. {1} | {2} | {3} | mode={4} | maps={5} | {6}".format(
             pos,
             row.get("id"),
             row.get("type"),
             row.get("endpoint"),
-            row.get("scope_mode", "site_networks"),
+            row.get("inventory_mode", "single_site"),
+            len(row.get("mappings") or []),
             "ENABLED" if row.get("enabled", True) else "DISABLED",
         ))
 
