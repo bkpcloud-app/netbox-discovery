@@ -88,6 +88,10 @@ def edit_source(current=None):
     endpoint = ask("IP/FQDN do hypervisor/manager", current.get("endpoint", ""), True)
     sid = ask("ID da source", current.get("id") or default_source_id(stype, endpoint), True)
     username = ask("Usuário", current.get("username", ""), True)
+    site_scope_default = clean(current.get("scope_mode") or "site_networks") != "all"
+    print("Escopo recomendado por Site:")
+    print("  SIM = host entra pela rede de gerenciamento do Site; VMs entram por esse host ou por IP do Site")
+    print("  NÃO = importa tudo que a source enxerga, mesmo hosts/VMs de outros Sites")
     source = {
         "id": sid,
         "type": stype,
@@ -95,7 +99,7 @@ def edit_source(current=None):
         "username": username,
         "secret": current.get("secret", ""),
         "enabled": True,
-        "scope_mode": "site_networks" if yn("Limitar hosts/VMs às redes configuradas deste Site?", clean(current.get("scope_mode") or "site_networks") != "all") else "all",
+        "scope_mode": "site_networks" if yn("Usar escopo recomendado deste Site?", site_scope_default) else "all",
     }
 
     if stype == "vmware":
