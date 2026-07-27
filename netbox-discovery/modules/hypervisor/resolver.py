@@ -5,13 +5,25 @@ from __future__ import print_function
 import ipaddress
 
 from modules.hypervisor.config import clean
-from modules.hypervisor.collectors import valid_ip
 
 MODES = ("single_site", "multi_site", "multi_tenant")
 
 
 def norm(value):
     return clean(value).casefold()
+
+
+def valid_ip(value):
+    value = clean(value)
+    if not value:
+        return ""
+    try:
+        obj = ipaddress.ip_address(value.split("%")[0].split("/")[0])
+        if obj.is_loopback or obj.is_link_local or obj.is_multicast or obj.is_unspecified:
+            return ""
+        return str(obj)
+    except Exception:
+        return ""
 
 
 def interface_networks(record, management_only=False):
