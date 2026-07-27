@@ -1,8 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "$0")" && pwd)"
 TARGET="/opt/netbox-discovery"
-SRC="$(cd "$(dirname "$0")" && pwd)/netbox-discovery"
+SRC="$ROOT/netbox-discovery"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
 if [[ "$(id -u)" != "0" ]]; then
@@ -22,26 +23,28 @@ if sys.version_info < (3, 6):
 print('PYTHON: {0}.{1}.{2}'.format(*sys.version_info[:3]))
 PY
 
-for cmd in nmap snmpget snmpwalk; do
+for cmd in nmap snmpget snmpwalk git; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "ERRO: dependência ausente: $cmd" >&2
     exit 1
   fi
 done
 
+# Validate candidate before touching the installed product.
+/usr/bin/python3 "$SRC/modules/product/selftest.py" --base "$SRC" --package-root "$ROOT"
+
 mkdir -p "$TARGET"/{reports,logs,cache,backups,config/sites}
 BACKUP="$TARGET/backups/pre-product-v1-$STAMP"
 mkdir -p "$BACKUP"
 
-# Backup only code/configuration, never duplicate reports/logs/cache.
 for item in VERSION workflow.yml config.yml bin lib modules config systemd; do
   if [[ -e "$TARGET/$item" ]]; then
     cp -a "$TARGET/$item" "$BACKUP/"
   fi
 done
 
-# Product package intentionally contains no live config.yml, so customer/site
-# credentials and configuration are preserved on upgrades.
+# Live config.yml and site files are not shipped in the package, therefore
+# credentials/site configuration survive upgrades.
 \cp -af "$SRC/." "$TARGET/"
 
 chmod +x "$TARGET/bin/netbox-discovery"
@@ -52,37 +55,28 @@ find "$TARGET/config/sites" -type f -name 'snmp-communities.conf' -exec chmod 60
 
 ln -sfn "$TARGET/bin/netbox-discovery" /usr/local/bin/netbox-discovery
 
-install -m 0644 "$TARGET/systemd/netbox-discovery.service" /etc/systemd/system/netbox-discovery.service
-install -m 0644 "$TARGET/systemd/netbox-discovery.timer" /etc/systemd/system/netbox-discovery.timer
-install -m 0644 "$TARGET/systemd/netbox-discovery-hypervisor.service" /etc/systemd/system/netbox-discovery-hypervisor.service
-install -m 0644 "$TARGET/systemd/netbox-discovery-hypervisor.timer" /etc/systemd/system/netbox-discovery-hypervisor.timer
-systemctl daemon-reload
-# Safety: installer never enables or starts the timer.
+for unit in \
+  netbox-discovery.service \
+  netbox-discovery.timer \
+  netbox-discovery-hypervisor.service \
+  netbox-discovery-hypervisor.timer \
+  netbox-discovery-update.service \
+  netbox-discovery-update.timer; do
+  install -m 0644 "$TARGET/systemd/$unit" "/etc/systemd/system/$unit"
+done
 
-/usr/bin/python3 -m py_compile \
-  "$TARGET/lib/config.py" \
-  "$TARGET/lib/netbox.py" \
-  "$TARGET/modules/discovery/network.py" \
-  "$TARGET/modules/inventory/classifier.py" \
-  "$TARGET/modules/inventory/reconciler.py" \
-  "$TARGET/modules/inventory/planner.py" \
-  "$TARGET/modules/inventory/pipeline.py" \
-  "$TARGET/modules/importers/importer.py" \
-  "$TARGET/modules/auditors/inventory.py" \
-  "$TARGET/modules/product/configurator.py" \
-  "$TARGET/modules/product/runner.py" \
-  "$TARGET/modules/product/status.py" \
-  "$TARGET/modules/hypervisor/config.py" \
-  "$TARGET/modules/hypervisor/collectors.py" \
-  "$TARGET/modules/hypervisor/engine.py" \
-  "$TARGET/modules/hypervisor/configurator.py" \
-  "$TARGET/modules/hypervisor/checker.py" \
-  "$TARGET/modules/hypervisor/runner.py" \
-  "$TARGET/modules/hypervisor/status.py"
+systemctl daemon-reload
+
+# Product policy: stable auto-update is on by default. Network and Hypervisor
+# automation remain opt-in.
+systemctl enable --now netbox-discovery-update.timer
+
+/usr/bin/python3 "$TARGET/modules/product/selftest.py" --base "$TARGET"
 
 printf '\nNETBOX-DISCOVERY PRODUCT V1 INSTALADO\n'
 printf 'Versão: %s\n' "$(cat "$TARGET/VERSION")"
 printf 'Backup: %s\n' "$BACKUP"
+printf 'Auto-update stable: HABILITADO\n'
 printf 'Schedulers network/hypervisor: NÃO HABILITADOS pelo instalador\n'
 
 if [[ -f "$TARGET/config.yml" ]]; then
