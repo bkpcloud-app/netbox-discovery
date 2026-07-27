@@ -1,12 +1,15 @@
 # netbox-discovery
 
-Produto BKPCLOUD para inventário de infraestrutura no NetBox.
+Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.9.1 — PRODUCT V1  
+**Versão atual:** 1.10.1 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
-**Canal padrão:** `stable`
+**Canal padrão:** `stable`  
+**NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
 
-## Dois pipelines independentes
+> A documentação faz parte da release. A partir da 1.10.1 o self-test e o CI bloqueiam publicação quando a versão dos documentos obrigatórios diverge do `VERSION`.
+
+## Pipelines independentes
 
 ### Rede
 
@@ -22,11 +25,16 @@ netbox-discovery run --apply
 DISCOVER → CLASSIFY → RECONCILE → PLAN → IMPORT → AUDIT
 ```
 
-A V1.9.0 adiciona identidade física por MAC de gerenciamento. Quando possível, o produto correlaciona IP → SNMP ifIndex → MAC; o MAC observado diretamente em L2 é fallback. MACs secundários continuam como evidência e não são usados sozinhos para fundir Devices.
+Principais características:
 
-O pipeline de rede persiste o MAC de gerenciamento no NetBox e pode reencontrar o mesmo Device pelo MAC quando o IP muda, mantendo as proteções de conflito antes da escrita.
-
-A classificação também melhora impressoras e adiciona reconhecimento conservador de equipamentos Topdata/Inner. OUI/fabricante sozinho não determina a função. Evidência adicional pode classificar `TIME_ATTENDANCE`, `ACCESS_CONTROL` ou `TURNSTILE`.
+- dry-run por padrão;
+- identidade física por serial/MAC/IP e outras evidências;
+- `management_mac` preferencialmente por IP → SNMP ifIndex → MAC;
+- MACs secundários são evidência, não identidade forte isolada;
+- classificação conservadora de impressoras, Topdata/Inner e outros ativos;
+- `READY` pode escrever; `REVIEW` e `BLOCKED` não escrevem;
+- preflight antes da primeira escrita;
+- sem DELETE automático.
 
 ### Hypervisor
 
@@ -41,22 +49,77 @@ netbox-discovery hypervisor status
 Conectores:
 
 - VMware vCenter ou ESXi standalone;
-- Proxmox VE (API Token preferencial ou usuário/senha);
+- Proxmox VE;
 - Microsoft Hyper-V via WinRM/NTLM.
 
-O pipeline Hypervisor é independente do discovery de rede. Não existe `full-run`. A recomendação operacional é executar Hypervisor primeiro e Rede depois, em agendas separadas.
-
-## NetBox fixo BKPCLOUD
-
-O produto usa somente:
+Desde a 1.10.0 cada source possui um **modo de inventário**:
 
 ```text
-https://inventory.bkpcloud.app.br:8080
+1 - single_site
+    Todos os hosts/VMs pertencem ao Tenant/Site principal desta instalação.
+
+2 - multi_site
+    O hypervisor atende vários Sites do mesmo Tenant.
+
+3 - multi_tenant
+    O hypervisor atende vários Tenants e Sites.
 ```
 
-`init`/`configure` não perguntam a URL. Uma URL diferente no `config.yml` é rejeitada em runtime.
+Nos modos `multi_site` e `multi_tenant`, o configurador:
 
-## Instalação em Proxy zerado
+1. conecta no hypervisor;
+2. coleta os hosts;
+3. agrupa hosts pela rede de gerenciamento;
+4. pede o mapeamento da rede para Tenant/Site;
+5. cria ou reutiliza Tenant Group, Tenant e Site no NetBox quando autorizado;
+6. salva o mapeamento na source.
+
+No runtime:
+
+- o Host é resolvido pela rede de gerenciamento;
+- a VM herda o contexto Tenant/Site do Host onde está rodando;
+- IP da VM é somente fallback quando o Host não resolve o contexto;
+- sem mapeamento confiável o objeto vira `REVIEW`;
+- serial/UUID já existente fora do contexto alvo vira `REVIEW` para reclassificação/migração, nunca CREATE duplicado;
+- o pipeline Hypervisor não executa DELETE automático.
+
+Sources criadas antes da 1.10 permanecem em `single_site` por compatibilidade até serem editadas no configurador.
+
+## Estrutura Tenant/Site
+
+O produto é genérico. **Não existe hardcode de cliente como `MIZU → POLIMIX`.**
+
+No `init`, a relação é a informada na configuração:
+
+```text
+Tenant Group [opcional]
+└── Tenant
+    └── Site
+```
+
+No modo Hypervisor multi-contexto, os mapeamentos podem apontar para vários Tenants/Sites e o produto cria/reutiliza a estrutura de forma idempotente. Vínculos conflitantes são bloqueados; não são sobrescritos silenciosamente.
+
+## Segurança operacional
+
+```text
+run sem --apply             = leitura/PLAN, sem escrita de inventário
+hypervisor run sem --apply  = leitura/PLAN, sem escrita de inventário
+--apply                      = escrita somente de READY
+REVIEW                       = não escreve
+BLOCKED                      = não escreve
+```
+
+Outras proteções:
+
+- Network, Hypervisor e Update compartilham lock global;
+- GETs podem receber retry seguro; POST/PATCH não recebem retry cego;
+- APPLY Hypervisor mantém journal das escritas concluídas;
+- credenciais Hypervisor ficam em arquivo root-only `0600`;
+- scheduler de Network e Hypervisor é opt-in;
+- auto-update `stable` é habilitado por padrão com backup, validação e rollback;
+- nenhuma rotina Hypervisor executa DELETE automático.
+
+## Instalação em Proxy novo
 
 Como `root`:
 
@@ -74,38 +137,26 @@ curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/stabl
 '
 ```
 
-O instalador valida o pacote antes de substituir o produto e preserva a configuração existente.
+O instalador preserva a configuração existente durante upgrades e não habilita os schedulers Network/Hypervisor.
 
-Política padrão após instalação:
-
-```text
-Auto-update stable: ENABLED
-Network scheduler: DISABLED
-Hypervisor scheduler: DISABLED
-```
-
-O auto-update verifica o canal `stable`, bloqueia downgrade, não roda junto com Network/Hypervisor, valida a nova versão antes e depois da troca e executa rollback em caso de falha. Uma versão que falhou fica em quarentena para não ser reinstalada automaticamente todos os dias.
-
-## Primeiro uso de um site
+## Primeiro uso
 
 ```bash
 netbox-discovery init
 netbox-discovery check
 ```
 
-A partir da V1.9.1, `init` não apenas salva a configuração local: ele garante no NetBox o Tenant e o Site configurados. Relações de Tenant Group conhecidas pelo produto também são garantidas de forma idempotente; para `MIZU`, a estrutura conhecida é `POLIMIX → MIZU → Site`. Objetos ausentes são criados, vínculos vazios são preenchidos e vínculos conflitantes são bloqueados em vez de sobrescritos silenciosamente.
-
-Para ambientes virtualizados, prepare primeiro a base de virtualização:
+Quando existir virtualização:
 
 ```bash
 netbox-discovery hypervisor configure
 netbox-discovery hypervisor check
 netbox-discovery hypervisor run
-# revisar PLAN
+# revisar PLAN antes de qualquer escrita
 netbox-discovery hypervisor run --apply
 ```
 
-Depois execute o inventário de rede:
+Depois, se desejado, execute o pipeline de rede:
 
 ```bash
 netbox-discovery run
@@ -113,9 +164,12 @@ netbox-discovery run
 netbox-discovery run --apply
 ```
 
-## Operação e saúde
+Não existe `full-run`. Os pipelines são deliberadamente separados.
+
+## Operação
 
 ```bash
+netbox-discovery version
 netbox-discovery status
 netbox-discovery self-test
 netbox-discovery health
@@ -125,45 +179,39 @@ netbox-discovery update status
 netbox-discovery update check
 netbox-discovery update run
 netbox-discovery update scheduler status
+
+netbox-discovery hypervisor check
+netbox-discovery hypervisor run
+netbox-discovery hypervisor status
 ```
 
-`health --json` foi criado para integração simples com monitoramento, inclusive Zabbix.
-
-## Segurança operacional
-
-- `run` e `hypervisor run` sem `--apply` não gravam no NetBox;
-- `REVIEW` e `BLOCKED` não entram na escrita automática;
-- os pipelines replanejam antes da primeira escrita;
-- IPs e MACs conflitantes são protegidos;
-- reexecução é idempotente e o AUDIT V1.9.0 também valida o MAC persistido;
-- nomes existentes de Devices/VMs e interfaces vinculadas são preservados;
-- o pipeline Hypervisor nunca executa DELETE automático;
-- Network, Hypervisor e Update compartilham lock global e não executam simultaneamente;
-- retry automático é aplicado somente a leituras GET seguras da API NetBox;
-- falha parcial de APPLY Hypervisor gera journal das escritas concluídas;
-- `init` não sobrescreve vínculos conflitantes de Tenant Group/Tenant/Site;
-- Network e Hypervisor schedulers continuam opt-in;
-- auto-update `stable` é habilitado por padrão.
-
-## Credenciais
-
-Configuração principal:
+## Caminhos
 
 ```text
-/opt/netbox-discovery/config.yml
+Aplicação:              /opt/netbox-discovery
+Configuração principal: /opt/netbox-discovery/config.yml
+Config Hypervisor:      /etc/netbox-discovery/hypervisors.json
+Dependências isoladas:  /opt/netbox-discovery/vendor
+Config por Site:        /opt/netbox-discovery/config/sites/
+Relatórios:             /opt/netbox-discovery/reports
+Backups:                /opt/netbox-discovery/backups
 ```
 
-Credenciais/sources Hypervisor:
+## Estado de homologação
 
-```text
-/etc/netbox-discovery/hypervisors.json
-```
+**CI verde não significa automaticamente homologação ao vivo.**
 
-O arquivo Hypervisor é exigido com permissão `0600` e proprietário `root` quando executado como root. Segredos nunca devem ser versionados.
+A matriz oficial do que foi realmente testado em produção/laboratório está em:
 
-## Documentação
+- `docs/HOMOLOGACAO.md`
 
+No momento da release 1.10.1, o runtime multi-Tenant/multi-Site da 1.10 passou CI/regressões, mas ainda precisa ser homologado ao vivo no DCM antes de habilitar APPLY multi-contexto.
+
+## Documentação obrigatória
+
+- `README.md`
 - `docs/MANUAL.md`
 - `docs/COMANDOS-RAPIDOS.md`
+- `docs/HOMOLOGACAO.md`
 - `RELEASE-NOTES.md`
 - `SECURITY.md`

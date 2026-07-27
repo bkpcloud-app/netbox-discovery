@@ -12,6 +12,31 @@ import sys
 DEFAULT_BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 
 
+def _check_release_docs(package_root, version, errors):
+    if not package_root or not version:
+        return
+    expected = [
+        ("README.md", "**Versão atual:** {0}".format(version)),
+        ("docs/MANUAL.md", "**Versão:** {0}".format(version)),
+        ("docs/COMANDOS-RAPIDOS.md", "# netbox-discovery {0}".format(version)),
+        ("docs/HOMOLOGACAO.md", "# netbox-discovery {0}".format(version)),
+        ("RELEASE-NOTES.md", "## V{0}".format(version)),
+        ("SECURITY.md", "**Versão da política:** {0}".format(version)),
+    ]
+    for rel, marker in expected:
+        path = os.path.join(package_root, rel)
+        if not os.path.isfile(path):
+            errors.append("documentação obrigatória ausente: {0}".format(rel))
+            continue
+        try:
+            text = open(path, "r").read()
+        except Exception as exc:
+            errors.append("documentação ilegível {0}: {1}".format(rel, exc))
+            continue
+        if marker not in text:
+            errors.append("documentação fora da versão {0}: {1} (esperado marcador: {2})".format(version, rel, marker))
+
+
 def check(base, package_root=""):
     errors = []
     required = [
@@ -48,6 +73,7 @@ def check(base, package_root=""):
             errors.append("VERSION raiz ilegível: {0}".format(exc))
         if root_version and version and root_version != version:
             errors.append("VERSION divergente: raiz={0} pacote={1}".format(root_version, version))
+        _check_release_docs(package_root, version, errors)
 
     for root, dirs, files in os.walk(base):
         dirs[:] = [d for d in dirs if d not in ("vendor", "reports", "logs", "cache", "backups", "__pycache__")]
