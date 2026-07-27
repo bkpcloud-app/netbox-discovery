@@ -110,7 +110,7 @@ def test_hypervisor_collector_is_loaded_after_vendor():
 def test_hypervisor_plan_issues_are_visible():
     from modules.hypervisor import runner
     plan={"records":[
-        {"decision":"READY","object_type":"VM","desired_name":"OK","action":"CREATE","reason":"ok"},
+        {"decision":"READY","object_type":"VM","desired_name":"OK","action":"CREATE","reason":"ok","target_tenant":"MIZU","target_site":"DCM"},
         {"decision":"READY","object_type":"VM","desired_name":"VM-RESIDUAL","action":"UPDATE_SAFE","reason":"serial/IP","pending_reason":"campos pendentes: primary_ip4"},
         {"decision":"REVIEW","object_type":"VM","desired_name":"VM-DUP","action":"UPDATE_SAFE","reason":"IP duplicado"},
         {"decision":"BLOCKED","object_type":"HOST","desired_name":"ESX01","action":"NOOP","reason":"conflito"},
@@ -119,7 +119,8 @@ def test_hypervisor_plan_issues_are_visible():
     assert "VM-DUP" in text and "IP duplicado" in text
     assert "ESX01" in text and "conflito" in text
     assert "VM-RESIDUAL" in text and "primary_ip4" in text
-    assert "OK" not in text and "PENDÊNCIAS TOTAIS: 2" in text and "AJUSTES PENDENTES: 1" in text
+    assert "OK" in text and "HYPERVISOR NOVOS OBJETOS READY" in text and "NOVOS OBJETOS READY: 1" in text
+    assert "PENDÊNCIAS TOTAIS: 2" in text and "AJUSTES PENDENTES: 1" in text
 
 
 def test_hypervisor_secondary_bridge_ip_is_not_authoritative():
