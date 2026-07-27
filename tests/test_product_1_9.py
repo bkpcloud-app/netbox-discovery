@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import hashlib
+import json
 import os
 import shutil
 import sys
@@ -110,13 +111,15 @@ def test_hypervisor_plan_issues_are_visible():
     from modules.hypervisor import runner
     plan={"records":[
         {"decision":"READY","object_type":"VM","desired_name":"OK","action":"CREATE","reason":"ok"},
-        {"decision":"REVIEW","object_type":"VM","desired_name":"VM-DUP","action":"CREATE","reason":"IP duplicado"},
+        {"decision":"READY","object_type":"VM","desired_name":"VM-RESIDUAL","action":"UPDATE_SAFE","reason":"serial/IP","pending_reason":"campos pendentes: primary_ip4"},
+        {"decision":"REVIEW","object_type":"VM","desired_name":"VM-DUP","action":"UPDATE_SAFE","reason":"IP duplicado"},
         {"decision":"BLOCKED","object_type":"HOST","desired_name":"ESX01","action":"NOOP","reason":"conflito"},
     ]}
     text="\n".join(runner.plan_issue_lines(plan))
     assert "VM-DUP" in text and "IP duplicado" in text
     assert "ESX01" in text and "conflito" in text
-    assert "OK" not in text and "PENDÊNCIAS TOTAIS: 2" in text
+    assert "VM-RESIDUAL" in text and "primary_ip4" in text
+    assert "OK" not in text and "PENDÊNCIAS TOTAIS: 2" in text and "AJUSTES PENDENTES: 1" in text
 
 
 def test_hypervisor_secondary_bridge_ip_is_not_authoritative():
@@ -148,6 +151,10 @@ def test_hypervisor_apply_and_audit_force_v2_planner_and_client():
     old_nb = engine_v2.NetBox
     dummy = object()
     seen = {}
+    tmp = tempfile.mkdtemp(prefix="nd-audit-")
+    audit_path = os.path.join(tmp, "audit.json")
+    with open(audit_path, "w") as handle:
+        json.dump({"checks": [], "post_plan": ""}, handle)
 
     def fake_apply(discovery, plan, nb=None):
         seen["apply_planner"] = base.build_plan is engine_v2.build_plan
@@ -157,14 +164,14 @@ def test_hypervisor_apply_and_audit_force_v2_planner_and_client():
     def fake_audit(discovery, plan, nb=None):
         seen["audit_planner"] = base.build_plan is engine_v2.build_plan
         seen["audit_nb"] = nb
-        return "PASS", "audit.json"
+        return "PASS", audit_path
 
     try:
         base.apply_plan = fake_apply
         base.audit = fake_audit
         engine_v2.NetBox = lambda: dummy
         assert engine_v2.apply_plan({}, {}) == "import.json"
-        assert engine_v2.audit({}, {}) == ("PASS", "audit.json")
+        assert engine_v2.audit({}, {}) == ("PASS", audit_path)
         assert seen["apply_planner"] and seen["audit_planner"]
         assert seen["apply_nb"] is dummy and seen["audit_nb"] is dummy
         assert base.build_plan is old_build
@@ -173,17 +180,42 @@ def test_hypervisor_apply_and_audit_force_v2_planner_and_client():
         base.audit = old_audit
         base.build_plan = old_build
         engine_v2.NetBox = old_nb
+        shutil.rmtree(tmp)
+
+
+def test_hypervisor_audit_details_are_visible():
+    from modules.hypervisor import engine_v2
+    tmp = tempfile.mkdtemp(prefix="nd-audit-lines-")
+    try:
+        post = os.path.join(tmp, "post.json")
+        audit = os.path.join(tmp, "audit.json")
+        with open(post, "w") as handle:
+            json.dump({"records":[
+                {"asset_id":"A1","object_type":"VM","desired_name":"VM-FAIL","decision":"REVIEW","action":"UPDATE_SAFE","reason":"IP já pertence a outra VM"},
+                {"asset_id":"A2","object_type":"HOST","desired_name":"ESX-WARN","decision":"READY","action":"UPDATE_SAFE","reason":"serial/IP","pending_reason":"campos pendentes: cluster"},
+            ]}, handle)
+        with open(audit, "w") as handle:
+            json.dump({"post_plan":post,"checks":[
+                {"asset_id":"A1","status":"FAIL","detail":"IP já pertence a outra VM"},
+                {"asset_id":"A2","status":"WARN","detail":"ação residual: UPDATE_SAFE"},
+            ]}, handle)
+        text="\n".join(engine_v2.audit_detail_lines(audit))
+        assert "VM-FAIL" in text and "IP já pertence" in text
+        assert "ESX-WARN" in text and "campos pendentes: cluster" in text
+        assert "AUDIT PENDÊNCIAS: 2" in text
+    finally:
+        shutil.rmtree(tmp)
 
 
 def test_versions():
     root_version=open(os.path.join(ROOT,"VERSION"),"r").read().strip()
     package_version=open(os.path.join(BASE,"VERSION"),"r").read().strip()
-    assert root_version==package_version=="1.9.7"
-    assert updater.version_key("1.9.7")>updater.version_key("1.9.6")
+    assert root_version==package_version=="1.9.8"
+    assert updater.version_key("1.9.8")>updater.version_key("1.9.7")
 
 
 def main():
-    tests=[test_management_mac,test_secondary_mac_not_identity,test_topdata_rules,test_printer_vendor_normalization,test_plan_mac_match,test_import_refreshes_planner_v2,test_explicit_tenant_group_policy,test_vmware_dependency_set_is_minimal,test_hypervisor_collector_is_loaded_after_vendor,test_hypervisor_plan_issues_are_visible,test_hypervisor_secondary_bridge_ip_is_not_authoritative,test_hypervisor_apply_and_audit_force_v2_planner_and_client,test_versions]
+    tests=[test_management_mac,test_secondary_mac_not_identity,test_topdata_rules,test_printer_vendor_normalization,test_plan_mac_match,test_import_refreshes_planner_v2,test_explicit_tenant_group_policy,test_vmware_dependency_set_is_minimal,test_hypervisor_collector_is_loaded_after_vendor,test_hypervisor_plan_issues_are_visible,test_hypervisor_secondary_bridge_ip_is_not_authoritative,test_hypervisor_apply_and_audit_force_v2_planner_and_client,test_hypervisor_audit_details_are_visible,test_versions]
     for test in tests:
         test(); print("PASS",test.__name__)
     print("ALL TESTS PASSED")
