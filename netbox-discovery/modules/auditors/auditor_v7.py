@@ -5,6 +5,7 @@ from __future__ import print_function
 import copy
 import glob
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -22,6 +23,13 @@ REPORTS = v6.REPORTS
 
 def clean(value):
     return "" if value is None else str(value).strip()
+
+
+def norm_mac(value):
+    compact = re.sub(r"[^0-9A-Fa-f]", "", clean(value)).upper()
+    if len(compact) != 12 or compact in ("000000000000", "FFFFFFFFFFFF"):
+        return ""
+    return ":".join(compact[pos:pos + 2] for pos in range(0, 12, 2))
 
 
 def nested_id(value):
@@ -56,14 +64,14 @@ def generate_fresh_plan():
 def _resolve_created_interface(nb, row):
     repair = row.get("repair") or {}
     vm_id = repair.get("vm_id")
-    mac = v4.base.norm_mac(repair.get("vm_mac_address"))
+    mac = norm_mac(repair.get("vm_mac_address"))
     if not vm_id or not mac:
         return None, None, "repair sem VM/MAC válido"
 
     mac_rows = v4.base.query(nb, "dcim/mac-addresses/", limit=10000)
     matches = [
         item for item in mac_rows
-        if v4.base.norm_mac(item.get("mac_address") or item.get("mac")) == mac
+        if norm_mac(item.get("mac_address") or item.get("mac")) == mac
     ]
     if len(matches) != 1:
         return None, None, "MAC {0}; rows={1}".format(mac, len(matches))
@@ -134,9 +142,6 @@ def main(argv=None):
                 clean(mac_row.get("mac_address") or mac_row.get("mac")), interface.get("id")))
 
     try:
-        # auditor_v6.main injects its own globals into auditor_v5. Patch the
-        # v6 globals themselves so the combined audit uses PLAN V7 and records
-        # the 1.10.17 auditor version.
         v6.generate_fresh_plan = generate_fresh_plan
         v6.AUDITOR_VERSION = AUDITOR_VERSION
         v4._repair_checks = repair_checks
