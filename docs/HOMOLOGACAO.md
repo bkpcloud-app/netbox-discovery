@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.17 — Matriz de Homologação
+# netbox-discovery 1.10.18 — Matriz de Homologação
 
 ## Estados
 
@@ -30,147 +30,87 @@ COMPARE STATUS: OK
 ownership por IP → DELEGATED
 Dell N2024/PCT7024/S4128F-ON → NETWORK_SWITCH/HIGH
 VM por nome único → DELEGATED
-Device físico + VM → BLOCKED
-precedência de ownership por IP → DELEGATED preservado
 Dell MD3200BKP .56/.57 → 1 STORAGE com MGMT + MGMT-2
 preflight global base → PASS
 IMPORT normal → PASS
 MAC RECONCILE de Devices → PASS
 ```
 
-## APPLY real da 1.10.14 — MD3200BKP
+## APPLY real da 1.10.17 — 28/07/2026, Site DCM
 
-**Estado:** LIVE PASS.
-
-```text
-10.1.1.56 + 10.1.1.57
-role=STORAGE
-model=PowerVault MD32xx
-READY/CREATE inicial: 1
-READY/CREATE posterior: 0
-```
-
-## APPLY real da 1.10.15 — ME5024 e audit
-
-**Estado:** LIVE PASS com warnings não destrutivos.
+### PLAN
 
 ```text
-MAC RECONCILE: PASS
-Assets FAIL: 0
-Checks FAIL: 0
-Status: PASS_WITH_WARNINGS
-```
-
-O erro anterior `MAC_MISSING | ME5024 | 00:C0:FF:66:B4:BF` foi eliminado.
-
-Warnings preservados:
-
-```text
-nomes live dos hosts VMware
-Dell Inc. versus Dell no fabricante
-nome live ME4024-10-1-1-52 preservado
-```
-
-## APPLY real da 1.10.16 — resultado
-
-Executado em 28/07/2026 no Site DCM.
-
-### Plano
-
-```text
-Planner: 4.6-product
+Planner: 4.7-product
 READY/CREATE: 0
 READY/UPDATE_SAFE: 0
-READY/REPAIR_SAFE: 0
+READY/REPAIR_SAFE: 1
 DELEGATED/HYPERVISOR: 42
 REVIEW: 1
-BLOCKED: 1
+BLOCKED: 0
 ```
 
-### Safety
+### SRV-AE11 — parte validada
 
-**Estado:** LIVE PASS para bloqueio conservador.
+**Estado:** LIVE PARTIAL.
 
-O produto confirmou:
-
-```text
-SRV-AE11
-VM única por nome: ID 359
-MAC VMware forte: 00:50:56:9F:9E:70
-Device duplicado criado pelo produto
-Interfaces cadastradas na VM: 0
-```
-
-E bloqueou sem tentar adivinhar uma interface:
+A 1.10.17 validou ao vivo:
 
 ```text
-REPAIR_SAFE_NOT_ELIGIBLE:
-Fallback de interface única exige exatamente uma interface na VM: 0
-
-Reparos seguros concluídos: 0
-```
-
-### Import/Audit 1.10.16
-
-**Estado:** LIVE PASS para o conjunto normal.
-
-```text
+Device ID 324
+VM ID 359
+interface MGMT criada na VM
+MAC 00:50:56:9F:9E:70 criado/atribuído
+primary_mac_address da interface definido
 PREFLIGHT GLOBAL FINALIZE: OK
-Assets READY processados: 13
-Runtime blocked: 0
-Erros: 0
+IMPORT normal: 12/12
 MAC RECONCILE: PASS
-Assets FAIL: 0
-Checks FAIL: 0
-Status: PASS_WITH_WARNINGS
 ```
 
-O `SRV-AE11` permaneceu `BLOCKED`; portanto não foi alterado.
+A transferência do IP foi bloqueada pelo próprio NetBox:
 
-## 1.10.17 — criar interface ausente e concluir SRV-AE11
+```text
+HTTP 400
+Cannot reassign IP address while it is designated as the primary IP for the parent object
+```
+
+Resultado seguro:
+
+```text
+VM preservada
+interface MGMT preservada
+MAC VMware preservado
+IP 10.1.1.111/24 permaneceu no Device
+Device 324 permaneceu existente
+nenhum DELETE do Device ocorreu
+```
+
+A causa confirmada foi ordem de operação: o IP ainda era `primary_ip4` do Device quando o PATCH tentou reatribuí-lo à VM interface.
+
+## 1.10.18 — correção da ordem primary IP → reassignment
 
 **Estado:** NOT LIVE até a execução final.
 
-O PLAN V7 só promove o reparo quando:
+A nova ordem é:
 
 ```text
-VM única por nome
-+ zero interfaces live
-+ exatamente um MAC VMware forte
-+ MAC ausente ou sem vínculo
-+ MAC não duplicado e sem outro owner
-+ Device/IP/interfaces integralmente criados pelo produto
-+ exatamente um IP no Device duplicado
-+ VM sem outro primary IPv4
+revalidar reparo
+→ confirmar primary/oob vazio ou igual ao IP alvo
+→ limpar primary_ip4/primary_ip6/oob_ip do Device
+→ mover IP para virtualization.vminterface
+→ definir primary_ip4 da VM
+→ remover somente o Device duplicado
+→ auditar
 ```
 
-Fluxo esperado:
+Proteção adicional:
 
 ```text
-READY/REPAIR_SAFE: 1
-→ criar virtualization.vminterface MGMT na VM ID 359
-→ criar/atribuir 00:50:56:9F:9E:70
-→ definir primary MAC da interface
-→ mover 10.1.1.111 para a interface da VM
-→ definir primary IPv4 da VM se vazio
-→ remover somente o Device SRV-AE11 duplicado
-→ preservar a VM
+primary/oob apontando para outro IP
+→ BLOCKED antes do IP move e antes do DELETE
 ```
 
-O audit V7 deve comprovar:
-
-```text
-REPAIR_VM_INTERFACE_CREATED_OK
-REPAIR_VM_MAC_OK
-REPAIR_DUPLICATE_DEVICE_REMOVED
-REPAIR_IP_ON_VM
-REPAIR_VM_PRIMARY_IP_OK
-REPAIR_IDEMPOTENCY_DELEGATED
-Assets FAIL: 0
-Checks FAIL: 0
-```
-
-## Única validação live da 1.10.17
+## Única validação live da 1.10.18
 
 ```bash
 netbox-discovery update run
@@ -181,23 +121,24 @@ netbox-discovery run --apply
 Critério de conclusão:
 
 ```text
-Versão: 1.10.17
+Versão: 1.10.18
 Planner: 4.7-product
 READY/REPAIR_SAFE: 1 antes da escrita
 PREFLIGHT GLOBAL FINALIZE: OK
+PRIMARY_IP_CLEARED_BEFORE_MOVE
 Reparos seguros concluídos: 1
-SRV-AE11 não existe mais como dcim.device
+Device ID 324 ausente
 VM ID 359 preservada
-10.1.1.111 pertence à virtualization.vminterface criada
+uma única interface MGMT na VM
+MAC 00:50:56:9F:9E:70 único nessa interface
+IP 10.1.1.111/24 atribuído à virtualization.vminterface
+VM primary IPv4 correto
 novo PLAN: SRV-AE11 DELEGATED/NOOP
-READY/CREATE: 0
-READY/UPDATE_SAFE: 0
-READY/REPAIR_SAFE: 0 no plano pós-reparo
 Assets FAIL: 0
 Checks FAIL: 0
 ```
 
-O `10.1.1.54` pode continuar `REVIEW` sem impedir a conclusão.
+O `10.1.1.54` pode continuar `REVIEW`.
 
 ## Schedulers
 
