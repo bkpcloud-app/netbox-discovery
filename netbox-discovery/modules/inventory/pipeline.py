@@ -13,7 +13,7 @@ from collections import Counter
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 HERE = os.path.dirname(os.path.abspath(__file__))
-PIPELINE_VERSION = "2.5-product"
+PIPELINE_VERSION = "2.6-product"
 
 
 def latest(pattern):
@@ -175,7 +175,7 @@ def main(argv=None):
 
     classifier = os.path.join(HERE, "classifier_v5.py")
     reconciler = os.path.join(HERE, "reconciler_v5.py")
-    planner = os.path.join(HERE, "planner_v4.py")
+    planner = os.path.join(HERE, "planner_v5.py")
 
     cmd = [sys.executable, classifier, "--output-dir", args.output_dir]
     if args.input:
@@ -206,7 +206,7 @@ def main(argv=None):
     print("Pipeline version: {0}".format(PIPELINE_VERSION))
     print("CLASSIFY V5: OK")
     print("RECONCILE V5: OK")
-    print("PLAN V4: OK")
+    print("PLAN V5: OK")
     print("NetBox write: NÃO")
     return 0
 
