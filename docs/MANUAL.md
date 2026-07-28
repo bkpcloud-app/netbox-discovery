@@ -1,23 +1,19 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.10.13 — PRODUCT V1  
+**Versão:** 1.10.14 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
 
 > `CI PASS` não equivale a `LIVE PASS`. Estado real em `docs/HOMOLOGACAO.md`.
 
-## 1. Pipeline Network
+## 1. Execução Network
 
 Dry-run:
 
 ```bash
 netbox-discovery run
-```
-
-```text
-DISCOVER → CLASSIFY → RECONCILE → PLAN
 ```
 
 Escrita explícita:
@@ -26,205 +22,188 @@ Escrita explícita:
 netbox-discovery run --apply
 ```
 
+Fluxo 1.10.14:
+
 ```text
-DISCOVER → CLASSIFY → RECONCILE → PLAN → IMPORT READY → AUDIT
+DISCOVER
+→ CLASSIFY V5
+→ RECONCILE V5
+→ PLAN V4
+→ PREFLIGHT GLOBAL FINALIZE
+→ IMPORT normal
+→ REPAIR_SAFE
+→ AUDIT FINALIZE
 ```
 
-## 2. Decisões Network
+## 2. Decisões
 
-| Decisão | Significado | Escrita |
+| Decisão/Ação | Significado | Escrita |
 |---|---|---|
-| `READY` | evidência suficiente | somente com `--apply` |
-| `DELEGATED` | ownership de outro pipeline | não |
-| `REVIEW` | precisa revisão | não |
+| `READY/CREATE` | novo Device físico validado | somente com `--apply` |
+| `READY/UPDATE_SAFE` | complemento seguro | somente com `--apply` |
+| `READY/REPAIR_SAFE_VM_DUPLICATE` | corrige Device duplicado criado pelo produto | somente após preflight global |
+| `READY/NOOP` | inventário já convergente | não altera |
+| `DELEGATED` | ownership do Hypervisor | não |
+| `REVIEW` | evidência insuficiente | não |
 | `BLOCKED` | conflito forte | não |
 
-Ações usuais: `CREATE`, `UPDATE_SAFE`, `NOOP`, `CONFLICT`.
+## 3. Dell PowerVault MD32xx
 
-## 3. Identidade anti-flap — 1.10.12+
-
-Uma coleta pode perder temporariamente uma evidência que apareceu na coleta anterior. Isso não deve mudar a natureza do asset.
-
-Exemplo real do DCM:
+Identificação:
 
 ```text
-SRV-AE11
-coleta anterior: MAC VMware 00:50:56:9F:9E:70
-→ VIRTUAL_MACHINE_CANDIDATE
-
-coleta seguinte: MAC não observado
-→ NÃO pode virar Device físico automaticamente
+sysObjectID = .1.3.6.1.4.1.674.10893.2.31
 ```
 
-Outro exemplo:
+Dois endpoints viram um único asset somente quando:
+
+1. existem exatamente dois registros;
+2. ambos têm o mesmo `sysObjectID` exato;
+3. ambos têm o mesmo `sysName` não genérico;
+4. ambos estão `STORAGE/HIGH`;
+5. não há serial conflitante;
+6. os IPs são consecutivos.
+
+Resultado:
 
 ```text
-ME4024 controller
-coleta anterior: FA-MIB + serial do array
-coleta seguinte: FA-MIB sem resposta
-→ identidade STORAGE não deve desaparecer
+Device STORAGE
+├─ MGMT
+└─ MGMT-2
 ```
 
-A 1.10.12+ consulta classificações recentes do mesmo Site/IP, por até 48 horas, e retém somente evidência forte:
+Não existe merge por nome isolado.
 
-- `VIRTUAL_MACHINE_CANDIDATE` com OUI VMware;
-- storage com serial válido e/ou `connUnitId` válido.
+## 4. Reparo seguro de Device duplicado de VM
 
-Regras de segurança:
+A ação `REPAIR_SAFE_VM_DUPLICATE` exige simultaneamente:
 
-- hardware físico forte atual vence histórico VMware;
-- serial atual diferente do histórico gera conflito;
-- FA ID atual diferente do histórico gera conflito;
-- `connUnitId` todo zero é inválido;
-- MAC VMware histórico não é copiado para a interface atual; serve apenas para decisão de ownership;
-- ausência transitória não vira evidência negativa.
+- uma única VM pelo nome;
+- uma única interface da VM pelo MAC VMware;
+- Device criado pelo produto;
+- descrições originais do produto no Device, interface e IP;
+- ausência de serial e vínculos manuais;
+- ausência de objetos de inventário, console, energia, front/rear ports e bays;
+- ausência de cabo;
+- um único IP e uma única interface alvo;
+- VM sem outro primary IPv4.
 
-O terminal informa:
+A execução faz:
 
 ```text
-Anti-flap: identidade forte preservada de <arquivo anterior>
-VMware MAC histórico: 00:50:56:...
+1. move o IP para virtualization.vminterface
+2. define primary_ip4 da VM se estiver vazio
+3. limpa primary/oob do Device duplicado
+4. remove somente MACs criados pelo produto nesse Device
+5. remove somente o Device duplicado criado pelo produto
 ```
 
-## 4. Cross-pipeline Network ↔ Hypervisor — 1.10.12+
+A VM não é removida. Qualquer diferença live bloqueia o reparo.
 
-O planner consulta as VMs do mesmo Tenant/Site.
+## 5. Preflight global
 
-Quando o Network encontra um asset com evidência VMware e existe exatamente uma VM com o mesmo nome:
+Antes da primeira escrita:
 
 ```text
-VM candidate
-+ nome único no inventário VM
-→ DELEGATED
-→ NOOP
-→ nenhuma criação física
+recalcula PLAN V4
+→ valida todos os READY normais
+→ valida todos os REPAIR_SAFE
+→ relê Device, VM, interfaces, IPs, MACs e relacionamentos
+→ cria REPAIR_JOURNAL
+→ somente então escreve
 ```
 
-Se um `dcim.device` já existir para esse asset:
+Falha:
 
 ```text
-BLOCKED
-PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM:<id>
+PREFLIGHT GLOBAL FINALIZE: BLOQUEADO
+NetBox write: NÃO
 ```
 
-Nenhuma remoção é feita automaticamente. O conflito precisa ser tratado pelo fluxo do produto.
+## 6. Recuperação de falha parcial
 
-Sem VM por nome e sem Device físico:
+Se o IP já tiver sido movido, mas o Device ainda existir:
 
 ```text
-REVIEW
-VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
+RECOVERY_AFTER_IP_MOVE
 ```
 
-### 4.1 Precedência de ownership por IP — 1.10.13
+A próxima execução faz novo preflight, preserva o IP na VM e conclui apenas a limpeza segura restante.
 
-Se o planner base já provou que o IP está atribuído a `virtualization.vminterface`, a decisão `DELEGATED/NOOP` é autoritativa e não pode ser rebaixada pela ponte de nome.
+Relatório:
 
 ```text
-IP em virtualization.vminterface
-→ DELEGATED/NOOP
-→ não executar name bridge para rebaixar a decisão
+/opt/netbox-discovery/reports/<SITE>-repair-journal-*.json
 ```
 
-A ponte por nome serve apenas para acrescentar ownership quando o IP ainda não o provou. O conflito físico/VM de `SRV-AE11` continua `BLOCKED`.
+## 7. Ordem de escrita
 
-## 5. PowerVault / FA-MIB — 1.10.11+
+A 1.10.14 executa primeiro o IMPORT normal. Se ele falhar, o reparo destrutivo ainda não começou.
 
-Árvore consultada:
+Depois, cada reparo é revalidado novamente imediatamente antes da ação.
+
+## 8. Audit final
+
+O `auditor_v4` combina:
+
+- auditoria dos READY normais;
+- confirmação de que o Device duplicado foi removido;
+- confirmação de que o IP pertence à interface da VM;
+- confirmação do primary IPv4;
+- idempotência: o asset reparado deve ficar `DELEGATED/NOOP`.
+
+Saída:
 
 ```text
-.1.3.6.1.3.94.1.6.1
+AUDIT FINALIZE RESULTADO
+Status: PASS | PASS_WITH_WARNINGS | FAIL
 ```
 
-Campos:
+## 9. REVIEW residual
+
+Um asset sem identidade forte pode permanecer `REVIEW` e ser ignorado pelo importer. Isso não bloqueia READY seguros.
+
+Nunca force classificação para “zerar a tela”.
+
+## 10. Ownership Hypervisor
+
+Precedência:
 
 ```text
-connUnitId
-connUnitType
-connUnitProduct
-connUnitSn
+IP em virtualization.vminterface → DELEGATED
 ```
 
-Somente `connUnitType=storage-subsystem(11)` entra como identidade de array.
-
-A 1.10.12+ executa até três tentativas read-only da leitura FA-MIB.
-
-Identidade:
+Fallback:
 
 ```text
-serial válido             → forte
-connUnitId válido         → forte
-connUnitId 000...000      → ignorado
+MAC VMware + VM única por nome → DELEGATED
 ```
 
-Quando duas controladoras apresentam o mesmo serial/ID forte, o reconciliador pode gerar um único asset com múltiplos IPs de gerenciamento.
+Device físico + VM inequívoca permanece `BLOCKED`, exceto quando atende integralmente ao `REPAIR_SAFE_VM_DUPLICATE`.
 
-## 6. Dell Networking
+## 11. Storage ME4/ME5
 
-Modelos físicos Dell reconhecidos por hardware/ENTITY-MIB têm prioridade sobre Linux/SSH/Web genérico.
+Mantém FA-MIB:
 
 ```text
-N2024      → NETWORK_SWITCH/HIGH
-PCT7024    → NETWORK_SWITCH/HIGH
-S4128F-ON  → NETWORK_SWITCH/HIGH
+connUnitType=storage-subsystem(11)
+connUnitId válido
+connUnitSn válido
 ```
 
-## 7. Diagnóstico Network
+`connUnitId=000...000` é ignorado. Há até três tentativas read-only e anti-flap de identidade forte por até 48 horas.
 
-O `run` mostra:
+## 12. Falha operacional
 
 ```text
-NETWORK PLAN DIAGNÓSTICO
-NETWORK DELEGADOS AO HYPERVISOR
-NETWORK NOVOS OBJETOS READY
-NETWORK AJUSTES READY
-NETWORK PENDÊNCIAS POR MOTIVO
-NETWORK PENDÊNCIAS DETALHADAS
+1. preservar relatórios e journal
+2. não editar em massa no NetBox
+3. não repetir --apply cegamente
+4. executar o mesmo comando somente após analisar a proteção apresentada
+5. deixar o recovery do produto concluir o estado parcial
 ```
 
-Não é necessário usar Python/JSON ad-hoc para descobrir os motivos do PLAN.
-
-## 8. IMPORT Network
-
-O importer recalcula o PLAN com `planner_v3.py` imediatamente antes da escrita.
-
-```text
-PLAN atual
-→ PRE-FLIGHT
-→ somente READY
-→ primeiro erro inesperado interrompe APPLY
-```
-
-`DELEGATED`, `REVIEW` e `BLOCKED` nunca entram no IMPORT.
-
-## 9. AUDIT
-
-O auditor usa o mesmo planner V3 para o preview de idempotência.
-
-A partir da 1.10.12, WARN/FAIL aparecem no terminal:
-
-```text
-===== AUDIT PENDÊNCIAS DETALHADAS =====
-WARN | ...
-FAIL | ...
-```
-
-`PASS_WITH_WARNINGS` não é tratado como falha de escrita, mas as divergências ficam visíveis.
-
-## 10. Interfaces e IPs físicos
-
-O Network cria somente interfaces de gerenciamento/OOB respaldadas por IP observado.
-
-```text
-Device
-→ MGMT / MGMT-2 / ...
-→ IP observado
-→ primary IPv4 quando aplicável
-```
-
-O produto não cria todas as portas de um switch apenas porque IF-MIB as expôs.
-
-## 11. Hypervisor
+## 13. Hypervisor
 
 ```bash
 netbox-discovery hypervisor configure
@@ -232,58 +211,16 @@ netbox-discovery hypervisor check
 netbox-discovery hypervisor run
 netbox-discovery hypervisor run --compare
 netbox-discovery hypervisor run --apply
-netbox-discovery hypervisor status
 ```
 
-Referência LIVE PASS:
+Estado de referência: `282/282 OK`, sem divergência Tenant/Site.
 
-```text
-Objetos comparados: 282
-OK: 282
-MISMATCH: 0
-MISSING: 0
-AMBIGUOUS: 0
-COMPARE STATUS: OK
-```
-
-## 12. Falha parcial
-
-```text
-1. preservar estado/relatórios
-2. confirmar processo e lock
-3. não repetir --apply cegamente
-4. rodar dry-run/compare apropriado
-5. corrigir o produto, não o inventário em massa
-6. somente depois retomar
-```
-
-## 13. Update
-
-```bash
-netbox-discovery update status
-netbox-discovery update check
-netbox-discovery update run
-```
-
-`stable` usa backup, validação, preservação de configuração e rollback de candidato inválido.
-
-## 14. Schedulers
-
-```bash
-netbox-discovery scheduler status
-netbox-discovery hypervisor scheduler status
-netbox-discovery update scheduler status
-```
-
-Network e Hypervisor são opt-in.
-
-## 15. Caminhos
+## 14. Caminhos
 
 ```text
 Aplicação:              /opt/netbox-discovery
-Configuração principal: /opt/netbox-discovery/config.yml
+Configuração:           /opt/netbox-discovery/config.yml
 Config Hypervisor:      /etc/netbox-discovery/hypervisors.json
-Config por Site:        /opt/netbox-discovery/config/sites/
 Relatórios:             /opt/netbox-discovery/reports
 Backups:                /opt/netbox-discovery/backups
 Lock global:            /var/lock/netbox-discovery-global.lock
