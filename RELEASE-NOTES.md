@@ -1,18 +1,91 @@
+## V1.10.16 — Single-interface VM MAC bootstrap before safe repair
+
+Release criada a partir do APPLY live da 1.10.15 no DCM.
+
+### Evidência live da 1.10.15
+
+```text
+MAC RECONCILE: PASS
+Assets FAIL: 0
+Checks FAIL: 0
+ME5024 MAC_MISSING: resolvido
+```
+
+O `SRV-AE11` permaneceu bloqueado:
+
+```text
+VM única ID 359
+MAC VMware forte 00:50:56:9F:9E:70
+Interface da VM por MAC não é única: 0
+Reparos seguros concluídos: 0
+```
+
+A interface da VM não possuía objeto MAC no NetBox.
+
+### PLAN V6
+
+Adiciona um fallback estritamente limitado:
+
+```text
+VM única por nome
++ exatamente uma interface live
++ interface sem outro MAC
++ exatamente um MAC VMware forte
++ MAC não duplicado e sem outro owner
+→ READY/REPAIR_SAFE_VM_DUPLICATE
+```
+
+VM com múltiplas interfaces, MAC divergente ou MAC pertencente a outro objeto continua `BLOCKED`.
+
+### Importer V6
+
+Antes de mover o IP ou remover o Device duplicado:
+
+```text
+cria/atribui o MAC à virtualization.vminterface única
+→ define primary_mac_address da interface
+→ revalida o reparo
+→ move o IP
+→ define primary IPv4 da VM se vazio
+→ remove somente o Device duplicado criado pelo produto
+```
+
+A VM nunca é removida. O MAC é revalidado no preflight global e novamente imediatamente antes da escrita.
+
+### Auditor V6
+
+Além dos checks anteriores, exige:
+
+```text
+REPAIR_VM_MAC_OK
+```
+
+O MAC deve existir uma única vez, pertencer à interface correta da VM e ser o `primary_mac_address` dessa interface.
+
+### Componentes
+
+```text
+planner_v6.py       4.6-product
+importer_v6.py      5.4-product
+auditor_v6.py       6.4-product
+pipeline            2.7-product
+runner              2.5-product
+```
+
+Estado inicial: **CI/NOT LIVE até a única execução final `netbox-discovery run --apply`**.
+
+---
+
 ## V1.10.15 — Historical VMware repair + preserved-interface MAC reconcile
 
 Release criada a partir do APPLY live da 1.10.14 no DCM.
 
-### Evidência live
-
-O MD3200BKP foi criado corretamente como um único STORAGE com dois IPs, o preflight global passou e o IMPORT normal concluiu sem erros.
-
-Duas lacunas reais permaneceram:
+### Lacunas tratadas
 
 ```text
 SRV-AE11
 → historical_vmware_mac estava presente
-→ PLAN V4 avaliou somente asset.macs atual
-→ REPAIR_SAFE não foi elegível
+→ PLAN V4 avaliava somente asset.macs atual
 
 ME5024
 → IP/interface existentes foram preservados
@@ -22,19 +95,9 @@ ME5024
 
 ### PLAN V5
 
-O `historical_vmware_mac` do anti-flap pode participar do gate de reparo quando:
+O `historical_vmware_mac` pode participar do gate quando é OUI VMware, existe uma única VM por nome, o MAC corresponde exatamente a uma interface live e todas as proteções de ownership continuam válidas.
 
-- o asset continua `VIRTUAL_MACHINE_CANDIDATE`;
-- o valor pertence a um OUI VMware conhecido;
-- existe uma única VM pelo nome;
-- o MAC corresponde exatamente a uma interface live dessa VM;
-- todas as proteções de ownership do Device duplicado continuam válidas.
-
-O histórico não autoriza reparo sem confirmação live.
-
-### Preflight de MAC
-
-Antes da primeira escrita, todos os MACs esperados dos READY normais são verificados na tabela global.
+### Preflight e MAC RECONCILE
 
 ```text
 MAC ausente ou sem vínculo → permitido
@@ -43,9 +106,7 @@ MAC duplicado              → bloqueia
 MAC em outra interface/VM  → bloqueia
 ```
 
-### MAC RECONCILE
-
-Após o IMPORT normal e antes do REPAIR_SAFE:
+Após o IMPORT normal:
 
 ```text
 IP único em dcim.interface
@@ -54,129 +115,39 @@ IP único em dcim.interface
 → garante primary_mac_address
 ```
 
-Relatório próprio:
+Validação live:
 
 ```text
-<SITE>-mac-reconcile-*.json
+MAC RECONCILE: PASS
+Assets FAIL: 0
+Checks FAIL: 0
 ```
 
-### Componentes
-
-```text
-planner_v5.py       4.5-product
-importer_v5.py      5.3-product
-auditor_v5.py       6.3-product
-pipeline            2.6-product
-runner              2.4-product
-```
-
-Estado inicial: **CI/NOT LIVE até a única execução final `netbox-discovery run --apply`**.
+O reparo do SRV-AE11 revelou a ausência de MAC na própria interface da VM e foi finalizado na 1.10.16.
 
 ---
 
 ## V1.10.14 — One-pass Network finalization
 
-Release criada para concluir em uma única execução as pendências Network remanescentes do DCM.
+Adicionou:
 
-### Escopo
+- classificação e reconciliação do Dell PowerVault MD32xx com duas controladoras;
+- `REPAIR_SAFE_VM_DUPLICATE`;
+- preflight global e `REPAIR_JOURNAL`;
+- recuperação `RECOVERY_AFTER_IP_MOVE`;
+- audit combinado.
 
-```text
-Dell MD3200BKP com dois endpoints/controladoras
-+ Device físico duplicado de uma VM criado anteriormente pelo próprio produto
-+ Web Appliance residual mantido em REVIEW se continuar sem identidade forte
-```
-
-### Dell PowerVault MD32xx
-
-Classificação explícita pelo `sysObjectID`:
+Validação live:
 
 ```text
-.1.3.6.1.4.1.674.10893.2.31
+MD3200BKP .56/.57 → 1 STORAGE com MGMT + MGMT-2
+PREFLIGHT GLOBAL FINALIZE: OK
+IMPORT normal: 12/12, erros=0
 ```
-
-A reconciliação automática exige exatamente dois endpoints, mesmo `sysObjectID`, mesmo `sysName` não genérico, `STORAGE/HIGH`, IPs consecutivos e ausência de serial conflitante.
-
-Resultado planejado:
-
-```text
-1 Device STORAGE
-├─ MGMT
-└─ MGMT-2
-```
-
-Nome igual isolado não autoriza merge.
-
-### REPAIR_SAFE_VM_DUPLICATE
-
-Novo action:
-
-```text
-READY / REPAIR_SAFE_VM_DUPLICATE
-```
-
-Elegibilidade exige ownership completo do `netbox-discovery` no Device, interface e IP, além de VM/interface únicas, MAC VMware forte, ausência de serial, rack, location, cluster, cabos e objetos relacionados.
-
-Ação:
-
-```text
-move IP para virtualization.vminterface
-→ define primary IPv4 da VM se vazio
-→ remove MACs do Device criados pelo produto
-→ remove somente o Device duplicado criado pelo produto
-```
-
-Nenhuma VM é removida e não existe DELETE genérico.
-
-### Preflight global e journal
-
-Antes da primeira escrita:
-
-```text
-PREFLIGHT GLOBAL FINALIZE
-→ valida READY normal
-→ valida REPAIR_SAFE
-→ relê relações live
-→ cria REPAIR_JOURNAL
-→ somente então escreve
-```
-
-Falha em qualquer proteção bloqueia tudo antes da etapa final.
-
-### Ordem e recuperação
-
-O IMPORT normal executa antes do reparo destrutivo. Cada reparo é revalidado novamente imediatamente antes da ação.
-
-Se uma falha ocorrer após o IP já ter sido movido:
-
-```text
-RECOVERY_AFTER_IP_MOVE
-```
-
-Uma nova execução pode concluir somente a limpeza segura restante após novo preflight.
-
-### Audit combinado
-
-O `auditor_v4` valida READY normais e MD32xx, Device duplicado removido, IP na VM interface correta, primary IPv4 e idempotência `DELEGATED/NOOP`.
-
-### Componentes
-
-```text
-classifier_v5.py
-reconciler_v5.py
-planner_v4.py
-importer_v4.py
-auditor_v4.py
-pipeline 2.5-product
-runner 2.3-product
-```
-
-Validação live parcial: MD32xx, preflight global e IMPORT normal passaram; findings corrigidos na 1.10.15.
 
 ---
 
 ## V1.10.13 — Preserve authoritative Hypervisor IP delegation
-
-Corrige a precedência de ownership:
 
 ```text
 IP já vinculado a virtualization.vminterface
@@ -184,22 +155,13 @@ IP já vinculado a virtualization.vminterface
 → ponte por nome não pode rebaixar para REVIEW
 ```
 
-Validação live: `42 DELEGATED`, incluindo appliances sem correspondência nominal, e `READY/CREATE=0`.
+Validação live: `42 DELEGATED` e `READY/CREATE=0`.
 
 ---
 
 ## V1.10.12 — Identity anti-flap + VM ownership by name
 
 Adicionou retenção conservadora de identidade VMware/FA-MIB por até 48 horas, correlação por nome único e bloqueio de Device físico + VM.
-
-Evidência live:
-
-```text
-SRV-AE11
-→ PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM
-```
-
-Também adicionou retry read-only de FA-MIB, tratamento de `connUnitId=000...000` e audit detalhado.
 
 ---
 
