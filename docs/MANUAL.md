@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.10.11 — PRODUCT V1  
+**Versão:** 1.10.12 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -32,84 +32,124 @@ DISCOVER → CLASSIFY → RECONCILE → PLAN → IMPORT READY → AUDIT
 
 ## 2. Decisões Network
 
-| Decisão | Significado | Escrita Network |
+| Decisão | Significado | Escrita |
 |---|---|---|
-| `READY` | elegível | somente com `--apply` |
-| `DELEGATED` | ownership pertence a outro pipeline | não |
+| `READY` | evidência suficiente | somente com `--apply` |
+| `DELEGATED` | ownership de outro pipeline | não |
 | `REVIEW` | precisa revisão | não |
 | `BLOCKED` | conflito forte | não |
 
 Ações usuais: `CREATE`, `UPDATE_SAFE`, `NOOP`, `CONFLICT`.
 
-## 3. Storage FibreAlliance / PowerVault — 1.10.11
+## 3. Identidade anti-flap — 1.10.12
 
-O produto não considera dois IPs com o mesmo nome suficientes para representar um único storage.
+Uma coleta pode perder temporariamente uma evidência que apareceu na coleta anterior. Isso não deve mudar a natureza do asset.
 
-O discovery 1.10.11 consulta a árvore FCMGMT/FibreAlliance:
+Exemplo real do DCM:
 
 ```text
-.1.3.6.1.3.94.1.6.1
+SRV-AE11
+coleta anterior: MAC VMware 00:50:56:9F:9E:70
+→ VIRTUAL_MACHINE_CANDIDATE
+
+coleta seguinte: MAC não observado
+→ NÃO pode virar Device físico automaticamente
 ```
 
-Campos usados:
+Outro exemplo:
 
 ```text
-connUnitId       → identidade persistente da connectivity unit
-connUnitType     → precisa identificar storage-subsystem(11)
-connUnitProduct  → modelo do array
-connUnitSn       → serial
-connUnitName     → nome complementar
+ME4024 controller
+coleta anterior: FA-MIB + serial do array
+coleta seguinte: FA-MIB sem resposta
+→ identidade STORAGE não deve desaparecer
 ```
 
-Fluxo:
+A 1.10.12 consulta classificações recentes do mesmo Site/IP, por até 48 horas, e retém somente evidência forte:
+
+- `VIRTUAL_MACHINE_CANDIDATE` com OUI VMware;
+- storage com serial válido e/ou `connUnitId` válido.
+
+Regras de segurança:
+
+- hardware físico forte atual vence histórico VMware;
+- serial atual diferente do histórico gera conflito;
+- FA ID atual diferente do histórico gera conflito;
+- `connUnitId` todo zero é inválido;
+- MAC VMware histórico não é copiado para a interface atual; serve apenas para decisão de ownership;
+- ausência transitória não vira evidência negativa.
+
+O terminal informa:
 
 ```text
-Controller/IP A ─┐
-                 ├─ mesmo connUnitId → 1 asset STORAGE
-Controller/IP B ─┘
+Anti-flap: identidade forte preservada de <arquivo anterior>
+VMware MAC histórico: 00:50:56:...
 ```
 
-Se os IDs forem diferentes, o reconciliador não funde os registros pela semelhança de nome.
+## 4. Cross-pipeline Network ↔ Hypervisor — 1.10.12
 
-Quando `connUnitSn` é válido, o serial continua sendo identidade preferencial. Sem serial, um `connUnitId` válido e único pode formar a identidade `FA:<id>`.
+O planner consulta as VMs do mesmo Tenant/Site.
 
-O SNMP EngineID não é usado como identidade do array, porque pode ser específico da controladora.
-
-O terminal mostra:
+Quando o Network encontra um asset com evidência VMware e existe exatamente uma VM com o mesmo nome:
 
 ```text
-Storage FA-MIB: id=<id> product=<modelo> serial=<serial> type=storage-subsystem(11)
-```
-
-Falha ou ausência de FA-MIB não libera criação automática: o item continua sujeito às regras conservadoras de REVIEW/BLOCKED.
-
-## 4. DELEGATED / ownership Hypervisor — 1.10.10
-
-Quando um IP descoberto pela rede já existe no NetBox vinculado a `virtualization.vminterface`:
-
-```text
-Network discovery
+VM candidate
++ nome único no inventário VM
 → DELEGATED
 → NOOP
-→ nenhuma criação de dcim.device
+→ nenhuma criação física
 ```
 
-`DELEGATED` nunca é consumido pelo IMPORT Network.
+Se um `dcim.device` já existir para esse asset:
 
-## 5. VM candidata sem correspondência
+```text
+BLOCKED
+PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM:<id>
+```
 
-Um MAC/asset claramente virtual, mas ainda sem vínculo a uma VM do NetBox, não é criado como Device físico:
+Nenhuma remoção é feita automaticamente. O conflito precisa ser tratado pelo fluxo do produto.
+
+Sem VM por nome e sem Device físico:
 
 ```text
 REVIEW
 VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
 ```
 
-## 6. Dell switches — 1.10.10
+## 5. PowerVault / FA-MIB — 1.10.11+
 
-Hardware model/ENTITY-MIB tem prioridade sobre SSH/Linux/Web genérico.
+Árvore consultada:
 
-Validados ao vivo:
+```text
+.1.3.6.1.3.94.1.6.1
+```
+
+Campos:
+
+```text
+connUnitId
+connUnitType
+connUnitProduct
+connUnitSn
+```
+
+Somente `connUnitType=storage-subsystem(11)` entra como identidade de array.
+
+A 1.10.12 executa até três tentativas read-only da leitura FA-MIB.
+
+Identidade:
+
+```text
+serial válido             → forte
+connUnitId válido         → forte
+connUnitId 000...000      → ignorado
+```
+
+Quando duas controladoras apresentam o mesmo serial/ID forte, o reconciliador pode gerar um único asset com múltiplos IPs de gerenciamento.
+
+## 6. Dell Networking
+
+Modelos físicos Dell reconhecidos por hardware/ENTITY-MIB têm prioridade sobre Linux/SSH/Web genérico.
 
 ```text
 N2024      → NETWORK_SWITCH/HIGH
@@ -119,7 +159,7 @@ S4128F-ON  → NETWORK_SWITCH/HIGH
 
 ## 7. Diagnóstico Network
 
-`netbox-discovery run` mostra:
+O `run` mostra:
 
 ```text
 NETWORK PLAN DIAGNÓSTICO
@@ -130,50 +170,47 @@ NETWORK PENDÊNCIAS POR MOTIVO
 NETWORK PENDÊNCIAS DETALHADAS
 ```
 
-READY e pendências exibem evidência CLASSIFY, SNMP, asset class e, quando disponível, identidade FA-MIB.
+Não é necessário usar Python/JSON ad-hoc para descobrir os motivos do PLAN.
 
-Não faz parte da operação normal abrir PLAN com Python ad-hoc.
+## 8. IMPORT Network
 
-## 8. Identidade Network
-
-Evidências fortes incluem:
-
-- serial válido;
-- MAC de gerenciamento autoritativo;
-- LLDP chassis ID válido;
-- IP associado de forma inequívoca;
-- `connUnitId` válido para storage FibreAlliance.
-
-Regras:
-
-- MAC secundário não funde assets sozinho;
-- nome sozinho não é identidade forte;
-- dois controllers de storage só são unidos automaticamente com identidade de array compatível;
-- IP de VM já pertencente a `virtualization.vminterface` não vira Device físico;
-- ausência em coleta não autoriza DELETE.
-
-## 9. Interfaces/IPs físicos
-
-O Network cria intenção apenas para interfaces de gerenciamento/OOB observadas.
+O importer 1.10.12 recalcula o PLAN com `planner_v3.py` imediatamente antes da escrita.
 
 ```text
-Device físico
-→ interface MGMT/OOB
-→ IP
+PLAN atual
+→ PRE-FLIGHT
+→ somente READY
+→ primeiro erro inesperado interrompe APPLY
+```
+
+`DELEGATED`, `REVIEW` e `BLOCKED` nunca entram no IMPORT.
+
+## 9. AUDIT
+
+O auditor usa o mesmo planner V3 para o preview de idempotência.
+
+A partir da 1.10.12, WARN/FAIL aparecem no terminal:
+
+```text
+===== AUDIT PENDÊNCIAS DETALHADAS =====
+WARN | ...
+FAIL | ...
+```
+
+`PASS_WITH_WARNINGS` não é tratado como falha de escrita, mas as divergências ficam visíveis.
+
+## 10. Interfaces e IPs físicos
+
+O Network cria somente interfaces de gerenciamento/OOB respaldadas por IP observado.
+
+```text
+Device
+→ MGMT / MGMT-2 / ...
+→ IP observado
 → primary IPv4 quando aplicável
 ```
 
-Não expande automaticamente todas as portas IF-MIB de um switch.
-
-## 10. Segurança do APPLY Network
-
-Antes de autorizar `--apply`, revisar o PLAN.
-
-- somente `READY` escreve;
-- `DELEGATED`, `REVIEW` e `BLOCKED` não escrevem;
-- IMPORT recalcula PLAN antes da execução;
-- falha em APPLY para no primeiro erro inesperado;
-- não fazer correção em massa manual no NetBox para facilitar o discovery.
+O produto não cria todas as portas de um switch apenas porque IF-MIB as expôs.
 
 ## 11. Hypervisor
 
@@ -186,9 +223,7 @@ netbox-discovery hypervisor run --apply
 netbox-discovery hypervisor status
 ```
 
-O fluxo multi-contexto está LIVE PASS para placement Tenant/Site, Cluster/Site, VM Parent/Site, APPLY/AUDIT e compare final.
-
-Validação de referência:
+Referência LIVE PASS:
 
 ```text
 Objetos comparados: 282
@@ -202,11 +237,12 @@ COMPARE STATUS: OK
 ## 12. Falha parcial
 
 ```text
-1. confirmar processo/lock
-2. não repetir --apply cegamente
-3. usar compare/dry-run apropriado
-4. revisar estado real
-5. somente então retomar
+1. preservar estado/relatórios
+2. confirmar processo e lock
+3. não repetir --apply cegamente
+4. rodar dry-run/compare apropriado
+5. corrigir o produto, não o inventário em massa
+6. somente depois retomar
 ```
 
 ## 13. Update
