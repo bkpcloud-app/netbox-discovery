@@ -6,6 +6,11 @@ import glob
 import os
 import sys
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from modules.importers import importer_v2 as v2
 
 IMPORTER_VERSION = "5.1-product"
@@ -14,7 +19,6 @@ REPORTS = v2.base.REPORTS
 
 
 def refresh_plan():
-    """Always re-plan with the current anti-flap planner before IMPORT."""
     planner = os.path.join(BASE, "modules", "inventory", "planner_v3.py")
     if not os.path.isfile(planner):
         raise RuntimeError("Planner V3 não encontrado: {0}".format(planner))
