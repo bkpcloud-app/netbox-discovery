@@ -12,7 +12,7 @@ if BASE not in sys.path:
 
 from modules.inventory import planner_v2 as v2
 
-PLANNER_VERSION = "4.2-product"
+PLANNER_VERSION = "4.3-product"
 ORIG_NETBOX_STATE = v2.netbox_state
 ORIG_BUILD_PLAN = v2.build_plan
 
@@ -100,6 +100,14 @@ def build_plan(recon, classification, state):
             row["decision"] = "BLOCKED"
             row["action"] = "CONFLICT"
             _append_reason(row, "IDENTITY_HISTORY_CONFLICT:{0}".format(history_conflict))
+            continue
+
+        # Ownership already proven by the base planner through an IP assigned to
+        # virtualization.vminterface is authoritative. The V3 name bridge may
+        # add ownership when IP evidence is absent, but it must never downgrade
+        # an existing DELEGATED row to REVIEW merely because VM name matching
+        # is unavailable or differs.
+        if clean(row.get("decision")) == "DELEGATED":
             continue
 
         if not v2._looks_like_vm_asset(asset):
