@@ -1,177 +1,141 @@
+## V1.10.14 — One-pass Network finalization
+
+Release criada para concluir em uma única execução as pendências Network remanescentes do DCM.
+
+### Escopo
+
+```text
+Dell MD3200BKP com dois endpoints/controladoras
++ Device físico duplicado de uma VM criado anteriormente pelo próprio produto
++ Web Appliance residual mantido em REVIEW se continuar sem identidade forte
+```
+
+### Dell PowerVault MD32xx
+
+Classificação explícita pelo `sysObjectID`:
+
+```text
+.1.3.6.1.4.1.674.10893.2.31
+```
+
+A reconciliação automática exige exatamente dois endpoints, mesmo `sysObjectID`, mesmo `sysName` não genérico, `STORAGE/HIGH`, IPs consecutivos e ausência de serial conflitante.
+
+Resultado planejado:
+
+```text
+1 Device STORAGE
+├─ MGMT
+└─ MGMT-2
+```
+
+Nome igual isolado não autoriza merge.
+
+### REPAIR_SAFE_VM_DUPLICATE
+
+Novo action:
+
+```text
+READY / REPAIR_SAFE_VM_DUPLICATE
+```
+
+Elegibilidade exige ownership completo do `netbox-discovery` no Device, interface e IP, além de VM/interface únicas, MAC VMware forte, ausência de serial, rack, location, cluster, cabos e objetos relacionados.
+
+Ação:
+
+```text
+move IP para virtualization.vminterface
+→ define primary IPv4 da VM se vazio
+→ remove MACs do Device criados pelo produto
+→ remove somente o Device duplicado criado pelo produto
+```
+
+Nenhuma VM é removida e não existe DELETE genérico.
+
+### Preflight global e journal
+
+Antes da primeira escrita:
+
+```text
+PREFLIGHT GLOBAL FINALIZE
+→ valida READY normal
+→ valida REPAIR_SAFE
+→ relê relações live
+→ cria REPAIR_JOURNAL
+→ somente então escreve
+```
+
+Falha em qualquer proteção bloqueia tudo antes da etapa final.
+
+### Ordem e recuperação
+
+O IMPORT normal executa antes do reparo destrutivo. Cada reparo é revalidado novamente imediatamente antes da ação.
+
+Se uma falha ocorrer após o IP já ter sido movido:
+
+```text
+RECOVERY_AFTER_IP_MOVE
+```
+
+Uma nova execução pode concluir somente a limpeza segura restante após novo preflight.
+
+### Audit combinado
+
+O `auditor_v4` valida:
+
+- READY normais e MD32xx;
+- Device duplicado removido;
+- IP na VM interface correta;
+- primary IPv4 correto;
+- idempotência do asset reparado como `DELEGATED/NOOP`.
+
+### Componentes
+
+```text
+classifier_v5.py
+reconciler_v5.py
+planner_v4.py
+importer_v4.py
+auditor_v4.py
+pipeline 2.5-product
+runner 2.3-product
+```
+
+Estado inicial: **CI/NOT LIVE até a única execução final `netbox-discovery run --apply`**.
+
+---
+
 ## V1.10.13 — Preserve authoritative Hypervisor IP delegation
 
-Hotfix criada a partir do dry-run live da 1.10.12 no DCM.
-
-### Evidência live que motivou a correção
-
-A 1.10.12 corrigiu o caso `SRV-AE11` e comprovou a ponte por nome:
+Corrige a precedência de ownership:
 
 ```text
-BLOCKED | 10.1.1.111 | SRV-AE11
-PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM:359
-```
-
-Porém, seis assets que já tinham ownership Hypervisor provado por IP foram rebaixados para `REVIEW` porque a ponte por nome não encontrou VM nominal:
-
-```text
-10.1.1.20  vcsa
-10.1.1.155 pagamento
-10.1.1.170 unifi
-10.1.1.200 FAZ-MIZU
-10.1.1.202 FMG-DCM
-10.1.1.230 LINUX_HOST-10-1-1-230
-```
-
-Todos mostravam simultaneamente:
-
-```text
-OWNED_BY_HYPERVISOR_VM
-Match: EXTERNAL_MANAGED
-IP(s) já vinculado(s) a virtualization.vminterface
-```
-
-Mas a decisão final ficou incorretamente `REVIEW` com `VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH`.
-
-### Correção
-
-O `planner_v3` passa a tratar a decisão base `DELEGATED` como autoritativa:
-
-```text
-IP ownership já provado
+IP já vinculado a virtualization.vminterface
 → DELEGATED/NOOP
-→ name bridge não pode rebaixar a decisão
+→ ponte por nome não pode rebaixar para REVIEW
 ```
 
-A correlação por nome continua ativa apenas para acrescentar ownership quando o IP ainda não o provou.
-
-### Segurança preservada
-
-O caso Device físico + VM única por nome continua bloqueado:
-
-```text
-SRV-AE11-like
-→ BLOCKED/CONFLICT
-→ PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM:<id>
-```
-
-Nenhuma remoção automática é introduzida.
-
-### Regressões
-
-- `DELEGATED` por IP não pode virar `REVIEW` por ausência de name match;
-- conflito físico/VM por nome continua `BLOCKED`.
-
-Estado inicial: **CI/NOT LIVE até novo dry-run real**.
+Validação live: `42 DELEGATED`, incluindo appliances sem correspondência nominal, e `READY/CREATE=0`.
 
 ---
 
 ## V1.10.12 — Identity anti-flap + VM ownership by name
 
-Release criada a partir do primeiro APPLY Network real do DCM em 28/07/2026.
+Adicionou retenção conservadora de identidade VMware/FA-MIB por até 48 horas, correlação por nome único e bloqueio de Device físico + VM.
 
-### Primeiro APPLY Network
-
-```text
-PREFLIGHT: OK
-Assets READY processados: 13
-Runtime blocked: 0
-Erros: 0
-NetBox write: SIM
-```
-
-Idempotency preview:
+Evidência live:
 
 ```text
-READY/CREATE: 0
-READY/UPDATE_SAFE: 0
-READY/NOOP: 13
+SRV-AE11
+→ PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM
 ```
 
-AUDIT:
-
-```text
-PASS_WITH_WARNINGS
-Assets FAIL: 0
-Checks FAIL: 0
-```
-
-### Safety finding
-
-`SRV-AE11` havia sido observado como:
-
-```text
-management_mac=00:50:56:9F:9E:70
-asset_class=VIRTUAL_MACHINE_CANDIDATE
-```
-
-No APPLY seguinte o MAC não foi coletado. A classificação caiu para host genérico e o asset ficou `READY/CREATE`, criando um `dcim.device` físico.
-
-O mesmo tipo de flapping ocorreu na leitura FA-MIB de controladoras PowerVault: uma execução tinha identidade do array e outra não.
-
-### Identidade anti-flap
-
-A 1.10.12 guarda por até 48 horas apenas identidade forte já observada no mesmo Site/IP:
-
-- VMware OUI / `VIRTUAL_MACHINE_CANDIDATE`;
-- storage com serial e/ou `connUnitId` válido.
-
-Regras:
-
-- identidade física forte atual vence histórico VMware;
-- serial/FA atual divergente gera conflito;
-- MAC antigo não é copiado para criar interface;
-- ausência transitória não apaga identidade forte.
-
-### VM ownership por nome único
-
-O planner agora consulta VMs do mesmo Tenant/Site.
-
-```text
-VM candidate + VM única com mesmo nome
-→ DELEGATED/NOOP
-```
-
-Se já existir Device físico:
-
-```text
-→ BLOCKED/CONFLICT
-→ PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM:<id>
-```
-
-### PowerVault
-
-- até três tentativas read-only da árvore FA-MIB;
-- `connUnitId=000...000` é tratado como ausente;
-- serial válido ainda classifica STORAGE/HIGH;
-- histórico forte pode restaurar identidade quando uma controladora falha temporariamente na leitura.
-
-### IMPORT/AUDIT
-
-- runner passa a usar `network_v3.py`, `classifier_v4.py`, `planner_v3.py`, `importer_v3.py`, `auditor_v3.py`;
-- IMPORT recalcula obrigatoriamente o PLAN V3 antes da escrita;
-- AUDIT usa PLAN V3 no preview de idempotência;
-- WARN/FAIL do AUDIT aparecem no terminal.
-
-### Segurança
-
-Nenhuma remoção automática do Device criado incorretamente é feita nesta release. Primeiro o produto deve provar ownership Hypervisor ao vivo e bloquear o conflito.
-
-Estado após dry-run live: ponte por nome/conflito físico comprovada; anti-flap específico ainda LIVE PARTIAL.
+Também adicionou retry read-only de FA-MIB, tratamento de `connUnitId=000...000` e audit detalhado.
 
 ---
 
 ## V1.10.11 — PowerVault / FibreAlliance storage identity
 
-Adicionou leitura FCMGMT/FibreAlliance `.1.3.6.1.3.94.1.6.1`, classificação `STORAGE/HIGH` e reconciliação por serial/`connUnitId`.
-
-Evidência live parcial:
-
-```text
-ME4024 → DELL EMC ME4024 / serial real / FA ID real
-ME5024 → DELL EMC ME5024 / serial real / FA ID real
-```
-
-A leitura mostrou flapping entre controladoras/executações, motivo da 1.10.12.
+Adicionou leitura FCMGMT/FibreAlliance, classificação `STORAGE/HIGH` e reconciliação por serial/`connUnitId` válido.
 
 ---
 
@@ -186,21 +150,11 @@ PCT7024    → NETWORK_SWITCH/HIGH
 S4128F-ON  → NETWORK_SWITCH/HIGH
 ```
 
-Estado: LIVE PASS no dry-run dessas funções.
-
 ---
 
 ## V1.10.9 — Diagnóstico automático do PLAN Network
 
-Adicionou diagnóstico completo no terminal para READY, REVIEW, BLOCKED, motivos, matching, SNMP e evidência CLASSIFY.
-
-Baseline:
-
-```text
-READY: 7
-REVIEW: 47
-BLOCKED: 6
-```
+Adicionou diagnóstico completo no terminal para READY, REVIEW, BLOCKED, matching, SNMP e evidências.
 
 ---
 
