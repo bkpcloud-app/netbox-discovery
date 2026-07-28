@@ -1,44 +1,95 @@
+## V1.10.11 — PowerVault / FibreAlliance storage identity
+
+Release criada a partir do resíduo live do Network DCM após a 1.10.10.
+
+### Evidência que motivou a mudança
+
+Depois de delegar 41 VMs ao Hypervisor e corrigir Dell switches, restaram storages/controladoras como:
+
+```text
+10.1.1.52 / .53 → ME4024
+10.1.1.55       → ME5024
+10.1.1.56 / .57 → MD3200BKP
+10.1.1.58 / .59 → ME4012
+```
+
+Os pares tinham o mesmo `sysName`, mas MACs de gerenciamento diferentes. Nome igual não é evidência suficiente para fundir assets.
+
+### Nova identidade FibreAlliance
+
+O discovery passa a consultar FCMGMT/FibreAlliance:
+
+```text
+.1.3.6.1.3.94.1.6.1
+```
+
+Campos utilizados:
+
+```text
+connUnitId
+connUnitType
+connUnitProduct
+connUnitSn
+connUnitName
+connUnitVendorId
+```
+
+Quando `connUnitType=storage-subsystem(11)` e existe `connUnitId` válido, o array passa a ter identidade de storage explícita.
+
+### Reconciliação
+
+```text
+mesmo connUnitId → merge forte entre IPs/controladoras
+diferente connUnitId → não merge
+serial válido → permanece identidade preferencial
+sem serial, um connUnitId único → asset_id FA:<id>
+```
+
+O SNMP EngineID não é usado como identidade do array.
+
+### Classificação
+
+Storage identificado por FA-MIB:
+
+```text
+role=STORAGE
+confidence=HIGH
+asset_class=PHYSICAL_DEVICE
+```
+
+O terminal mostra:
+
+```text
+Storage FA-MIB: id=... product=... serial=... type=storage-subsystem(11)
+```
+
+### Segurança
+
+- não une controladoras por nome;
+- IDs FA diferentes não são fundidos;
+- ausência de FA-MIB não relaxa REVIEW/BLOCKED;
+- apenas READY continua elegível para IMPORT;
+- nenhum APPLY automático foi habilitado.
+
+Estado inicial: **CI/NOT LIVE até novo dry-run real**.
+
+---
+
 ## V1.10.10 — Ownership Network/Hypervisor + Dell Networking
 
-Release criada a partir do diagnóstico live da 1.10.9 no DCM.
-
-### Causa principal dos REVIEW Network
-
-Grande parte dos assets descobertos na rede já eram VMs inventariadas pelo pipeline Hypervisor. O NetBox já tinha seus IPs atribuídos a:
+Validação live em 28/07/2026:
 
 ```text
-virtualization.vminterface
+Hosts ativos: 64
+Assets reconciliados: 60
+DELEGATED/HYPERVISOR: 41
+READY/CREATE: 5
+REVIEW: 4
+BLOCKED: 6
+NetBox write: NÃO
 ```
 
-A política anterior marcava isso como `REVIEW` porque o Network corretamente se recusava a transformar o IP em um Device físico, mas ainda tratava a situação como pendência.
-
-### Nova decisão DELEGATED
-
-```text
-IP(s) já pertencem a virtualization.vminterface
-→ DELEGATED
-→ NOOP
-→ OWNED_BY_HYPERVISOR_VM
-```
-
-`DELEGATED` não entra no IMPORT Network. Apenas `READY` continua elegível para escrita.
-
-### Proteção contra VM criada como Device físico
-
-Asset com identidade virtual/VMware mas sem VM correspondente no NetBox:
-
-```text
-REVIEW
-VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
-```
-
-Isso evita que uma lacuna do Hypervisor vire um `dcim.device` incorreto.
-
-### Dell Networking
-
-O classificador agora prioriza modelo de hardware/ENTITY-MIB Dell Networking antes de fingerprints genéricos Linux/SSH/Web/SNMP.
-
-Regressões:
+Switches Dell validados:
 
 ```text
 N2024      → NETWORK_SWITCH / HIGH
@@ -46,26 +97,9 @@ PCT7024    → NETWORK_SWITCH / HIGH
 S4128F-ON  → NETWORK_SWITCH / HIGH
 ```
 
-A regra usa famílias de modelo, não IP/hostname/Site específicos.
+VMs já inventariadas pelo Hypervisor passaram para `DELEGATED/NOOP`. VM candidata sem correspondência continua `REVIEW / VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH`.
 
-### Observabilidade
-
-O Network PLAN passa a exibir:
-
-```text
-DELEGATED/HYPERVISOR: N
-NETWORK DELEGADOS AO HYPERVISOR
-```
-
-READY agora também mostra asset class, SNMP e evidência CLASSIFY para facilitar a revisão antes do APPLY.
-
-### Segurança
-
-- `DELEGATED` nunca escreve;
-- `REVIEW`/`BLOCKED` continuam sem escrita;
-- apenas `READY` é importado;
-- não existe criação física para IP já pertencente a VM;
-- storage duplicado/controladoras não foram auto-resolvidos nesta release.
+Estado do dry-run dessas funções: **LIVE PASS**.
 
 ---
 
