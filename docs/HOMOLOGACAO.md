@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.12 — Matriz de Homologação
+# netbox-discovery 1.10.13 — Matriz de Homologação
 
 ## Estados
 
@@ -39,15 +39,11 @@ BLOCKED: 6
 NetBox write: NÃO
 ```
 
-## 1.10.10 — ownership Network/Hypervisor
+## 1.10.10 — ownership Network/Hypervisor por IP
 
-**Estado:** LIVE PASS no dry-run real de 28/07/2026.
+**Estado:** LIVE PASS.
 
-```text
-DELEGATED/HYPERVISOR: 41
-```
-
-As VMs/appliances com IP já atribuído a `virtualization.vminterface` deixaram de gerar falso REVIEW e passaram a `DELEGATED/NOOP`.
+O dry-run real de 28/07/2026 confirmou que IP já atribuído a `virtualization.vminterface` vira `DELEGATED/NOOP`.
 
 ## 1.10.10 — Dell Network Switch
 
@@ -64,7 +60,7 @@ As VMs/appliances com IP já atribuído a `virtualization.vminterface` deixaram 
 
 **Estado:** LIVE PARTIAL.
 
-Dry-run real de 28/07/2026 mostrou:
+Evidência real:
 
 ```text
 ME4024 10.1.1.52
@@ -80,35 +76,11 @@ serial=SGFTJ22265E8428
 connUnitId=208000C0FF5E84280000000000000000
 ```
 
-Isso comprova ao vivo que a leitura FCMGMT/FibreAlliance e classificação `STORAGE/HIGH` funcionam.
-
-Porém, a evidência não foi estável em todas as controladoras em todas as execuções. No APPLY seguinte:
-
-```text
-10.1.1.52 → FA-MIB presente / STORAGE
-10.1.1.53 → FA-MIB ausente / SNMP_DEVICE
-10.1.1.58 → FA-MIB presente / ME4012 com serial, connUnitId=000...000
-10.1.1.59 → FA-MIB ausente / SNMP_DEVICE
-```
-
-Portanto 1.10.11 não recebe LIVE PASS completo para reconciliação multi-controladora.
+A leitura FA-MIB variou entre controladoras/executações, portanto a reconciliação multi-controladora permanece em homologação.
 
 ## Primeiro APPLY Network real — 1.10.11
 
 **Estado:** LIVE PARTIAL.
-
-PLAN imediatamente antes da escrita:
-
-```text
-Assets planejados: 60
-READY: 13
-REVIEW: 3
-BLOCKED: 2
-READY/CREATE: 9
-READY/NOOP: 4
-```
-
-IMPORT:
 
 ```text
 PREFLIGHT: OK
@@ -125,12 +97,10 @@ Status: PASS_WITH_WARNINGS
 Assets PASS: 9
 Assets WARN: 4
 Assets FAIL: 0
-Checks PASS: 153
-Checks WARN: 8
 Checks FAIL: 0
 ```
 
-Idempotency preview dos 13 READY escritos:
+Idempotency preview:
 
 ```text
 READY/CREATE: 0
@@ -138,99 +108,90 @@ READY/UPDATE_SAFE: 0
 READY/NOOP: 13
 ```
 
-Isso valida ao vivo preflight, escrita de READY, exclusão de REVIEW/BLOCKED, AUDIT e idempotência do conjunto aplicado.
-
-## Safety finding do APPLY 1.10.11
-
-O APPLY também revelou um problema importante de anti-flap:
-
-Execução anterior:
-
-```text
-10.1.1.111 SRV-AE11
-management_mac=00:50:56:9F:9E:70
-asset_class=VIRTUAL_MACHINE_CANDIDATE
-REVIEW=VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
-```
-
-Execução do APPLY:
-
-```text
-10.1.1.111 SRV-AE11
-management_mac não observado
-asset_class=HOST_OR_APPLIANCE
-READY/CREATE
-```
-
-O Device foi criado fisicamente porque a evidência VMware desapareceu de uma única coleta.
-
-**Conclusão:** nenhuma nova autorização de APPLY Network até a proteção 1.10.12 ser validada ao vivo.
+O APPLY também revelou que `SRV-AE11` foi criado como Device físico após uma coleta deixar de observar o MAC VMware.
 
 ## 1.10.12 — identidade anti-flap
 
-**Estado:** NOT LIVE até update + dry-run real.
+**Estado:** LIVE PARTIAL.
 
-Implementação:
+A implementação existe e possui CI PASS. O dry-run posterior voltou a observar o MAC VMware de `SRV-AE11`, então ainda não houve uma segunda execução live com o MAC ausente para provar especificamente a retenção histórica.
 
-```text
-classificação atual
-+ histórico forte do mesmo Site/IP por até 48h
-→ preserva somente identidade forte ausente por falha transitória
-```
+## 1.10.12 — ownership VM por nome único / conflito físico
 
-Cobertura:
+**Estado:** LIVE PASS para o conflito físico/VM e para delegação por nome.
 
-- VMware OUI / `VIRTUAL_MACHINE_CANDIDATE`;
-- storage FA-MIB com serial/connUnitId forte;
-- current strong physical identity pode substituir histórico VMware;
-- serial/FA atual divergente vira conflito;
-- all-zero connUnitId é inválido;
-- histórico não injeta MAC antigo como MAC de interface.
-
-## 1.10.12 — ownership VM por nome único
-
-**Estado:** NOT LIVE.
+Dry-run real em 28/07/2026:
 
 ```text
-VM candidate + nome único de VM no mesmo Tenant/Site
-→ DELEGATED/NOOP
+BLOCKED | 10.1.1.111 | SRV-AE11
+PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM:359
+Device físico existe, mas identidade VMware corresponde à VM ID 359
 ```
 
-Se já existe Device físico:
+Também houve delegações reais por nome único, por exemplo:
 
 ```text
-→ BLOCKED
-→ PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM:<id>
+10.1.1.3   SRV-AE01  → VM ID 317
+10.1.1.168 SRV-GEP11 → VM ID 336
 ```
 
-O objetivo live imediato é detectar `SRV-AE11` como conflito/delegação Hypervisor mesmo se o MAC atual não aparecer.
+Isso comprova que a ponte por nome acrescenta ownership quando o match é inequívoco e bloqueia o caso Device físico + VM.
 
-## 1.10.12 — FA-MIB retry e zero ID
+## 1.10.12 — regressão encontrada no mesmo dry-run
 
-**Estado:** NOT LIVE.
+**Estado:** FAIL funcional específico, sem escrita porque o teste foi dry-run.
 
-- até três tentativas read-only da árvore FA-MIB;
-- `connUnitId=000...000` não é usado como identidade;
-- serial válido continua permitindo classificar `STORAGE/HIGH`;
-- histórico forte pode preencher uma leitura FA transitoriamente ausente.
+Seis assets já tinham ownership por IP provado (`match_state=EXTERNAL_MANAGED`, IP vinculado a `virtualization.vminterface`) mas foram rebaixados de `DELEGATED` para `REVIEW` pela ponte de nome quando não houve match nominal:
 
-## 1.10.12 — AUDIT detalhado
+```text
+10.1.1.20  vcsa
+10.1.1.155 pagamento
+10.1.1.170 unifi
+10.1.1.200 FAZ-MIZU
+10.1.1.202 FMG-DCM
+10.1.1.230 LINUX_HOST-10-1-1-230
+```
 
-**Estado:** NOT LIVE.
+Sintoma:
 
-WARN/FAIL passam a aparecer diretamente no terminal em `AUDIT PENDÊNCIAS DETALHADAS`.
+```text
+Motivos: OWNED_BY_HYPERVISOR_VM, VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
+Match: EXTERNAL_MANAGED | IP(s) já vinculado(s) a virtualization.vminterface
+Decisão final incorreta: REVIEW
+```
+
+Diagnóstico: o `planner_v3` reaplicava a lógica de name bridge sobre uma decisão `DELEGATED` já autoritativa do planner base.
+
+## 1.10.13 — precedência de ownership por IP
+
+**Estado:** NOT LIVE até update + novo dry-run.
+
+Regra corrigida:
+
+```text
+se decisão base == DELEGATED por ownership de IP
+→ preservar DELEGATED/NOOP
+→ não executar name bridge para rebaixar a decisão
+```
+
+A ponte por nome continua funcionando para assets sem ownership IP já provado, e o conflito `SRV-AE11` continua `BLOCKED`.
+
+Regressões automatizadas cobrem:
+
+- IP-owned `DELEGATED` não pode virar `REVIEW` sem match de nome;
+- `SRV-AE11`-like Device físico + VM por nome continua `BLOCKED/CONFLICT`.
 
 ## Próxima validação live
 
 ```text
-1. CI PASS 1.10.12
+1. CI PASS 1.10.13
 2. publicar stable
 3. update no SNOC-AGL-DCM
 4. netbox-discovery run   # somente dry-run
-5. confirmar SRV-AE11 não READY
-6. confirmar VM por nome único como DELEGATED ou conflito físico BLOCKED
-7. confirmar ME4024/ME4012 com identidade estável ou histórico anti-flap visível
-8. revisar resíduo
+5. confirmar os 6 assets acima novamente DELEGATED
+6. confirmar SRV-AE11 continua BLOCKED
+7. READY/CREATE deve permanecer 0
+8. revisar storage residual
 9. não executar --apply nessa validação
 ```
 
