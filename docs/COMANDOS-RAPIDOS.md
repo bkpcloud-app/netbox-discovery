@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.14 — Comandos rápidos
+# netbox-discovery 1.10.15 — Comandos rápidos
 
 ## Atualizar e executar a finalização
 
@@ -8,12 +8,12 @@ netbox-discovery version
 netbox-discovery run --apply
 ```
 
-O próprio `run --apply` executa descoberta, PLAN, preflight global, import, reparo seguro e audit. Não é necessário executar um dry-run separado quando a release final já foi autorizada para a homologação live.
+O próprio `run --apply` executa descoberta, PLAN, preflight global, import, reconciliação de MAC, reparo seguro e audit.
 
 ## Saída esperada antes da escrita
 
 ```text
-Planner: 4.4-product
+Planner: 4.5-product
 READY/CREATE: ...
 READY/UPDATE_SAFE: ...
 READY/REPAIR_SAFE: ...
@@ -23,18 +23,17 @@ NetBox write até aqui: NÃO
 REPAIR JOURNAL: ...
 ```
 
-## MD32xx
+## Reconciliação de MAC
+
+Depois do IMPORT normal:
 
 ```text
-10.x.x.56 + 10.x.x.57
-mesmo sysObjectID exato
-mesmo sysName
-exatamente dois endpoints consecutivos
-→ 1 STORAGE
-→ MGMT + MGMT-2
+===== MAC RECONCILE =====
+Status: PASS
+JSON MAC: /opt/netbox-discovery/reports/<SITE>-mac-reconcile-*.json
 ```
 
-Sem todas as evidências, continua `REVIEW/BLOCKED`.
+O produto cria ou atribui o MAC esperado mesmo quando o IP já estava vinculado à interface correta. MAC pertencente a outro objeto bloqueia no preflight.
 
 ## Device duplicado de VM
 
@@ -46,14 +45,7 @@ Device ID <id> -> VM ID <id>
 IP -> VM interface ID <id>
 ```
 
-Proteções:
-
-```text
-Device/interface/IP criados pelo produto
-sem serial/rack/location/cluster/cabos/objetos relacionados
-VM e interface únicas
-IP único
-```
+O `historical_vmware_mac` pode recuperar a evidência perdida pela coleta somente quando corresponde exatamente a uma interface live da VM única.
 
 Ação:
 
@@ -61,6 +53,17 @@ Ação:
 move IP para a VM
 → define primary IPv4 se vazio
 → remove somente o Device duplicado criado pelo produto
+```
+
+## MD32xx
+
+```text
+10.x.x.56 + 10.x.x.57
+mesmo sysObjectID exato
+mesmo sysName
+exatamente dois endpoints consecutivos
+→ 1 STORAGE
+→ MGMT + MGMT-2
 ```
 
 ## Falha de preflight
@@ -84,7 +87,7 @@ Indica que o IP já está na VM e o produto concluirá somente a limpeza segura 
 
 ```text
 ===== AUDIT FINALIZE RESULTADO =====
-Status: PASS
+Status: PASS ou PASS_WITH_WARNINGS
 Assets FAIL: 0
 Checks FAIL: 0
 ```
@@ -93,6 +96,7 @@ Relatórios:
 
 ```text
 /opt/netbox-discovery/reports/<SITE>-repair-journal-*.json
+/opt/netbox-discovery/reports/<SITE>-mac-reconcile-*.json
 /opt/netbox-discovery/reports/<SITE>-import-finalize-*.json
 /opt/netbox-discovery/reports/<SITE>-audit-finalize-*.json
 ```
