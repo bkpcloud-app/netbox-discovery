@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.10.10 — PRODUCT V1  
+**Versão atual:** 1.10.11 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -38,56 +38,78 @@ netbox-discovery hypervisor status
 
 Conectores: VMware, Proxmox VE e Microsoft Hyper-V.
 
-## Ownership entre Network e Hypervisor — 1.10.10
+## PowerVault / storage FibreAlliance — 1.10.11
 
-O dry-run Network 1.10.9 mostrou que grande parte dos `REVIEW` do DCM eram VMs que já tinham IP vinculado no NetBox a:
+Storages com duas controladoras não podem ser fundidos apenas porque respondem com o mesmo `sysName`.
+
+A partir da 1.10.11, o discovery tenta obter identidade do array pelo FCMGMT/FibreAlliance MIB:
 
 ```text
-virtualization.vminterface
+.1.3.6.1.3.94.1.6.1
 ```
 
-Esses objetos não devem virar `dcim.device` e também não representam trabalho pendente do pipeline Network.
-
-A partir da 1.10.10:
+E usa, quando expostos pelo equipamento:
 
 ```text
-IP de Network já pertencente a virtualization.vminterface
-→ decisão DELEGATED
-→ action NOOP
+connUnitId       → identidade persistente do storage
+connUnitType     → exige storage-subsystem(11)
+connUnitProduct  → modelo
+connUnitSn       → serial
+```
+
+Política:
+
+```text
+mesmo connUnitId em dois IPs de gerenciamento
+→ mesmo storage
+→ RECONCILE pode unir os IPs/controladoras em um único asset
+
+diferentes connUnitId
+→ não fundir
+
+sem identidade FA suficiente
+→ continuar REVIEW/BLOCKED
+```
+
+O SNMP EngineID não é usado como identidade do array, pois pode representar a controladora individual.
+
+O diagnóstico Network mostra a evidência quando disponível:
+
+```text
+Storage FA-MIB: id=... product=... serial=... type=storage-subsystem(11)
+```
+
+A release permanece sem escrita automática: somente `READY` pode ser importado e somente após `--apply` explícito.
+
+## Ownership entre Network e Hypervisor — 1.10.10
+
+Quando um IP descoberto pelo Network já pertence no NetBox a `virtualization.vminterface`:
+
+```text
+→ DELEGATED
+→ NOOP
 → owner Hypervisor
 → nenhuma escrita Network
 ```
 
-O diagnóstico mostra:
+Um asset com identidade VMware, mas sem VM correspondente, permanece:
 
 ```text
-DELEGATED/HYPERVISOR: N
-NETWORK DELEGADOS AO HYPERVISOR
-```
-
-Proteção adicional: um asset com MAC VMware/asset class de VM, mas ainda sem correspondência no inventário Hypervisor, vira `REVIEW` com:
-
-```text
+REVIEW
 VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
 ```
 
-Assim o pipeline Network não cria uma VM como equipamento físico por engano.
-
 ## Dell Networking — 1.10.10
 
-Modelos físicos de switch Dell identificados por ENTITY-MIB/modelo de hardware agora têm prioridade sobre fingerprints genéricos de Linux/SSH, SNMP ou Web.
+Modelos físicos de switch Dell identificados por ENTITY-MIB/modelo de hardware têm prioridade sobre fingerprints genéricos Linux/SSH/Web/SNMP.
 
-Exemplos observados no DCM:
+Validados no DCM:
 
 ```text
-N2024
-PCT7024 / PowerConnect 7024
-S4128F-ON
+N2024      → NETWORK_SWITCH / HIGH
+PCT7024    → NETWORK_SWITCH / HIGH
+S4128F-ON  → NETWORK_SWITCH / HIGH
 ```
-
-Todos são tratados como `NETWORK_SWITCH` quando o modelo de hardware confirma a família.
-
-Isso é importante porque sistemas Dell Networking podem expor SSH/Linux, mas o asset continua sendo um switch físico.
 
 ## Diagnóstico automático do PLAN Network — 1.10.9+
 
@@ -115,9 +137,7 @@ run         → dry-run
 run --apply → IMPORT apenas de READY + AUDIT
 ```
 
-O PLAN revisa/bloqueia confiança insuficiente, role desconhecida, OOB sem parent, conflito de identidade, IP pertencente a outro Device e drift destrutivo.
-
-## Hypervisor LIVE PASS — 1.10.8
+## Hypervisor LIVE PASS — 1.10.8+
 
 Após o APPLY multi-contexto e compare final:
 
@@ -130,14 +150,13 @@ AMBIGUOUS: 0
 COMPARE STATUS: OK
 ```
 
-A VM acompanha Tenant/Site do Host/Cluster, Cluster/Site usa migração coordenada e o compare é read-only.
-
 ## Identidade e reconciliação
 
 Regras conservadoras:
 
 - nome sozinho não autoriza migração forte;
 - serial/UUID, IP e MAC são evidências fortes quando inequívocas;
+- para storage FibreAlliance, `connUnitId` válido pode ser identidade forte do array;
 - MAC de gerenciamento autoritativo é usado no Network;
 - MACs auxiliares não fundem assets sozinhos;
 - ausência em coleta não vira DELETE automático.
