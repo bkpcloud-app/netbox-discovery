@@ -69,19 +69,10 @@ def print_plan_diagnostics(plan_path, classification_path):
     by_ip = _classification_by_ip(classification)
     records = plan.get("records") or []
 
-    ready_create = [
-        row for row in records
-        if row.get("decision") == "READY" and row.get("action") == "CREATE"
-    ]
-    ready_update = [
-        row for row in records
-        if row.get("decision") == "READY" and row.get("action") == "UPDATE_SAFE"
-    ]
+    ready_create = [row for row in records if row.get("decision") == "READY" and row.get("action") == "CREATE"]
+    ready_update = [row for row in records if row.get("decision") == "READY" and row.get("action") == "UPDATE_SAFE"]
     delegated = [row for row in records if row.get("decision") == "DELEGATED"]
-    pending = [
-        row for row in records
-        if row.get("decision") in ("REVIEW", "BLOCKED")
-    ]
+    pending = [row for row in records if row.get("decision") in ("REVIEW", "BLOCKED")]
 
     print("===== NETWORK PLAN DIAGNÓSTICO =====")
     print("Planner: {0}".format(clean(plan.get("planner_version")) or "-"))
@@ -153,8 +144,7 @@ def print_plan_diagnostics(plan_path, classification_path):
             clean(row.get("match_state")) or "-", clean(row.get("match_reason")) or "-"
         ))
         print("  Fabricante/Modelo/Serial: {0} / {1} / {2}".format(
-            clean(row.get("manufacturer")) or "-", clean(row.get("model")) or "-",
-            clean(row.get("serial")) or "-",
+            clean(row.get("manufacturer")) or "-", clean(row.get("model")) or "-", clean(row.get("serial")) or "-",
         ))
         _print_class_evidence(row, class_row)
 
@@ -166,7 +156,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     classifier = os.path.join(HERE, "classifier_v4.py")
-    reconciler = os.path.join(HERE, "reconciler_v3.py")
+    reconciler = os.path.join(HERE, "reconciler_v4.py")
     planner = os.path.join(HERE, "planner_v3.py")
 
     cmd = [sys.executable, classifier, "--output-dir", args.output_dir]
@@ -197,7 +187,7 @@ def main(argv=None):
     print("===== INVENTORY PIPELINE =====")
     print("Pipeline version: {0}".format(PIPELINE_VERSION))
     print("CLASSIFY V4: OK")
-    print("RECONCILE V3: OK")
+    print("RECONCILE V4: OK")
     print("PLAN V3: OK")
     print("NetBox write: NÃO")
     return 0
