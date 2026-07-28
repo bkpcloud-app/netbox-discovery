@@ -17,7 +17,7 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.10.16"
+          test "$(cat VERSION)" = "1.10.17"
 
       - name: Documentation sync
         run: |
@@ -80,6 +80,9 @@ jobs:
 
       - name: Network 1.10.16 single-interface VM repair
         run: python3 tests/test_network_1_10_16.py
+
+      - name: Network 1.10.17 zero-interface VM repair
+        run: python3 tests/test_network_1_10_17.py
 
       - name: Secret sanity check
         run: |
