@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.10.12 — PRODUCT V1  
+**Versão atual:** 1.10.13 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -38,7 +38,30 @@ netbox-discovery hypervisor status
 
 Conectores: VMware, Proxmox VE e Microsoft Hyper-V.
 
-## Identidade anti-flap — 1.10.12
+## Precedência de ownership por IP — 1.10.13
+
+O dry-run live da 1.10.12 comprovou o anti-flap do `SRV-AE11`, mas revelou uma regressão: assets que o planner base já havia marcado como `DELEGATED` porque o IP pertence a `virtualization.vminterface` podiam ser rebaixados para `REVIEW` pela nova correlação por nome.
+
+A 1.10.13 define a precedência correta:
+
+```text
+IP já pertence a virtualization.vminterface
+→ DELEGATED/NOOP
+→ ownership Hypervisor já provado
+→ correlação por nome não pode rebaixar para REVIEW
+```
+
+A correlação por nome continua sendo usada quando o ownership por IP ainda não está provado.
+
+O conflito físico/VM continua protegido:
+
+```text
+Device físico existente + identidade VMware + VM única por nome
+→ BLOCKED/CONFLICT
+→ PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM:<id>
+```
+
+## Identidade anti-flap — 1.10.12+
 
 O primeiro APPLY Network real mostrou que uma evidência forte pode desaparecer em uma coleta posterior sem que o equipamento tenha mudado. Exemplos reais:
 
@@ -67,16 +90,7 @@ A memória é conservadora:
 - serial válido de storage continua sendo identidade forte;
 - o histórico não copia MAC antigo para criar interface/MAC no NetBox.
 
-O diagnóstico mostra quando houve retenção:
-
-```text
-Anti-flap: identidade forte preservada de ...
-VMware MAC histórico: ...
-```
-
-## Ownership Network ↔ Hypervisor por nome único — 1.10.12
-
-Além de IP já pertencente a `virtualization.vminterface`, o Network agora consulta VMs do mesmo Tenant/Site.
+## Ownership Network ↔ Hypervisor por nome único — 1.10.12+
 
 Quando há evidência VMware e um nome único corresponde a uma VM existente:
 
@@ -94,8 +108,6 @@ Se já existir um `dcim.device` físico para esse mesmo asset:
 → PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM
 → nenhuma escrita automática
 ```
-
-Isso impede que uma coleta que perdeu o MAC transforme uma VM em Device físico.
 
 ## PowerVault / storage FibreAlliance — 1.10.11+
 
@@ -116,23 +128,7 @@ connUnitProduct  → modelo
 connUnitSn       → serial
 ```
 
-A 1.10.12 faz até três tentativas read-only da árvore FA-MIB para reduzir perda transitória de identidade.
-
-Política:
-
-```text
-mesmo serial/connUnitId forte
-→ mesmo storage
-→ múltiplos IPs MGMT no mesmo Device
-
-diferentes identidades fortes
-→ não fundir
-
-sem identidade suficiente
-→ REVIEW/BLOCKED
-```
-
-O SNMP EngineID não é usado como identidade do array.
+A 1.10.12+ faz até três tentativas read-only da árvore FA-MIB para reduzir perda transitória de identidade.
 
 ## Ownership por IP — 1.10.10+
 
@@ -144,6 +140,8 @@ Quando um IP descoberto pelo Network já pertence no NetBox a `virtualization.vm
 → owner Hypervisor
 → nenhuma escrita Network
 ```
+
+Na 1.10.13 essa decisão passa a ser explicitamente prioritária sobre a ponte de nome.
 
 ## Dell Networking — 1.10.10+
 
@@ -169,8 +167,6 @@ NETWORK AJUSTES READY
 NETWORK PENDÊNCIAS POR MOTIVO
 NETWORK PENDÊNCIAS DETALHADAS
 ```
-
-O AUDIT 1.10.12 também mostra no terminal cada WARN/FAIL em `AUDIT PENDÊNCIAS DETALHADAS`.
 
 ## Política Network
 
@@ -198,19 +194,6 @@ AMBIGUOUS: 0
 COMPARE STATUS: OK
 ```
 
-## Identidade e reconciliação
-
-Regras conservadoras:
-
-- nome sozinho não autoriza migração forte;
-- serial/UUID, IP e MAC são evidências fortes quando inequívocas;
-- storage usa serial e `connUnitId` válido;
-- `connUnitId=000...000` não é identidade;
-- MAC de gerenciamento autoritativo é usado no Network;
-- MAC auxiliar não funde assets sozinho;
-- ausência em uma coleta não vira DELETE automático;
-- evidência forte histórica não desaparece por falha transitória sem contradição atual.
-
 ## Segurança operacional
 
 ```text
@@ -223,8 +206,6 @@ Hypervisor run --apply      = escrita após preflight
 REVIEW/BLOCKED              = não escrevem
 DELETE Hypervisor           = nunca automático
 ```
-
-Network, Hypervisor, Compare e Update compartilham lock global. POST/PATCH não recebem retry cego. As três tentativas FA-MIB são apenas leituras SNMP.
 
 ## Operação
 
