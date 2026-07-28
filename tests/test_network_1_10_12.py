@@ -7,7 +7,7 @@ BASE = os.path.join(ROOT, "netbox-discovery")
 sys.path.insert(0, BASE)
 
 from modules.discovery import network_v3
-from modules.inventory import classifier_v4, planner_v3
+from modules.inventory import classifier_v4, planner_v3, reconciler_v4
 
 
 def test_vmware_history_is_sticky_when_current_mac_is_missing():
@@ -75,6 +75,21 @@ def test_zero_fa_id_is_not_identity_but_serial_still_classifies_storage():
     assert fa["product"] == "DELL EMC ME4012"
 
 
+def test_reconciler_preserves_history_conflict_for_planner():
+    old = reconciler_v4.ORIG_BUILD_ASSETS
+    try:
+        reconciler_v4.ORIG_BUILD_ASSETS = lambda records: ([{
+            "asset_id": "A1", "primary_ip": "10.1.1.53", "ips": ["10.1.1.53"],
+            "asset_class": "PHYSICAL_DEVICE", "role": "STORAGE",
+        }], [], [])
+        assets, _, _ = reconciler_v4.build_assets([{
+            "ip": "10.1.1.53", "historical_identity_conflict": "storage-serial",
+        }])
+        assert assets[0]["historical_identity_conflict"] == "storage-serial"
+    finally:
+        reconciler_v4.ORIG_BUILD_ASSETS = old
+
+
 def test_unique_vm_name_delegates_vm_candidate():
     old = planner_v3.ORIG_BUILD_PLAN
     try:
@@ -137,6 +152,7 @@ def main():
         test_vmware_history_does_not_override_strong_physical_switch,
         test_storage_history_restores_array_identity_after_fa_mib_miss,
         test_zero_fa_id_is_not_identity_but_serial_still_classifies_storage,
+        test_reconciler_preserves_history_conflict_for_planner,
         test_unique_vm_name_delegates_vm_candidate,
         test_existing_physical_device_is_blocked_when_vm_identity_matches,
         test_fa_probe_retries_safe_reads,
