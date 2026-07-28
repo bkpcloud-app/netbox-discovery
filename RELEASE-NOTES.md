@@ -1,30 +1,136 @@
+## V1.10.17 — Create missing VM interface during safe duplicate repair
+
+Release criada a partir do APPLY live da 1.10.16 no DCM.
+
+### Evidência live da 1.10.16
+
+```text
+Planner: 4.6-product
+READY/REPAIR_SAFE: 0
+SRV-AE11 → BLOCKED
+VM única: ID 359
+MAC VMware: 00:50:56:9F:9E:70
+Interfaces cadastradas na VM: 0
+```
+
+A 1.10.16 bloqueou corretamente:
+
+```text
+REPAIR_SAFE_NOT_ELIGIBLE:
+Fallback de interface única exige exatamente uma interface na VM: 0
+```
+
+O conjunto normal permaneceu saudável:
+
+```text
+PREFLIGHT GLOBAL FINALIZE: OK
+MAC RECONCILE: PASS
+Assets FAIL: 0
+Checks FAIL: 0
+Status: PASS_WITH_WARNINGS
+```
+
+### PLAN V7
+
+Adiciona um terceiro caminho estritamente protegido para `REPAIR_SAFE_VM_DUPLICATE`:
+
+```text
+VM única por nome
++ zero virtualization.vminterface
++ exatamente um MAC VMware forte
++ MAC ausente ou sem vínculo
++ MAC não duplicado e sem outro owner
++ Device/IP/interfaces integralmente criados pelo produto
+→ READY/REPAIR_SAFE_VM_DUPLICATE
+```
+
+O plano registra:
+
+```text
+vm_interface_mode=CREATE_SINGLE_VM_INTERFACE
+vm_interface_name=MGMT
+vm_mac_mode=ENSURE_CREATED_VM_INTERFACE
+```
+
+### Importer V7
+
+Antes de qualquer escrita destrutiva, o importer revalida:
+
+- Device, Tenant/Site e ownership do produto;
+- ausência de serial, rack, location, cluster e objetos relacionados;
+- interfaces físicas e IP ainda inalterados;
+- VM ainda sem interfaces;
+- MAC VMware ainda único e sem outro proprietário;
+- VM ainda sem outro primary IPv4.
+
+Depois executa:
+
+```text
+cria virtualization.vminterface MGMT
+→ cria/atribui MAC VMware
+→ define primary_mac_address
+→ move o IP para a nova interface
+→ define primary IPv4 da VM se vazio
+→ remove somente o Device duplicado criado pelo produto
+```
+
+A VM nunca é removida.
+
+### Recuperação
+
+Falhas parciais convergem de forma segura:
+
+```text
+interface criada sem MAC
+→ fallback de interface única na próxima execução
+
+interface + MAC criados, IP ainda no Device
+→ REPAIR_SAFE normal
+
+IP já movido
+→ RECOVERY_AFTER_IP_MOVE
+```
+
+### Auditor V7
+
+Adiciona validações específicas:
+
+```text
+REPAIR_VM_INTERFACE_CREATED_OK
+REPAIR_VM_MAC_OK
+REPAIR_DUPLICATE_DEVICE_REMOVED
+REPAIR_IP_ON_VM
+REPAIR_VM_PRIMARY_IP_OK
+REPAIR_IDEMPOTENCY_DELEGATED
+```
+
+### Componentes
+
+```text
+planner_v7.py       4.7-product
+importer_v7.py      5.5-product
+auditor_v7.py       6.5-product
+pipeline            2.8-product
+runner              2.6-product
+```
+
+Estado inicial: **CI/NOT LIVE até a única execução final `netbox-discovery run --apply`**.
+
+---
+
 ## V1.10.16 — Single-interface VM MAC bootstrap before safe repair
 
 Release criada a partir do APPLY live da 1.10.15 no DCM.
 
-### Evidência live da 1.10.15
-
-```text
-MAC RECONCILE: PASS
-Assets FAIL: 0
-Checks FAIL: 0
-ME5024 MAC_MISSING: resolvido
-```
-
-O `SRV-AE11` permaneceu bloqueado:
+### Evidência anterior
 
 ```text
 VM única ID 359
 MAC VMware forte 00:50:56:9F:9E:70
 Interface da VM por MAC não é única: 0
-Reparos seguros concluídos: 0
 ```
 
-A interface da VM não possuía objeto MAC no NetBox.
-
-### PLAN V6
-
-Adiciona um fallback estritamente limitado:
+O PLAN V6 adicionou fallback para:
 
 ```text
 VM única por nome
@@ -35,44 +141,7 @@ VM única por nome
 → READY/REPAIR_SAFE_VM_DUPLICATE
 ```
 
-VM com múltiplas interfaces, MAC divergente ou MAC pertencente a outro objeto continua `BLOCKED`.
-
-### Importer V6
-
-Antes de mover o IP ou remover o Device duplicado:
-
-```text
-cria/atribui o MAC à virtualization.vminterface única
-→ define primary_mac_address da interface
-→ revalida o reparo
-→ move o IP
-→ define primary IPv4 da VM se vazio
-→ remove somente o Device duplicado criado pelo produto
-```
-
-A VM nunca é removida. O MAC é revalidado no preflight global e novamente imediatamente antes da escrita.
-
-### Auditor V6
-
-Além dos checks anteriores, exige:
-
-```text
-REPAIR_VM_MAC_OK
-```
-
-O MAC deve existir uma única vez, pertencer à interface correta da VM e ser o `primary_mac_address` dessa interface.
-
-### Componentes
-
-```text
-planner_v6.py       4.6-product
-importer_v6.py      5.4-product
-auditor_v6.py       6.4-product
-pipeline            2.7-product
-runner              2.5-product
-```
-
-Estado inicial: **CI/NOT LIVE até a única execução final `netbox-discovery run --apply`**.
+A validação live mostrou que a VM possuía zero interfaces, não uma. O produto permaneceu `BLOCKED`, sem escrita destrutiva. Esse cenário foi tratado na 1.10.17.
 
 ---
 
@@ -85,25 +154,12 @@ Release criada a partir do APPLY live da 1.10.14 no DCM.
 ```text
 SRV-AE11
 → historical_vmware_mac estava presente
-→ PLAN V4 avaliava somente asset.macs atual
+→ PLAN anterior avaliava somente asset.macs atual
 
 ME5024
 → IP/interface existentes foram preservados
 → ensure_mac não foi chamado nesse caminho
 → AUDIT: MAC_MISSING 00:C0:FF:66:B4:BF
-```
-
-### PLAN V5
-
-O `historical_vmware_mac` pode participar do gate quando é OUI VMware, existe uma única VM por nome, o MAC corresponde exatamente a uma interface live e todas as proteções de ownership continuam válidas.
-
-### Preflight e MAC RECONCILE
-
-```text
-MAC ausente ou sem vínculo → permitido
-MAC na interface correta  → permitido
-MAC duplicado              → bloqueia
-MAC em outra interface/VM  → bloqueia
 ```
 
 Após o IMPORT normal:
@@ -122,8 +178,6 @@ MAC RECONCILE: PASS
 Assets FAIL: 0
 Checks FAIL: 0
 ```
-
-O reparo do SRV-AE11 revelou a ausência de MAC na própria interface da VM e foi finalizado na 1.10.16.
 
 ---
 
