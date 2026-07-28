@@ -1,3 +1,70 @@
+## V1.10.13 — Preserve authoritative Hypervisor IP delegation
+
+Hotfix criada a partir do dry-run live da 1.10.12 no DCM.
+
+### Evidência live que motivou a correção
+
+A 1.10.12 corrigiu o caso `SRV-AE11` e comprovou a ponte por nome:
+
+```text
+BLOCKED | 10.1.1.111 | SRV-AE11
+PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM:359
+```
+
+Porém, seis assets que já tinham ownership Hypervisor provado por IP foram rebaixados para `REVIEW` porque a ponte por nome não encontrou VM nominal:
+
+```text
+10.1.1.20  vcsa
+10.1.1.155 pagamento
+10.1.1.170 unifi
+10.1.1.200 FAZ-MIZU
+10.1.1.202 FMG-DCM
+10.1.1.230 LINUX_HOST-10-1-1-230
+```
+
+Todos mostravam simultaneamente:
+
+```text
+OWNED_BY_HYPERVISOR_VM
+Match: EXTERNAL_MANAGED
+IP(s) já vinculado(s) a virtualization.vminterface
+```
+
+Mas a decisão final ficou incorretamente `REVIEW` com `VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH`.
+
+### Correção
+
+O `planner_v3` passa a tratar a decisão base `DELEGATED` como autoritativa:
+
+```text
+IP ownership já provado
+→ DELEGATED/NOOP
+→ name bridge não pode rebaixar a decisão
+```
+
+A correlação por nome continua ativa apenas para acrescentar ownership quando o IP ainda não o provou.
+
+### Segurança preservada
+
+O caso Device físico + VM única por nome continua bloqueado:
+
+```text
+SRV-AE11-like
+→ BLOCKED/CONFLICT
+→ PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM:<id>
+```
+
+Nenhuma remoção automática é introduzida.
+
+### Regressões
+
+- `DELEGATED` por IP não pode virar `REVIEW` por ausência de name match;
+- conflito físico/VM por nome continua `BLOCKED`.
+
+Estado inicial: **CI/NOT LIVE até novo dry-run real**.
+
+---
+
 ## V1.10.12 — Identity anti-flap + VM ownership by name
 
 Release criada a partir do primeiro APPLY Network real do DCM em 28/07/2026.
@@ -89,7 +156,7 @@ Se já existir Device físico:
 
 Nenhuma remoção automática do Device criado incorretamente é feita nesta release. Primeiro o produto deve provar ownership Hypervisor ao vivo e bloquear o conflito.
 
-Estado inicial: **CI/NOT LIVE até dry-run real**.
+Estado após dry-run live: ponte por nome/conflito físico comprovada; anti-flap específico ainda LIVE PARTIAL.
 
 ---
 
