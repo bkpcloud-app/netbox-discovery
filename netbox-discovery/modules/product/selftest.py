@@ -41,12 +41,13 @@ def check(base, package_root=""):
     errors = []
     required = [
         "VERSION", "bin/netbox-discovery", "lib/config.py", "lib/netbox.py",
-        "modules/discovery/network.py", "modules/discovery/network_v2.py",
+        "modules/discovery/network.py", "modules/discovery/network_v2.py", "modules/discovery/network_v3.py",
         "modules/inventory/classifier.py", "modules/inventory/classifier_v2.py",
-        "modules/inventory/classifier_v3.py", "modules/inventory/reconciler_v2.py",
-        "modules/inventory/reconciler_v3.py", "modules/inventory/planner_v2.py",
-        "modules/inventory/pipeline.py", "modules/importers/importer_v2.py",
-        "modules/auditors/auditor_v2.py", "modules/product/configurator_v2.py",
+        "modules/inventory/classifier_v3.py", "modules/inventory/classifier_v4.py",
+        "modules/inventory/reconciler_v2.py", "modules/inventory/reconciler_v3.py", "modules/inventory/reconciler_v4.py",
+        "modules/inventory/planner_v2.py", "modules/inventory/planner_v3.py",
+        "modules/inventory/pipeline.py", "modules/importers/importer_v2.py", "modules/importers/importer_v3.py",
+        "modules/auditors/auditor_v2.py", "modules/auditors/auditor_v3.py", "modules/product/configurator_v2.py",
         "modules/product/runner.py", "modules/product/updater.py",
         "modules/product/health.py", "modules/product/selftest.py",
         "modules/hypervisor/configurator_v2.py", "modules/hypervisor/deps_vmware.py",

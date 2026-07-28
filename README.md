@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.10.11 — PRODUCT V1  
+**Versão atual:** 1.10.12 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -38,50 +38,103 @@ netbox-discovery hypervisor status
 
 Conectores: VMware, Proxmox VE e Microsoft Hyper-V.
 
-## PowerVault / storage FibreAlliance — 1.10.11
+## Identidade anti-flap — 1.10.12
 
-Storages com duas controladoras não podem ser fundidos apenas porque respondem com o mesmo `sysName`.
+O primeiro APPLY Network real mostrou que uma evidência forte pode desaparecer em uma coleta posterior sem que o equipamento tenha mudado. Exemplos reais:
 
-A partir da 1.10.11, o discovery tenta obter identidade do array pelo FCMGMT/FibreAlliance MIB:
+```text
+SRV-AE11
+coleta A → MAC VMware 00:50:56:... → VIRTUAL_MACHINE_CANDIDATE
+coleta B → MAC não observado         → não pode virar Device físico
+
+ME4024
+coleta A → FA-MIB/serial do array
+coleta B → FA-MIB transitório ausente → identidade do array não pode sumir
+```
+
+A 1.10.12 mantém por até 48 horas apenas evidências fortes já observadas no mesmo Site/IP:
+
+```text
+VMware OUI / VIRTUAL_MACHINE_CANDIDATE
+FA-MIB storage-subsystem + serial/connUnitId
+```
+
+A memória é conservadora:
+
+- identidade física forte atual vence evidência VMware antiga;
+- serial/FA atual diferente gera conflito, não sobrescrita silenciosa;
+- `connUnitId` composto só de zeros é tratado como ausente;
+- serial válido de storage continua sendo identidade forte;
+- o histórico não copia MAC antigo para criar interface/MAC no NetBox.
+
+O diagnóstico mostra quando houve retenção:
+
+```text
+Anti-flap: identidade forte preservada de ...
+VMware MAC histórico: ...
+```
+
+## Ownership Network ↔ Hypervisor por nome único — 1.10.12
+
+Além de IP já pertencente a `virtualization.vminterface`, o Network agora consulta VMs do mesmo Tenant/Site.
+
+Quando há evidência VMware e um nome único corresponde a uma VM existente:
+
+```text
+VM candidate + VM única com mesmo nome
+→ DELEGATED
+→ NOOP
+→ ownership Hypervisor
+```
+
+Se já existir um `dcim.device` físico para esse mesmo asset:
+
+```text
+→ BLOCKED
+→ PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM
+→ nenhuma escrita automática
+```
+
+Isso impede que uma coleta que perdeu o MAC transforme uma VM em Device físico.
+
+## PowerVault / storage FibreAlliance — 1.10.11+
+
+Storages com duas controladoras não são fundidos apenas por `sysName`.
+
+O discovery consulta:
 
 ```text
 .1.3.6.1.3.94.1.6.1
 ```
 
-E usa, quando expostos pelo equipamento:
+E usa:
 
 ```text
-connUnitId       → identidade persistente do storage
-connUnitType     → exige storage-subsystem(11)
+connUnitId       → identidade persistente quando válido
+connUnitType     → storage-subsystem(11)
 connUnitProduct  → modelo
 connUnitSn       → serial
 ```
 
+A 1.10.12 faz até três tentativas read-only da árvore FA-MIB para reduzir perda transitória de identidade.
+
 Política:
 
 ```text
-mesmo connUnitId em dois IPs de gerenciamento
+mesmo serial/connUnitId forte
 → mesmo storage
-→ RECONCILE pode unir os IPs/controladoras em um único asset
+→ múltiplos IPs MGMT no mesmo Device
 
-diferentes connUnitId
+diferentes identidades fortes
 → não fundir
 
-sem identidade FA suficiente
-→ continuar REVIEW/BLOCKED
+sem identidade suficiente
+→ REVIEW/BLOCKED
 ```
 
-O SNMP EngineID não é usado como identidade do array, pois pode representar a controladora individual.
+O SNMP EngineID não é usado como identidade do array.
 
-O diagnóstico Network mostra a evidência quando disponível:
-
-```text
-Storage FA-MIB: id=... product=... serial=... type=storage-subsystem(11)
-```
-
-A release permanece sem escrita automática: somente `READY` pode ser importado e somente após `--apply` explícito.
-
-## Ownership entre Network e Hypervisor — 1.10.10
+## Ownership por IP — 1.10.10+
 
 Quando um IP descoberto pelo Network já pertence no NetBox a `virtualization.vminterface`:
 
@@ -92,16 +145,9 @@ Quando um IP descoberto pelo Network já pertence no NetBox a `virtualization.vm
 → nenhuma escrita Network
 ```
 
-Um asset com identidade VMware, mas sem VM correspondente, permanece:
+## Dell Networking — 1.10.10+
 
-```text
-REVIEW
-VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
-```
-
-## Dell Networking — 1.10.10
-
-Modelos físicos de switch Dell identificados por ENTITY-MIB/modelo de hardware têm prioridade sobre fingerprints genéricos Linux/SSH/Web/SNMP.
+Modelos físicos Dell identificados por ENTITY-MIB/modelo de hardware têm prioridade sobre Linux/SSH/Web genérico.
 
 Validados no DCM:
 
@@ -111,7 +157,7 @@ PCT7024    → NETWORK_SWITCH / HIGH
 S4128F-ON  → NETWORK_SWITCH / HIGH
 ```
 
-## Diagnóstico automático do PLAN Network — 1.10.9+
+## Diagnóstico automático do PLAN Network
 
 `netbox-discovery run` mostra:
 
@@ -124,7 +170,7 @@ NETWORK PENDÊNCIAS POR MOTIVO
 NETWORK PENDÊNCIAS DETALHADAS
 ```
 
-Para READY/REVIEW/BLOCKED o produto mostra evidências relevantes sem exigir JSON/Python ad-hoc.
+O AUDIT 1.10.12 também mostra no terminal cada WARN/FAIL em `AUDIT PENDÊNCIAS DETALHADAS`.
 
 ## Política Network
 
@@ -137,9 +183,11 @@ run         → dry-run
 run --apply → IMPORT apenas de READY + AUDIT
 ```
 
+O importer recalcula o PLAN com o planner atual antes de qualquer APPLY.
+
 ## Hypervisor LIVE PASS — 1.10.8+
 
-Após o APPLY multi-contexto e compare final:
+Validação final de referência:
 
 ```text
 Objetos comparados: 282
@@ -156,20 +204,12 @@ Regras conservadoras:
 
 - nome sozinho não autoriza migração forte;
 - serial/UUID, IP e MAC são evidências fortes quando inequívocas;
-- para storage FibreAlliance, `connUnitId` válido pode ser identidade forte do array;
+- storage usa serial e `connUnitId` válido;
+- `connUnitId=000...000` não é identidade;
 - MAC de gerenciamento autoritativo é usado no Network;
-- MACs auxiliares não fundem assets sozinhos;
-- ausência em coleta não vira DELETE automático.
-
-## Estrutura Tenant/Site
-
-```text
-Tenant Group [opcional]
-└── Tenant
-    └── Site
-```
-
-O produto é genérico e não contém hardcode de cliente.
+- MAC auxiliar não funde assets sozinho;
+- ausência em uma coleta não vira DELETE automático;
+- evidência forte histórica não desaparece por falha transitória sem contradição atual.
 
 ## Segurança operacional
 
@@ -184,7 +224,7 @@ REVIEW/BLOCKED              = não escrevem
 DELETE Hypervisor           = nunca automático
 ```
 
-Network, Hypervisor, Compare e Update compartilham lock global. POST/PATCH não recebem retry cego.
+Network, Hypervisor, Compare e Update compartilham lock global. POST/PATCH não recebem retry cego. As três tentativas FA-MIB são apenas leituras SNMP.
 
 ## Operação
 
