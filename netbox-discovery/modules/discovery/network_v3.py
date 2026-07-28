@@ -2,7 +2,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 
+import os
 import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from modules.discovery import network_v2 as v2
 
@@ -11,16 +17,12 @@ ORIG_FA_PROBE = v2.probe_snmp_fa_connectivity
 
 
 def probe_snmp_fa_connectivity(ip, snmp):
-    """Retry safe/read-only FA-MIB discovery to reduce transient identity loss.
-
-    A missing SNMP walk must never be treated as evidence that a previously
-    identified storage array stopped being that array. This wrapper only
-    retries GET-like SNMP reads; it performs no write to the device.
-    """
+    """Retry safe/read-only FA-MIB discovery to reduce transient identity loss."""
     last = {"primary": {}, "units": [], "count": 0}
     for _attempt in range(3):
         last = ORIG_FA_PROBE(ip, snmp)
-        if (last.get("primary") or {}).get("conn_unit_id"):
+        primary = last.get("primary") or {}
+        if primary.get("conn_unit_id") or primary.get("serial"):
             return last
     return last
 
