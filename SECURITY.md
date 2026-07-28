@@ -1,158 +1,135 @@
 # Segurança do repositório
 
-**Versão da política:** 1.10.13
+**Versão da política:** 1.10.14
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
 ## Nunca versionar
 
 - configuração real de cliente;
-- token NetBox;
-- community SNMP real;
-- senhas VMware/Proxmox/Hyper-V;
+- tokens e communities;
+- senhas VMware, Proxmox, Hyper-V ou NetBox;
 - chaves privadas;
-- relatórios/logs/backups reais de clientes.
+- relatórios, journals, logs e backups reais.
 
 ## Decisões Network
 
 ```text
-READY       → elegível para escrita somente com --apply
-DELEGATED   → ownership externo; nunca escreve no Network
-REVIEW      → não escreve
-BLOCKED     → não escreve
+READY/CREATE                    → escreve somente com --apply
+READY/UPDATE_SAFE               → escreve somente com --apply
+READY/REPAIR_SAFE_VM_DUPLICATE  → escreve após preflight global
+READY/NOOP                      → não altera
+DELEGATED                       → não escreve
+REVIEW                          → não escreve
+BLOCKED                         → não escreve
 ```
 
-## Precedência de ownership Hypervisor por IP — 1.10.13
+## Preflight global 1.10.14
 
-Quando o planner base já provou que o IP está atribuído a `virtualization.vminterface`, a decisão `DELEGATED/NOOP` é autoritativa.
+Antes da primeira escrita da finalização:
+
+1. recalcular o PLAN V4;
+2. validar o estado global de todos os READY normais;
+3. reler Device, VM, VM interface, IP, interfaces físicas e MACs;
+4. consultar relações de inventário, console, energia, front/rear ports e bays;
+5. bloquear se qualquer consulta falhar ou qualquer relação inesperada existir;
+6. criar `REPAIR_JOURNAL` read-only;
+7. somente então permitir escrita.
+
+Uma consulta indisponível nunca é interpretada como coleção vazia.
+
+## DELETE restrito
+
+Não existe DELETE genérico no Network.
+
+A única remoção automática da 1.10.14 é um Device duplicado de VM quando todas as condições forem verdadeiras:
+
+- descrição do Device exatamente indica criação pelo produto;
+- interfaces e IP mantêm descrições de ownership do produto;
+- Device sem serial, rack, location, cluster, virtual chassis ou device bay;
+- sem inventory items, console, power, front/rear ports, device bays ou module bays;
+- sem cabo ou conexão manual;
+- um único IP observado;
+- uma única VM por nome;
+- uma única VM interface pelo MAC VMware;
+- mesmo Tenant/Site;
+- VM sem outro primary IPv4.
+
+Se qualquer condição falhar:
 
 ```text
-IP ownership provado
-→ DELEGATED/NOOP
-→ a ponte de nome não pode rebaixar para REVIEW
+BLOCKED
+REPAIR_SAFE_NOT_ELIGIBLE
+NetBox write: NÃO para o reparo
 ```
 
-A correlação por nome pode acrescentar ownership quando o IP ainda não o prova, mas não substitui evidência de ownership mais forte já existente.
+A VM nunca é removida.
 
-## Anti-flap de identidade — 1.10.12+
+## Ordem segura
 
-Uma ausência de evidência em uma coleta não prova que a identidade anterior deixou de ser válida.
+O IMPORT normal é executado antes do reparo destrutivo. Se o import normal falhar, nenhum Device duplicado é removido.
 
-O produto pode reter por até 48 horas, no mesmo Site/IP, somente evidência forte já observada:
+Cada reparo recebe nova verificação live imediatamente antes da ação.
 
-- `VIRTUAL_MACHINE_CANDIDATE` respaldado por OUI VMware;
-- storage respaldado por serial válido e/ou `connUnitId` válido.
+## Recuperação parcial
 
-Regras obrigatórias:
-
-- identidade física forte atual vence histórico VMware;
-- serial atual diferente do histórico → conflito;
-- `connUnitId` atual diferente do histórico → conflito;
-- `connUnitId=000...000` não é identidade;
-- MAC VMware histórico não pode ser usado para criar/alterar MAC de interface;
-- histórico serve para decisão/ownership, não para inventar dados atuais;
-- ausência transitória de MAC/FA-MIB não pode transformar uma VM/storage conhecido em Device genérico READY.
-
-## Ownership Hypervisor por nome único — 1.10.12+
-
-Para um asset com identidade VMware, o planner consulta VMs do mesmo Tenant/Site.
+Se o IP já tiver sido movido para a VM, mas o Device duplicado ainda existir:
 
 ```text
-VM candidate + uma única VM com mesmo nome
-→ DELEGATED/NOOP
+RECOVERY_AFTER_IP_MOVE
 ```
 
-Se já existir Device físico:
+A próxima execução pode concluir somente a limpeza restante, desde que todas as proteções continuem válidas.
+
+## MD32xx
+
+A união automática de controladoras exige:
 
 ```text
-BLOCKED/CONFLICT
-PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM:<id>
+sysObjectID exato
+mesmo sysName não genérico
+exatamente dois endpoints
+STORAGE/HIGH
+IPs consecutivos
+sem serial conflitante
 ```
 
-Nenhuma remoção automática é permitida por essa regra.
+Nome igual sozinho nunca autoriza merge.
 
-## Storage identity — 1.10.11+
-
-Storages com múltiplas controladoras/IPs de gerenciamento não podem ser unidos apenas por nome, fabricante ou modelo.
-
-Quando disponível, a identidade de array usa FCMGMT/FibreAlliance:
+## Ownership Hypervisor
 
 ```text
-connUnitType = storage-subsystem(11)
-connUnitId   = identidade forte quando válido
-connUnitSn   = serial forte quando válido
+IP em virtualization.vminterface → DELEGATED/NOOP
 ```
 
-Regras:
+A ponte por nome só acrescenta ownership quando o IP não o prova. Nunca rebaixa um `DELEGATED` já autoritativo.
 
-- mesmo serial/`connUnitId` válido pode permitir merge de registros STORAGE;
-- identidade diferente impede merge;
-- nome repetido sozinho nunca autoriza merge;
-- MACs diferentes de controladoras não impedem merge quando a identidade de array é a mesma;
-- SNMP EngineID não é identidade do array;
-- até três tentativas FA-MIB são permitidas porque são somente leitura;
-- sem evidência forte, manter REVIEW/BLOCKED.
+## Identidade anti-flap
 
-## Ownership Hypervisor por IP — 1.10.10+
+Identidade VMware e storage forte podem ser preservadas por até 48 horas no mesmo Site/IP. Histórico não injeta MAC antigo em interface e não vence identidade física forte atual.
 
-Quando todos os IPs observados já estão atribuídos a `virtualization.vminterface`:
+`connUnitId=000...000` não é identidade.
 
-```text
-DELEGATED
-NOOP
-OWNED_BY_HYPERVISOR_VM
-```
+## Auditoria 1.10.14
 
-Não criar `dcim.device`, não mover IP e não alterar VM.
+O audit combinado confirma:
 
-## VM candidata sem match
+- convergência dos READY normais;
+- Device duplicado ausente;
+- IP atribuído à VM interface correta;
+- primary IPv4 correto;
+- novo PLAN em `DELEGATED/NOOP` para o asset reparado.
 
-```text
-REVIEW
-VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
-```
+AUDIT é read-only.
 
-Nunca converter automaticamente em equipamento físico apenas porque a correlação Hypervisor ainda não ocorreu.
+## Concorrência e retry
 
-## Classificação física
+Network, Hypervisor, Compare e Update compartilham o lock global.
 
-Fingerprint de sistema operacional/SSH não pode superar identidade explícita de hardware.
-
-Modelos Dell Networking reconhecidos por hardware/ENTITY-MIB são classificados antes de regras genéricas Linux/Web/SNMP.
-
-## APPLY Network
-
-- `run` é dry-run;
-- `run --apply` exige autorização explícita;
-- apenas `READY` entra no importer;
-- importer recalcula com `planner_v3.py` antes da escrita;
-- primeiro erro inesperado interrompe o lote;
-- não fazer correções em massa manuais para contornar o PLAN;
-- conflito conhecido não é apagado automaticamente.
-
-## AUDIT
-
-AUDIT é read-only e usa o planner atual para idempotência.
-
-WARN/FAIL detalhados aparecem no terminal, além dos JSON/CSV.
-
-## Hypervisor
-
-- `hypervisor run` é dry-run;
-- `hypervisor run --compare` é read-only;
-- `hypervisor run --apply` usa preflight global;
-- Cluster/Site e VM/Parent possuem preflight específico;
-- não existe DELETE automático.
-
-## Concorrência
-
-Network, Hypervisor, Compare e Update compartilham:
-
-```text
-/var/lock/netbox-discovery-global.lock
-```
-
-POST/PATCH não recebem retry cego. Retries FA-MIB são apenas leituras SNMP.
+- POST/PATCH/DELETE não recebem retry cego;
+- retries de FA-MIB são apenas leitura;
+- falha parcial é preservada em journal/report;
+- não executar correções manuais em massa para contornar o produto.
 
 ## Credenciais Hypervisor
 
@@ -162,16 +139,8 @@ POST/PATCH não recebem retry cego. Retries FA-MIB são apenas leituras SNMP.
 
 Permissão esperada: `0600`.
 
-## Update
-
-O canal `stable` usa backup, validação, preservação da configuração e rollback de candidato inválido.
-
 ## Homologação
 
 `CI PASS` não significa `LIVE PASS`.
 
-```text
-docs/HOMOLOGACAO.md
-```
-
-Funcionalidade `NOT LIVE` não deve receber APPLY automático.
+Funcionalidade `NOT LIVE` não deve receber scheduler automático.

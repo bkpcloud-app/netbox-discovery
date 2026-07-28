@@ -5,8 +5,8 @@ from __future__ import print_function
 import argparse
 import datetime
 import fcntl
-import json
 import glob
+import json
 import os
 import subprocess
 import sys
@@ -14,7 +14,7 @@ import sys
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 LOCK_FILE = "/var/lock/netbox-discovery-global.lock"
-RUNNER_VERSION = "2.2-product"
+RUNNER_VERSION = "2.3-product"
 
 
 def utc_stamp():
@@ -45,7 +45,7 @@ def write_report(site, apply_mode, status, stages, error=""):
     if not os.path.isdir(REPORTS):
         os.makedirs(REPORTS)
     path = os.path.join(REPORTS, "{0}-run-{1}.json".format(site or "SITE", utc_stamp()))
-    import_ok = any(x.get("stage") == "IMPORT" and x.get("status") == "OK" for x in stages)
+    import_ok = any(x.get("stage") == "IMPORT_FINALIZE" and x.get("status") == "OK" for x in stages)
     with open(path, "w") as f:
         json.dump({
             "stage": "RUN", "runner_version": RUNNER_VERSION,
@@ -71,10 +71,10 @@ def execute(apply_mode):
     stages = []
     try:
         run_step("DISCOVER", [py, os.path.join(BASE, "modules/discovery/network_v3.py")], stages)
-        run_step("CLASSIFY_RECONCILE_PLAN_V2", [py, os.path.join(BASE, "modules/inventory/pipeline.py")], stages)
+        run_step("CLASSIFY_RECONCILE_PLAN_FINAL", [py, os.path.join(BASE, "modules/inventory/pipeline.py")], stages)
         if apply_mode:
-            run_step("IMPORT", [py, os.path.join(BASE, "modules/importers/importer_v3.py"), "--apply"], stages)
-            run_step("AUDIT", [py, os.path.join(BASE, "modules/auditors/auditor_v3.py")], stages)
+            run_step("IMPORT_FINALIZE", [py, os.path.join(BASE, "modules/importers/importer_v4.py"), "--apply"], stages)
+            run_step("AUDIT_FINALIZE", [py, os.path.join(BASE, "modules/auditors/auditor_v4.py")], stages)
             audit_files = glob.glob(os.path.join(REPORTS, "{0}-audit-*.json".format(site)))
             status = "PASS"
             if audit_files:
