@@ -13,7 +13,7 @@ from collections import Counter
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 HERE = os.path.dirname(os.path.abspath(__file__))
-PIPELINE_VERSION = "2.7-product"
+PIPELINE_VERSION = "2.8-product"
 
 
 def latest(pattern):
@@ -127,14 +127,18 @@ def print_plan_diagnostics(plan_path, classification_path):
                 pos, len(ready_repair), clean(row.get("desired_name")) or "-",
                 repair.get("device_id") or "-", repair.get("vm_id") or "-",
             ))
-            print("  IP: {0} -> VM interface ID {1}".format(
-                clean(repair.get("ip_address")) or "-", repair.get("vm_interface_id") or "-"))
+            interface_mode = clean(repair.get("vm_interface_mode"))
+            if interface_mode == "CREATE_SINGLE_VM_INTERFACE":
+                print("  VM interface: CRIAR {0} na VM ID {1}".format(
+                    clean(repair.get("vm_interface_name")) or "MGMT", repair.get("vm_id") or "-"))
+            else:
+                print("  VM interface ID: {0}".format(repair.get("vm_interface_id") or "-"))
+            print("  IP: {0} -> VM interface".format(clean(repair.get("ip_address")) or "-"))
             print("  Modo: {0}".format(clean(repair.get("mode")) or "-"))
             if clean(repair.get("vm_mac_mode")):
-                print("  VM MAC: {0} -> interface única ID {1}".format(
-                    clean(repair.get("vm_mac_address")) or "-", repair.get("vm_interface_id") or "-"))
+                print("  VM MAC: {0}".format(clean(repair.get("vm_mac_address")) or "-"))
                 print("  Evidência VM MAC: {0}".format(clean(repair.get("vm_mac_evidence")) or "-"))
-            print("  Proteção: somente Device/IP/interfaces criados pelo netbox-discovery; sem vínculos manuais")
+            print("  Proteção: VM única, MAC VMware único e Device/IP/interfaces integralmente criados pelo produto")
 
     reason_counts = Counter()
     for row in pending:
@@ -179,7 +183,7 @@ def main(argv=None):
 
     classifier = os.path.join(HERE, "classifier_v5.py")
     reconciler = os.path.join(HERE, "reconciler_v5.py")
-    planner = os.path.join(HERE, "planner_v6.py")
+    planner = os.path.join(HERE, "planner_v7.py")
 
     cmd = [sys.executable, classifier, "--output-dir", args.output_dir]
     if args.input:
@@ -210,7 +214,7 @@ def main(argv=None):
     print("Pipeline version: {0}".format(PIPELINE_VERSION))
     print("CLASSIFY V5: OK")
     print("RECONCILE V5: OK")
-    print("PLAN V6: OK")
+    print("PLAN V7: OK")
     print("NetBox write: NÃO")
     return 0
 
