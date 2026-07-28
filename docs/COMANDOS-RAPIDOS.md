@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.11 — Comandos rápidos
+# netbox-discovery 1.10.12 — Comandos rápidos
 
 ## Atualizar
 
@@ -26,9 +26,34 @@ BLOCKED: N
 NetBox write: NÃO
 ```
 
-## Storage / PowerVault — 1.10.11
+## Anti-flap de identidade — 1.10.12
 
-Quando o equipamento expõe FCMGMT/FibreAlliance MIB, procure na saída:
+Se uma coleta perder temporariamente MAC VMware ou FA-MIB, procure:
+
+```text
+Anti-flap: identidade forte preservada de ...
+VMware MAC histórico: 00:50:56:...
+```
+
+A memória usa somente evidência forte recente do mesmo Site/IP e não copia MAC antigo para criar interface.
+
+Conflito VMware com Device físico:
+
+```text
+BLOCKED
+PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM:<id>
+```
+
+VM candidata com nome único no inventário Hypervisor:
+
+```text
+DELEGATED
+OWNED_BY_HYPERVISOR_VM_NAME:<id>
+```
+
+## Storage / PowerVault
+
+Evidência:
 
 ```text
 Storage FA-MIB: id=... product=... serial=... type=storage-subsystem(11)
@@ -37,31 +62,17 @@ Storage FA-MIB: id=... product=... serial=... type=storage-subsystem(11)
 Política:
 
 ```text
-mesmo connUnitId → pode reconciliar os IPs como o mesmo STORAGE
-diferente connUnitId → não fundir
-sem FA identity → manter conservador
+serial/connUnitId forte igual → mesmo STORAGE
+connUnitId 000...000          → ignorado
+identidade forte diferente    → conflito
+FA-MIB transitório ausente    → histórico forte pode ser preservado por 48h
 ```
 
-Não usar nome repetido como prova de que duas controladoras pertencem ao mesmo array.
-
-## Network — ownership Hypervisor
-
-```text
-DELEGATED | IP | nome | IP(s) já vinculado(s) a virtualization.vminterface
-```
-
-`DELEGATED` = ownership do Hypervisor, nenhuma escrita Network.
-
-VM candidata sem correspondência:
-
-```text
-REVIEW
-VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
-```
+A leitura FA-MIB recebe até três tentativas read-only.
 
 ## Network — APPLY
 
-Somente depois de revisar:
+Somente depois de revisar o PLAN:
 
 ```bash
 netbox-discovery run --apply
@@ -74,7 +85,19 @@ REVIEW      → não escreve
 BLOCKED     → não escreve
 ```
 
-## Dell switches — 1.10.10
+O IMPORT recalcula o PLAN com `planner_v3.py` antes da escrita.
+
+## AUDIT
+
+Na 1.10.12 os detalhes aparecem no terminal:
+
+```text
+===== AUDIT PENDÊNCIAS DETALHADAS =====
+WARN | código | asset | detalhe
+FAIL | código | asset | detalhe
+```
+
+## Dell switches
 
 ```text
 N2024      → NETWORK_SWITCH/HIGH
@@ -100,7 +123,8 @@ netbox-discovery hypervisor status
 2. não repetir --apply cegamente
 3. usar compare/dry-run
 4. revisar estado real
-5. somente então retomar
+5. corrigir o produto, não inventário em massa
+6. somente então retomar
 ```
 
 ## Status
