@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.14 — Matriz de Homologação
+# netbox-discovery 1.10.15 — Matriz de Homologação
 
 ## Estados
 
@@ -27,148 +27,116 @@ COMPARE STATUS: OK
 ## Network — funções já LIVE PASS
 
 ```text
-1.10.10 ownership por IP → DELEGATED
-1.10.10 Dell N2024/PCT7024/S4128F-ON → NETWORK_SWITCH/HIGH
-1.10.12 VM por nome único → DELEGATED
-1.10.12 Device físico + VM → BLOCKED
-1.10.13 precedência de ownership por IP → DELEGATED preservado
+ownership por IP → DELEGATED
+Dell N2024/PCT7024/S4128F-ON → NETWORK_SWITCH/HIGH
+VM por nome único → DELEGATED
+Device físico + VM → BLOCKED
+precedência de ownership por IP → DELEGATED preservado
 ```
 
-## Primeiro APPLY Network real
+## APPLY real da 1.10.14
 
-**Estado:** LIVE PARTIAL.
+O usuário executou uma única operação completa em 28/07/2026.
+
+### Discovery e plano
 
 ```text
-PREFLIGHT: OK
-Assets READY processados: 13
+Hosts ativos: 62
+Assets reconciliados: 55
+READY: 12
+DELEGATED: 41
+REVIEW: 1
+BLOCKED: 1
+```
+
+### Dell MD3200BKP
+
+**Estado:** LIVE PASS.
+
+```text
+READY/CREATE: 1
+10.1.1.56 + 10.1.1.57
+role=STORAGE
+model=PowerVault MD32xx
+```
+
+O IMPORT criou o asset e o PLAN posterior mostrou:
+
+```text
+READY/CREATE: 0
+READY/NOOP: 12
+```
+
+### Preflight global e IMPORT normal
+
+**Estado:** LIVE PASS.
+
+```text
+PREFLIGHT GLOBAL FINALIZE: OK
+NetBox write até aqui: NÃO
+Assets READY processados: 12
 Runtime blocked: 0
 Erros: 0
 NetBox write: SIM
 ```
 
-Idempotência:
+### Web Appliance residual
+
+**Estado:** esperado/seguro.
 
 ```text
-READY/CREATE: 0
-READY/UPDATE_SAFE: 0
-READY/NOOP: 13
+10.1.1.54
+REVIEW
+CONFIDENCE_NONE + UNKNOWN_ROLE
 ```
 
-O APPLY revelou um Device físico duplicado para uma VM quando uma coleta perdeu temporariamente o MAC VMware.
+Não bloqueia READY seguros.
 
-## Estado live imediatamente antes da 1.10.14
+## Findings live que motivaram a 1.10.15
 
-Dry-run 1.10.13:
+### SRV-AE11
+
+A identidade histórica foi preservada corretamente:
 
 ```text
-Planner: 4.3-product
-READY/CREATE: 0
-READY/UPDATE_SAFE: 0
-DELEGATED/HYPERVISOR: 42
-REVIEW: 1
-BLOCKED: 3
+asset_class=VIRTUAL_MACHINE_CANDIDATE
+historical_vmware_mac=00:50:56:9F:9E:70
+VM única ID 359
 ```
 
-Pendências:
+Porém, o PLAN V4 avaliou apenas `asset.macs` atual e ignorou `historical_vmware_mac`:
 
 ```text
-Web Appliance de baixa confiança → REVIEW
-Dell MD3200BKP com dois endpoints → BLOCKED
-Device físico duplicado de uma VM → BLOCKED
+REPAIR_SAFE_NOT_ELIGIBLE: Asset sem MAC VMware forte
 ```
 
-## 1.10.14 — Dell MD32xx dual-controller
+**1.10.15:** o MAC histórico pode entrar no gate somente se for OUI VMware e corresponder exatamente a uma interface live da VM única.
 
-**Estado:** NOT LIVE até a execução final.
+### ME5024
 
-Classificação exige:
+O IMPORT preservou IP/interface existente, mas esse caminho não executou `ensure_mac`.
+
+AUDIT live:
 
 ```text
-sysObjectID=.1.3.6.1.4.1.674.10893.2.31
-sysName não genérico
+FAIL | MAC_MISSING | ME5024 | 00:C0:FF:66:B4:BF
 ```
 
-Merge exige:
+**1.10.15:** adiciona `MAC RECONCILE` após o IMPORT normal e preflight de ownership de MAC antes da primeira escrita.
 
-```text
-exatamente dois endpoints
-mesma identidade OID/nome
-STORAGE/HIGH
-sem serial conflitante
-IPs consecutivos
-```
+## 1.10.15 — estado por função
 
-Resultado esperado:
+| Função | Estado |
+|---|---|
+| Historical VMware MAC no REPAIR_SAFE | CI/NOT LIVE |
+| Preflight global de ownership MAC | CI/NOT LIVE |
+| MAC RECONCILE em interface preservada | CI/NOT LIVE |
+| Auditor usando PLAN V5 | CI/NOT LIVE |
+| MD32xx | LIVE PASS |
+| IMPORT normal | LIVE PASS |
+| Preflight global base | LIVE PASS |
 
-```text
-1 Device STORAGE
-2 interfaces MGMT
-2 IPs
-```
-
-Regressões cobrem classificação e proteção contra par inválido.
-
-## 1.10.14 — REPAIR_SAFE_VM_DUPLICATE
-
-**Estado:** NOT LIVE até a execução final.
-
-O planner promove o conflito para READY apenas se todas as proteções comprovarem que o Device duplicado foi criado integralmente pelo produto e não recebeu nenhum vínculo manual.
-
-Esperado:
-
-```text
-READY/REPAIR_SAFE: 1
-Device duplicado → VM inequívoca
-IP → virtualization.vminterface
-VM primary IPv4 preenchido se vazio
-Device duplicado removido
-```
-
-Nenhuma VM é removida.
-
-## 1.10.14 — preflight global
-
-**Estado:** NOT LIVE.
-
-Antes da primeira escrita:
-
-```text
-valida READY normal
-valida REPAIR_SAFE
-relê relações live
-PREFLIGHT GLOBAL FINALIZE: OK
-NetBox write até aqui: NÃO
-REPAIR JOURNAL criado
-```
-
-Qualquer erro aborta tudo antes da etapa final.
-
-## 1.10.14 — recuperação parcial
-
-**Estado:** CI/NOT LIVE.
-
-```text
-IP já na VM + Device duplicado ainda existente
-→ RECOVERY_AFTER_IP_MOVE
-→ novo preflight
-→ conclui somente limpeza segura
-```
-
-## 1.10.14 — audit combinado
-
-**Estado:** NOT LIVE.
-
-O audit final valida:
-
-- READY normal e MD32xx;
-- Device duplicado ausente;
-- IP na interface correta da VM;
-- primary IPv4 correto;
-- novo PLAN mostra o asset reparado como `DELEGATED/NOOP`.
-
-## Única validação live prevista
-
-Após CI PASS e publicação no `stable`:
+## Única validação live prevista para 1.10.15
 
 ```bash
 netbox-discovery update run
@@ -176,17 +144,21 @@ netbox-discovery version
 netbox-discovery run --apply
 ```
 
-Não haverá uma sequência separada de microtestes. O próprio comando executa o PLAN e o preflight global antes da escrita.
-
 Critério de conclusão:
 
 ```text
-MD32xx criado como 1 STORAGE com 2 MGMT
+READY/REPAIR_SAFE: 1 para SRV-AE11
+MAC RECONCILE: PASS
 REPAIR_SAFE concluído
+Device duplicado removido
+IP 10.1.1.111 na VM ID 359
+ME5024 MAC_OK
 Web Appliance fraco permanece REVIEW se não houver nova evidência
 AUDIT FINALIZE: PASS ou PASS_WITH_WARNINGS sem FAIL
 novo PLAN sem CREATE/UPDATE/REPAIR pendente
 ```
+
+Não haverá sequência separada de microtestes.
 
 ## Schedulers
 
