@@ -1,105 +1,125 @@
-## V1.10.11 — PowerVault / FibreAlliance storage identity
+## V1.10.12 — Identity anti-flap + VM ownership by name
 
-Release criada a partir do resíduo live do Network DCM após a 1.10.10.
+Release criada a partir do primeiro APPLY Network real do DCM em 28/07/2026.
 
-### Evidência que motivou a mudança
-
-Depois de delegar 41 VMs ao Hypervisor e corrigir Dell switches, restaram storages/controladoras como:
+### Primeiro APPLY Network
 
 ```text
-10.1.1.52 / .53 → ME4024
-10.1.1.55       → ME5024
-10.1.1.56 / .57 → MD3200BKP
-10.1.1.58 / .59 → ME4012
+PREFLIGHT: OK
+Assets READY processados: 13
+Runtime blocked: 0
+Erros: 0
+NetBox write: SIM
 ```
 
-Os pares tinham o mesmo `sysName`, mas MACs de gerenciamento diferentes. Nome igual não é evidência suficiente para fundir assets.
-
-### Nova identidade FibreAlliance
-
-O discovery passa a consultar FCMGMT/FibreAlliance:
+Idempotency preview:
 
 ```text
-.1.3.6.1.3.94.1.6.1
+READY/CREATE: 0
+READY/UPDATE_SAFE: 0
+READY/NOOP: 13
 ```
 
-Campos utilizados:
+AUDIT:
 
 ```text
-connUnitId
-connUnitType
-connUnitProduct
-connUnitSn
-connUnitName
-connUnitVendorId
+PASS_WITH_WARNINGS
+Assets FAIL: 0
+Checks FAIL: 0
 ```
 
-Quando `connUnitType=storage-subsystem(11)` e existe `connUnitId` válido, o array passa a ter identidade de storage explícita.
+### Safety finding
 
-### Reconciliação
+`SRV-AE11` havia sido observado como:
 
 ```text
-mesmo connUnitId → merge forte entre IPs/controladoras
-diferente connUnitId → não merge
-serial válido → permanece identidade preferencial
-sem serial, um connUnitId único → asset_id FA:<id>
+management_mac=00:50:56:9F:9E:70
+asset_class=VIRTUAL_MACHINE_CANDIDATE
 ```
 
-O SNMP EngineID não é usado como identidade do array.
+No APPLY seguinte o MAC não foi coletado. A classificação caiu para host genérico e o asset ficou `READY/CREATE`, criando um `dcim.device` físico.
 
-### Classificação
+O mesmo tipo de flapping ocorreu na leitura FA-MIB de controladoras PowerVault: uma execução tinha identidade do array e outra não.
 
-Storage identificado por FA-MIB:
+### Identidade anti-flap
+
+A 1.10.12 guarda por até 48 horas apenas identidade forte já observada no mesmo Site/IP:
+
+- VMware OUI / `VIRTUAL_MACHINE_CANDIDATE`;
+- storage com serial e/ou `connUnitId` válido.
+
+Regras:
+
+- identidade física forte atual vence histórico VMware;
+- serial/FA atual divergente gera conflito;
+- MAC antigo não é copiado para criar interface;
+- ausência transitória não apaga identidade forte.
+
+### VM ownership por nome único
+
+O planner agora consulta VMs do mesmo Tenant/Site.
 
 ```text
-role=STORAGE
-confidence=HIGH
-asset_class=PHYSICAL_DEVICE
+VM candidate + VM única com mesmo nome
+→ DELEGATED/NOOP
 ```
 
-O terminal mostra:
+Se já existir Device físico:
 
 ```text
-Storage FA-MIB: id=... product=... serial=... type=storage-subsystem(11)
+→ BLOCKED/CONFLICT
+→ PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM:<id>
 ```
+
+### PowerVault
+
+- até três tentativas read-only da árvore FA-MIB;
+- `connUnitId=000...000` é tratado como ausente;
+- serial válido ainda classifica STORAGE/HIGH;
+- histórico forte pode restaurar identidade quando uma controladora falha temporariamente na leitura.
+
+### IMPORT/AUDIT
+
+- runner passa a usar `network_v3.py`, `classifier_v4.py`, `planner_v3.py`, `importer_v3.py`, `auditor_v3.py`;
+- IMPORT recalcula obrigatoriamente o PLAN V3 antes da escrita;
+- AUDIT usa PLAN V3 no preview de idempotência;
+- WARN/FAIL do AUDIT aparecem no terminal.
 
 ### Segurança
 
-- não une controladoras por nome;
-- IDs FA diferentes não são fundidos;
-- ausência de FA-MIB não relaxa REVIEW/BLOCKED;
-- apenas READY continua elegível para IMPORT;
-- nenhum APPLY automático foi habilitado.
+Nenhuma remoção automática do Device criado incorretamente é feita nesta release. Primeiro o produto deve provar ownership Hypervisor ao vivo e bloquear o conflito.
 
-Estado inicial: **CI/NOT LIVE até novo dry-run real**.
+Estado inicial: **CI/NOT LIVE até dry-run real**.
+
+---
+
+## V1.10.11 — PowerVault / FibreAlliance storage identity
+
+Adicionou leitura FCMGMT/FibreAlliance `.1.3.6.1.3.94.1.6.1`, classificação `STORAGE/HIGH` e reconciliação por serial/`connUnitId`.
+
+Evidência live parcial:
+
+```text
+ME4024 → DELL EMC ME4024 / serial real / FA ID real
+ME5024 → DELL EMC ME5024 / serial real / FA ID real
+```
+
+A leitura mostrou flapping entre controladoras/executações, motivo da 1.10.12.
 
 ---
 
 ## V1.10.10 — Ownership Network/Hypervisor + Dell Networking
 
-Validação live em 28/07/2026:
+Validação live:
 
 ```text
-Hosts ativos: 64
-Assets reconciliados: 60
 DELEGATED/HYPERVISOR: 41
-READY/CREATE: 5
-REVIEW: 4
-BLOCKED: 6
-NetBox write: NÃO
+N2024      → NETWORK_SWITCH/HIGH
+PCT7024    → NETWORK_SWITCH/HIGH
+S4128F-ON  → NETWORK_SWITCH/HIGH
 ```
 
-Switches Dell validados:
-
-```text
-N2024      → NETWORK_SWITCH / HIGH
-PCT7024    → NETWORK_SWITCH / HIGH
-S4128F-ON  → NETWORK_SWITCH / HIGH
-```
-
-VMs já inventariadas pelo Hypervisor passaram para `DELEGATED/NOOP`. VM candidata sem correspondência continua `REVIEW / VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH`.
-
-Estado do dry-run dessas funções: **LIVE PASS**.
+Estado: LIVE PASS no dry-run dessas funções.
 
 ---
 
@@ -107,22 +127,19 @@ Estado do dry-run dessas funções: **LIVE PASS**.
 
 Adicionou diagnóstico completo no terminal para READY, REVIEW, BLOCKED, motivos, matching, SNMP e evidência CLASSIFY.
 
-Baseline live DCM:
+Baseline:
 
 ```text
-Hosts ativos: 64
-Assets reconciliados: 60
 READY: 7
 REVIEW: 47
 BLOCKED: 6
-NetBox write: NÃO
 ```
 
 ---
 
 ## V1.10.8 — VM acompanha Tenant/Site do Host/Cluster
 
-Fluxo Hypervisor multi-contexto concluído ao vivo.
+Hypervisor multi-contexto concluído ao vivo:
 
 ```text
 Objetos comparados: 282
@@ -139,14 +156,10 @@ Estado: LIVE PASS.
 
 ## V1.10.7 — Cluster/Site + compare read-only
 
-Migração coordenada de Cluster scoped/Hosts e modo oficial `hypervisor run --compare`.
-
-Estado: LIVE PASS.
+Migração coordenada de Cluster/Hosts e compare oficial. Estado: LIVE PASS.
 
 ---
 
 ## V1.10.6 — Preflight global Hypervisor
 
-Recalcula PLAN e revalida identidade antes da primeira escrita.
-
-Estado: LIVE PASS.
+Recalcula PLAN e revalida identidade antes da primeira escrita. Estado: LIVE PASS.
