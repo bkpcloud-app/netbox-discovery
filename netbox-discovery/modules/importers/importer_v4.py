@@ -66,10 +66,13 @@ def _query(nb, endpoint, **params):
 
 
 def _device_related_count(nb, endpoint, device_id):
-    try:
-        return len(_query(nb, endpoint, device_id=device_id, limit=10000))
-    except Exception:
-        return 0
+    # Fail closed: an API/query failure must block deletion instead of being
+    # interpreted as an empty relationship set.
+    return len(_query(nb, endpoint, device_id=device_id, limit=10000))
+
+
+def _all_mac_rows(nb):
+    return _query(nb, "dcim/mac-addresses/", limit=10000)
 
 
 def _verify_repair(nb, row, tenant_id, site_id):
@@ -119,14 +122,19 @@ def _verify_repair(nb, row, tenant_id, site_id):
 
     if clean(ip_obj.get("description")) != clean(repair.get("expected_ip_description")):
         raise RuntimeError("IP não pertence ao produto")
-    if clean(ip_obj.get("assigned_object_type")) != "dcim.interface":
-        raise RuntimeError("IP não está mais no Device")
-    if _assigned_id(ip_obj) not in set(expected_ids):
-        raise RuntimeError("IP mudou de interface")
     if clean(ip_obj.get("address")) != clean(repair.get("ip_address")):
         raise RuntimeError("Endereço IP mudou")
     if nested_id(ip_obj.get("tenant")) not in (None, tenant_id):
         raise RuntimeError("IP mudou de Tenant")
+
+    assignment_type = clean(ip_obj.get("assigned_object_type"))
+    assignment_id = _assigned_id(ip_obj)
+    if assignment_type == "dcim.interface" and assignment_id in set(expected_ids):
+        live_mode = "FULL"
+    elif assignment_type == "virtualization.vminterface" and assignment_id == repair["vm_interface_id"]:
+        live_mode = "RECOVERY_AFTER_IP_MOVE"
+    else:
+        raise RuntimeError("IP pertence a outro objeto: {0} ID {1}".format(assignment_type or "unassigned", assignment_id))
 
     primary = vm.get("primary_ip4") or vm.get("primary_ip") or {}
     current_primary_id = nested_id(primary)
@@ -143,19 +151,25 @@ def _verify_repair(nb, row, tenant_id, site_id):
         if count:
             raise RuntimeError("Device possui objetos relacionados em {0}: {1}".format(endpoint, count))
 
-    mac_ids = sorted(repair.get("mac_ids") or [])
-    live_macs = []
-    for iid in expected_ids:
-        rows = _query(nb, "dcim/mac-addresses/", assigned_object_type="dcim.interface", assigned_object_id=iid, limit=1000)
-        live_macs.extend(rows)
-    if sorted(item.get("id") for item in live_macs if item.get("id")) != mac_ids:
-        raise RuntimeError("MACs do Device mudaram")
+    all_macs = _all_mac_rows(nb)
+    live_macs = [
+        item for item in all_macs
+        if clean(item.get("assigned_object_type")) == "dcim.interface" and _assigned_id(item) in set(expected_ids)
+    ]
+    expected_mac_ids = sorted(repair.get("mac_ids") or [])
+    live_mac_ids = sorted(item.get("id") for item in live_macs if item.get("id"))
+    # Recovery is allowed to have already removed the product MAC rows.
+    if live_mode == "FULL" and live_mac_ids != expected_mac_ids:
+        raise RuntimeError("MACs do Device mudaram: live={0} expected={1}".format(live_mac_ids, expected_mac_ids))
+    if live_mode == "RECOVERY_AFTER_IP_MOVE" and any(mid not in expected_mac_ids for mid in live_mac_ids):
+        raise RuntimeError("Device ganhou MAC inesperado após reparo parcial")
     for item in live_macs:
         desc = clean(item.get("description"))
         if desc and "netbox-discovery" not in desc:
             raise RuntimeError("Device possui MAC não criado pelo produto")
 
     return {
+        "mode": live_mode,
         "device": device,
         "vm": vm,
         "vm_interface": vm_interface,
@@ -171,15 +185,22 @@ def _execute_repair(nb, row, verified, events):
     vm = verified["vm"]
     device = verified["device"]
 
-    ip_obj = nb.patch("ipam/ip-addresses/{0}/".format(ip_obj["id"]), {
-        "assigned_object_type": "virtualization.vminterface",
-        "assigned_object_id": repair["vm_interface_id"],
-    })
-    events.append({
-        "phase": "REPAIR", "object_type": "IP_ADDRESS", "action": "MOVED_TO_VM",
-        "name": repair.get("ip_address"), "object_id": ip_obj.get("id"),
-        "detail": "VM {0} / interface {1}".format(repair.get("vm_name"), repair.get("vm_interface_name")),
-    })
+    if verified.get("mode") != "RECOVERY_AFTER_IP_MOVE":
+        ip_obj = nb.patch("ipam/ip-addresses/{0}/".format(ip_obj["id"]), {
+            "assigned_object_type": "virtualization.vminterface",
+            "assigned_object_id": repair["vm_interface_id"],
+        })
+        events.append({
+            "phase": "REPAIR", "object_type": "IP_ADDRESS", "action": "MOVED_TO_VM",
+            "name": repair.get("ip_address"), "object_id": ip_obj.get("id"),
+            "detail": "VM {0} / interface {1}".format(repair.get("vm_name"), repair.get("vm_interface_name")),
+        })
+    else:
+        events.append({
+            "phase": "REPAIR", "object_type": "IP_ADDRESS", "action": "PRESERVED_ON_VM",
+            "name": repair.get("ip_address"), "object_id": ip_obj.get("id"),
+            "detail": "recuperação de reparo parcial",
+        })
 
     current_primary = nested_id(vm.get("primary_ip4") or vm.get("primary_ip"))
     if not current_primary:
@@ -204,7 +225,8 @@ def _execute_repair(nb, row, verified, events):
         nb.delete("dcim/mac-addresses/{0}/".format(mac["id"]))
         events.append({
             "phase": "REPAIR", "object_type": "MAC_ADDRESS", "action": "DELETED_PRODUCT_DUPLICATE",
-            "name": clean(mac.get("mac_address") or mac.get("mac")), "object_id": mac.get("id"), "detail": repair.get("device_name"),
+            "name": clean(mac.get("mac_address") or mac.get("mac")),
+            "object_id": mac.get("id"), "detail": repair.get("device_name"),
         })
 
     nb.delete("dcim/devices/{0}/".format(repair["device_id"]))
@@ -218,7 +240,10 @@ def _execute_repair(nb, row, verified, events):
 def _write_filtered_plan(plan, repairs):
     repair_ids = set(clean(row.get("asset_id")) for row in repairs)
     filtered = dict(plan)
-    filtered["records"] = [row for row in (plan.get("records") or []) if clean(row.get("asset_id")) not in repair_ids]
+    filtered["records"] = [
+        row for row in (plan.get("records") or [])
+        if clean(row.get("asset_id")) not in repair_ids
+    ]
     stamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     path = os.path.join(REPORTS, "{0}-plan-finalize-normal-{1}.json".format(clean(plan.get("site")) or "SITE", stamp))
     with open(path, "w") as handle:
@@ -226,14 +251,31 @@ def _write_filtered_plan(plan, repairs):
     return path
 
 
-def _write_finalize_report(plan_path, apply_mode, events, errors, summary):
-    site = clean((json.load(open(plan_path, "r"))).get("site")) or "SITE"
+def _write_journal(plan_path, repairs, normal_ready):
+    with open(plan_path, "r") as handle:
+        site = clean(json.load(handle).get("site")) or "SITE"
+    stamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    path = os.path.join(REPORTS, "{0}-repair-journal-{1}.json".format(site, stamp))
+    with open(path, "w") as handle:
+        json.dump({
+            "stage": "REPAIR_JOURNAL", "importer_version": IMPORTER_VERSION,
+            "source_plan": plan_path, "site": site,
+            "repair_rows": repairs, "normal_ready_count": len(normal_ready),
+            "preflight": "PASS", "netbox_write": False,
+        }, handle, indent=2, sort_keys=True)
+    return path
+
+
+def _write_finalize_report(plan_path, apply_mode, events, errors, summary, journal_path="", normal_import_report=""):
+    with open(plan_path, "r") as handle:
+        site = clean(json.load(handle).get("site")) or "SITE"
     stamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     path = os.path.join(REPORTS, "{0}-import-finalize-{1}.json".format(site, stamp))
     with open(path, "w") as handle:
         json.dump({
             "stage": "IMPORT_FINALIZE", "importer_version": IMPORTER_VERSION,
             "mode": "APPLY" if apply_mode else "DRY-RUN", "source_plan": plan_path,
+            "normal_import_report": normal_import_report, "journal": journal_path,
             "site": site, "summary": dict(summary), "errors": errors,
             "records": events, "netbox_write": bool(apply_mode and not errors),
         }, handle, indent=2, sort_keys=True)
@@ -255,7 +297,9 @@ def main(argv=None):
     lock.write(str(os.getpid()))
     lock.flush()
 
-    source_plan = args.plan or (None if not args.no_refresh_plan else _latest(os.path.join(REPORTS, "*-plan-*.json"))) or refresh_plan()
+    source_plan = args.plan or (
+        None if not args.no_refresh_plan else _latest(os.path.join(REPORTS, "*-plan-*.json"))
+    ) or refresh_plan()
     if not source_plan or not os.path.isfile(source_plan):
         raise RuntimeError("PLAN JSON não encontrado")
     with open(source_plan, "r") as handle:
@@ -264,8 +308,14 @@ def main(argv=None):
         raise RuntimeError("PLAN inválido/proteção ausente")
 
     records = plan.get("records") or []
-    repairs = [row for row in records if clean(row.get("decision")) == "READY" and clean(row.get("action")) == "REPAIR_SAFE_VM_DUPLICATE"]
-    normal_ready = [row for row in records if clean(row.get("decision")) == "READY" and clean(row.get("action")) != "REPAIR_SAFE_VM_DUPLICATE"]
+    repairs = [
+        row for row in records
+        if clean(row.get("decision")) == "READY" and clean(row.get("action")) == "REPAIR_SAFE_VM_DUPLICATE"
+    ]
+    normal_ready = [
+        row for row in records
+        if clean(row.get("decision")) == "READY" and clean(row.get("action")) != "REPAIR_SAFE_VM_DUPLICATE"
+    ]
 
     print("===== IMPORT FINALIZE 1.10.14 =====")
     print("Modo: {0}".format("APPLY - ESCRITA REAL" if args.apply else "DRY-RUN - SEM ESCRITA"))
@@ -296,39 +346,61 @@ def main(argv=None):
     events = []
     errors = []
     summary = Counter()
+    journal_path = _write_journal(source_plan, repairs, normal_ready)
+    print("REPAIR JOURNAL: {0}".format(journal_path))
+
     if not args.apply:
         for row, state in verified:
             repair = row.get("repair") or {}
             events.append({
                 "phase": "REPAIR", "object_type": "DEVICE", "action": "WOULD_REPAIR_SAFE",
                 "name": repair.get("device_name"), "object_id": repair.get("device_id"),
-                "detail": "IP {0} -> VM {1}; remover Device duplicado".format(repair.get("ip_address"), repair.get("vm_name")),
+                "detail": "IP {0} -> VM {1}; remover Device duplicado".format(
+                    repair.get("ip_address"), repair.get("vm_name")
+                ),
             })
-        path = _write_finalize_report(source_plan, False, events, errors, summary)
+        path = _write_finalize_report(source_plan, False, events, errors, summary, journal_path)
         print("JSON FINALIZE: {0}".format(path))
         print("NetBox write: NÃO")
         return 0
 
-    for row, state in verified:
+    # Execute normal READY first. If it fails, no duplicate-Device repair has
+    # started. The strict global preflight above has already validated both sets.
+    filtered_plan = _write_filtered_plan(plan, repairs)
+    before_imports = set(glob.glob(os.path.join(REPORTS, "*-import-*.json")))
+    rc = v3.main(["--apply", "--plan", filtered_plan, "--no-refresh-plan"])
+    after_imports = set(glob.glob(os.path.join(REPORTS, "*-import-*.json")))
+    new_normal = sorted(after_imports - before_imports, key=os.path.getmtime, reverse=True)
+    normal_import_report = new_normal[0] if new_normal else _latest(os.path.join(REPORTS, "*-import-*.json"))
+    if rc:
+        errors.append({"asset_id": "NORMAL_IMPORT", "name": "normal-ready", "error": "importer_v3 rc={0}".format(rc)})
+        summary["errors"] += 1
+        path = _write_finalize_report(source_plan, True, events, errors, summary, journal_path, normal_import_report)
+        print("JSON FINALIZE: {0}".format(path))
+        return 1
+
+    # Revalidate immediately before each destructive repair. This catches any
+    # live drift that occurred during the normal import phase.
+    for row, _initial_state in verified:
         try:
-            _execute_repair(nb, row, state, events)
+            live_state = _verify_repair(nb, row, tenant["id"], site["id"])
+            _execute_repair(nb, row, live_state, events)
             summary["repairs_safe"] += 1
         except Exception as exc:
-            errors.append({"asset_id": clean(row.get("asset_id")), "name": clean(row.get("desired_name")), "error": str(exc)})
+            errors.append({
+                "asset_id": clean(row.get("asset_id")),
+                "name": clean(row.get("desired_name")), "error": str(exc),
+            })
             summary["errors"] += 1
-            path = _write_finalize_report(source_plan, True, events, errors, summary)
+            path = _write_finalize_report(source_plan, True, events, errors, summary, journal_path, normal_import_report)
             print("ERRO no reparo {0}: {1}".format(clean(row.get("desired_name")), exc))
             print("JSON FINALIZE: {0}".format(path))
             raise
 
-    filtered_plan = _write_filtered_plan(plan, repairs)
-    rc = v3.main(["--apply", "--plan", filtered_plan, "--no-refresh-plan"])
-    if rc:
-        errors.append({"asset_id": "NORMAL_IMPORT", "name": "normal-ready", "error": "importer_v3 rc={0}".format(rc)})
-        summary["errors"] += 1
-
     summary["normal_ready"] = len(normal_ready)
-    path = _write_finalize_report(source_plan, True, events, errors, summary)
+    summary["assets_processed"] = len(normal_ready) + summary.get("repairs_safe", 0)
+    summary["runtime_blocked"] = 0
+    path = _write_finalize_report(source_plan, True, events, errors, summary, journal_path, normal_import_report)
     print("===== IMPORT FINALIZE RESULTADO =====")
     print("Reparos seguros concluídos: {0}".format(summary.get("repairs_safe", 0)))
     print("READY normais encaminhados: {0}".format(len(normal_ready)))
