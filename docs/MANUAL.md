@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.10.12 — PRODUCT V1  
+**Versão:** 1.10.13 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -41,7 +41,7 @@ DISCOVER → CLASSIFY → RECONCILE → PLAN → IMPORT READY → AUDIT
 
 Ações usuais: `CREATE`, `UPDATE_SAFE`, `NOOP`, `CONFLICT`.
 
-## 3. Identidade anti-flap — 1.10.12
+## 3. Identidade anti-flap — 1.10.12+
 
 Uma coleta pode perder temporariamente uma evidência que apareceu na coleta anterior. Isso não deve mudar a natureza do asset.
 
@@ -65,7 +65,7 @@ coleta seguinte: FA-MIB sem resposta
 → identidade STORAGE não deve desaparecer
 ```
 
-A 1.10.12 consulta classificações recentes do mesmo Site/IP, por até 48 horas, e retém somente evidência forte:
+A 1.10.12+ consulta classificações recentes do mesmo Site/IP, por até 48 horas, e retém somente evidência forte:
 
 - `VIRTUAL_MACHINE_CANDIDATE` com OUI VMware;
 - storage com serial válido e/ou `connUnitId` válido.
@@ -86,7 +86,7 @@ Anti-flap: identidade forte preservada de <arquivo anterior>
 VMware MAC histórico: 00:50:56:...
 ```
 
-## 4. Cross-pipeline Network ↔ Hypervisor — 1.10.12
+## 4. Cross-pipeline Network ↔ Hypervisor — 1.10.12+
 
 O planner consulta as VMs do mesmo Tenant/Site.
 
@@ -116,6 +116,18 @@ REVIEW
 VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
 ```
 
+### 4.1 Precedência de ownership por IP — 1.10.13
+
+Se o planner base já provou que o IP está atribuído a `virtualization.vminterface`, a decisão `DELEGATED/NOOP` é autoritativa e não pode ser rebaixada pela ponte de nome.
+
+```text
+IP em virtualization.vminterface
+→ DELEGATED/NOOP
+→ não executar name bridge para rebaixar a decisão
+```
+
+A ponte por nome serve apenas para acrescentar ownership quando o IP ainda não o provou. O conflito físico/VM de `SRV-AE11` continua `BLOCKED`.
+
 ## 5. PowerVault / FA-MIB — 1.10.11+
 
 Árvore consultada:
@@ -135,7 +147,7 @@ connUnitSn
 
 Somente `connUnitType=storage-subsystem(11)` entra como identidade de array.
 
-A 1.10.12 executa até três tentativas read-only da leitura FA-MIB.
+A 1.10.12+ executa até três tentativas read-only da leitura FA-MIB.
 
 Identidade:
 
@@ -174,7 +186,7 @@ Não é necessário usar Python/JSON ad-hoc para descobrir os motivos do PLAN.
 
 ## 8. IMPORT Network
 
-O importer 1.10.12 recalcula o PLAN com `planner_v3.py` imediatamente antes da escrita.
+O importer recalcula o PLAN com `planner_v3.py` imediatamente antes da escrita.
 
 ```text
 PLAN atual
