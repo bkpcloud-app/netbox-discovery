@@ -14,7 +14,7 @@ import sys
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 LOCK_FILE = "/var/lock/netbox-discovery-global.lock"
-RUNNER_VERSION = "2.0-product"
+RUNNER_VERSION = "2.1-product"
 
 
 def utc_stamp():
@@ -70,7 +70,7 @@ def execute(apply_mode):
     py = sys.executable
     stages = []
     try:
-        run_step("DISCOVER", [py, os.path.join(BASE, "modules/discovery/network.py")], stages)
+        run_step("DISCOVER", [py, os.path.join(BASE, "modules/discovery/network_v2.py")], stages)
         run_step("CLASSIFY_RECONCILE_PLAN_V2", [py, os.path.join(BASE, "modules/inventory/pipeline.py")], stages)
         if apply_mode:
             run_step("IMPORT", [py, os.path.join(BASE, "modules/importers/importer_v2.py"), "--apply"], stages)
