@@ -7,6 +7,11 @@ import json
 import os
 import sys
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from modules.auditors import auditor_v2 as v2
 
 AUDITOR_VERSION = "6.1-product"
