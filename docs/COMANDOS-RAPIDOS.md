@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.12 — Comandos rápidos
+# netbox-discovery 1.10.13 — Comandos rápidos
 
 ## Atualizar
 
@@ -26,7 +26,18 @@ BLOCKED: N
 NetBox write: NÃO
 ```
 
-## Anti-flap de identidade — 1.10.12
+## Precedência de ownership por IP — 1.10.13
+
+```text
+IP já vinculado a virtualization.vminterface
+→ DELEGATED/NOOP
+→ ownership Hypervisor autoritativo
+→ name bridge não pode rebaixar para REVIEW
+```
+
+A correlação por nome continua ativa quando o IP ainda não comprova ownership.
+
+## Anti-flap de identidade — 1.10.12+
 
 Se uma coleta perder temporariamente MAC VMware ou FA-MIB, procure:
 
@@ -34,8 +45,6 @@ Se uma coleta perder temporariamente MAC VMware ou FA-MIB, procure:
 Anti-flap: identidade forte preservada de ...
 VMware MAC histórico: 00:50:56:...
 ```
-
-A memória usa somente evidência forte recente do mesmo Site/IP e não copia MAC antigo para criar interface.
 
 Conflito VMware com Device físico:
 
@@ -53,13 +62,9 @@ OWNED_BY_HYPERVISOR_VM_NAME:<id>
 
 ## Storage / PowerVault
 
-Evidência:
-
 ```text
 Storage FA-MIB: id=... product=... serial=... type=storage-subsystem(11)
 ```
-
-Política:
 
 ```text
 serial/connUnitId forte igual → mesmo STORAGE
@@ -67,8 +72,6 @@ connUnitId 000...000          → ignorado
 identidade forte diferente    → conflito
 FA-MIB transitório ausente    → histórico forte pode ser preservado por 48h
 ```
-
-A leitura FA-MIB recebe até três tentativas read-only.
 
 ## Network — APPLY
 
@@ -88,8 +91,6 @@ BLOCKED     → não escreve
 O IMPORT recalcula o PLAN com `planner_v3.py` antes da escrita.
 
 ## AUDIT
-
-Na 1.10.12 os detalhes aparecem no terminal:
 
 ```text
 ===== AUDIT PENDÊNCIAS DETALHADAS =====

@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.10.12
+**Versão da política:** 1.10.13
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
@@ -22,7 +22,19 @@ REVIEW      → não escreve
 BLOCKED     → não escreve
 ```
 
-## Anti-flap de identidade — 1.10.12
+## Precedência de ownership Hypervisor por IP — 1.10.13
+
+Quando o planner base já provou que o IP está atribuído a `virtualization.vminterface`, a decisão `DELEGATED/NOOP` é autoritativa.
+
+```text
+IP ownership provado
+→ DELEGATED/NOOP
+→ a ponte de nome não pode rebaixar para REVIEW
+```
+
+A correlação por nome pode acrescentar ownership quando o IP ainda não o prova, mas não substitui evidência de ownership mais forte já existente.
+
+## Anti-flap de identidade — 1.10.12+
 
 Uma ausência de evidência em uma coleta não prova que a identidade anterior deixou de ser válida.
 
@@ -41,7 +53,7 @@ Regras obrigatórias:
 - histórico serve para decisão/ownership, não para inventar dados atuais;
 - ausência transitória de MAC/FA-MIB não pode transformar uma VM/storage conhecido em Device genérico READY.
 
-## Ownership Hypervisor por nome único — 1.10.12
+## Ownership Hypervisor por nome único — 1.10.12+
 
 Para um asset com identidade VMware, o planner consulta VMs do mesmo Tenant/Site.
 
@@ -113,7 +125,7 @@ Modelos Dell Networking reconhecidos por hardware/ENTITY-MIB são classificados 
 - `run` é dry-run;
 - `run --apply` exige autorização explícita;
 - apenas `READY` entra no importer;
-- importer 1.10.12 recalcula com `planner_v3.py` antes da escrita;
+- importer recalcula com `planner_v3.py` antes da escrita;
 - primeiro erro inesperado interrompe o lote;
 - não fazer correções em massa manuais para contornar o PLAN;
 - conflito conhecido não é apagado automaticamente.
@@ -122,7 +134,7 @@ Modelos Dell Networking reconhecidos por hardware/ENTITY-MIB são classificados 
 
 AUDIT é read-only e usa o planner atual para idempotência.
 
-A 1.10.12 imprime WARN/FAIL detalhados no terminal, além dos JSON/CSV.
+WARN/FAIL detalhados aparecem no terminal, além dos JSON/CSV.
 
 ## Hypervisor
 
