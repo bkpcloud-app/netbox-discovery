@@ -1,131 +1,115 @@
-# netbox-discovery 1.10.13 — Comandos rápidos
+# netbox-discovery 1.10.14 — Comandos rápidos
 
-## Atualizar
+## Atualizar e executar a finalização
 
 ```bash
-netbox-discovery update status
-netbox-discovery update check
 netbox-discovery update run
+netbox-discovery version
+netbox-discovery run --apply
 ```
 
-## Network — dry-run
+O próprio `run --apply` executa descoberta, PLAN, preflight global, import, reparo seguro e audit. Não é necessário executar um dry-run separado quando a release final já foi autorizada para a homologação live.
+
+## Saída esperada antes da escrita
+
+```text
+Planner: 4.4-product
+READY/CREATE: ...
+READY/UPDATE_SAFE: ...
+READY/REPAIR_SAFE: ...
+
+PREFLIGHT GLOBAL FINALIZE: OK
+NetBox write até aqui: NÃO
+REPAIR JOURNAL: ...
+```
+
+## MD32xx
+
+```text
+10.x.x.56 + 10.x.x.57
+mesmo sysObjectID exato
+mesmo sysName
+exatamente dois endpoints consecutivos
+→ 1 STORAGE
+→ MGMT + MGMT-2
+```
+
+Sem todas as evidências, continua `REVIEW/BLOCKED`.
+
+## Device duplicado de VM
+
+Saída do PLAN:
+
+```text
+READY/REPAIR_SAFE
+Device ID <id> -> VM ID <id>
+IP -> VM interface ID <id>
+```
+
+Proteções:
+
+```text
+Device/interface/IP criados pelo produto
+sem serial/rack/location/cluster/cabos/objetos relacionados
+VM e interface únicas
+IP único
+```
+
+Ação:
+
+```text
+move IP para a VM
+→ define primary IPv4 se vazio
+→ remove somente o Device duplicado criado pelo produto
+```
+
+## Falha de preflight
+
+```text
+PREFLIGHT GLOBAL FINALIZE: BLOQUEADO
+NetBox write: NÃO
+```
+
+Não corrigir manualmente e não repetir cegamente.
+
+## Recuperação
+
+```text
+RECOVERY_AFTER_IP_MOVE
+```
+
+Indica que o IP já está na VM e o produto concluirá somente a limpeza segura restante após novo preflight.
+
+## Audit
+
+```text
+===== AUDIT FINALIZE RESULTADO =====
+Status: PASS
+Assets FAIL: 0
+Checks FAIL: 0
+```
+
+Relatórios:
+
+```text
+/opt/netbox-discovery/reports/<SITE>-repair-journal-*.json
+/opt/netbox-discovery/reports/<SITE>-import-finalize-*.json
+/opt/netbox-discovery/reports/<SITE>-audit-finalize-*.json
+```
+
+## Dry-run normal
 
 ```bash
 netbox-discovery run
 ```
 
-Saída relevante:
-
-```text
-NETWORK PLAN DIAGNÓSTICO
-READY/CREATE: N
-READY/UPDATE_SAFE: N
-DELEGATED/HYPERVISOR: N
-REVIEW: N
-BLOCKED: N
-NetBox write: NÃO
-```
-
-## Precedência de ownership por IP — 1.10.13
-
-```text
-IP já vinculado a virtualization.vminterface
-→ DELEGATED/NOOP
-→ ownership Hypervisor autoritativo
-→ name bridge não pode rebaixar para REVIEW
-```
-
-A correlação por nome continua ativa quando o IP ainda não comprova ownership.
-
-## Anti-flap de identidade — 1.10.12+
-
-Se uma coleta perder temporariamente MAC VMware ou FA-MIB, procure:
-
-```text
-Anti-flap: identidade forte preservada de ...
-VMware MAC histórico: 00:50:56:...
-```
-
-Conflito VMware com Device físico:
-
-```text
-BLOCKED
-PHYSICAL_DEVICE_CONFLICT_WITH_HYPERVISOR_VM:<id>
-```
-
-VM candidata com nome único no inventário Hypervisor:
-
-```text
-DELEGATED
-OWNED_BY_HYPERVISOR_VM_NAME:<id>
-```
-
-## Storage / PowerVault
-
-```text
-Storage FA-MIB: id=... product=... serial=... type=storage-subsystem(11)
-```
-
-```text
-serial/connUnitId forte igual → mesmo STORAGE
-connUnitId 000...000          → ignorado
-identidade forte diferente    → conflito
-FA-MIB transitório ausente    → histórico forte pode ser preservado por 48h
-```
-
-## Network — APPLY
-
-Somente depois de revisar o PLAN:
-
-```bash
-netbox-discovery run --apply
-```
-
-```text
-READY       → pode escrever
-DELEGATED   → não escreve
-REVIEW      → não escreve
-BLOCKED     → não escreve
-```
-
-O IMPORT recalcula o PLAN com `planner_v3.py` antes da escrita.
-
-## AUDIT
-
-```text
-===== AUDIT PENDÊNCIAS DETALHADAS =====
-WARN | código | asset | detalhe
-FAIL | código | asset | detalhe
-```
-
-## Dell switches
-
-```text
-N2024      → NETWORK_SWITCH/HIGH
-PCT7024    → NETWORK_SWITCH/HIGH
-S4128F-ON  → NETWORK_SWITCH/HIGH
-```
-
 ## Hypervisor
 
 ```bash
-netbox-discovery hypervisor configure
 netbox-discovery hypervisor check
 netbox-discovery hypervisor run
 netbox-discovery hypervisor run --compare
 netbox-discovery hypervisor run --apply
-netbox-discovery hypervisor status
-```
-
-## Falha parcial
-
-```text
-1. confirmar processo/lock
-2. não repetir --apply cegamente
-3. usar compare/dry-run
-4. revisar estado real
-5. corrigir o produto, não inventário em massa
-6. somente então retomar
 ```
 
 ## Status
@@ -137,25 +121,17 @@ netbox-discovery self-test
 netbox-discovery health
 ```
 
-## Schedulers
-
-```bash
-netbox-discovery scheduler status
-netbox-discovery hypervisor scheduler status
-netbox-discovery update scheduler status
-```
-
-Network/Hypervisor são opt-in.
-
-## Caminhos
+## Política
 
 ```text
-Aplicação:              /opt/netbox-discovery
-Configuração principal: /opt/netbox-discovery/config.yml
-Config Hypervisor:      /etc/netbox-discovery/hypervisors.json
-Relatórios:             /opt/netbox-discovery/reports
-Backups:                /opt/netbox-discovery/backups
-Lock global:            /var/lock/netbox-discovery-global.lock
+READY/CREATE                    → escreve com --apply
+READY/UPDATE_SAFE               → escreve com --apply
+READY/REPAIR_SAFE_VM_DUPLICATE  → escreve após preflight global
+READY/NOOP                      → não altera
+DELEGATED                       → não escreve
+REVIEW                          → não escreve
+BLOCKED                         → não escreve
+DELETE genérico                 → NÃO
 ```
 
 CI PASS não significa LIVE PASS.
