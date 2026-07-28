@@ -2,7 +2,13 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 
+import os
 import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+BASE = os.path.abspath(os.path.join(HERE, "..", ".."))
+if BASE not in sys.path:
+    sys.path.insert(0, BASE)
 
 from modules.inventory import planner_v2 as v2
 
