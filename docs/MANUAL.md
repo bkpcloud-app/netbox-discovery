@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.10.10 — PRODUCT V1  
+**Versão:** 1.10.11 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -16,8 +16,6 @@ Dry-run:
 netbox-discovery run
 ```
 
-Fluxo:
-
 ```text
 DISCOVER → CLASSIFY → RECONCILE → PLAN
 ```
@@ -27,8 +25,6 @@ Escrita explícita:
 ```bash
 netbox-discovery run --apply
 ```
-
-Fluxo:
 
 ```text
 DISCOVER → CLASSIFY → RECONCILE → PLAN → IMPORT READY → AUDIT
@@ -45,77 +41,85 @@ DISCOVER → CLASSIFY → RECONCILE → PLAN → IMPORT READY → AUDIT
 
 Ações usuais: `CREATE`, `UPDATE_SAFE`, `NOOP`, `CONFLICT`.
 
-## 3. DELEGATED / ownership Hypervisor — 1.10.10
+## 3. Storage FibreAlliance / PowerVault — 1.10.11
 
-Quando um IP descoberto pela rede já existe no NetBox vinculado a:
+O produto não considera dois IPs com o mesmo nome suficientes para representar um único storage.
+
+O discovery 1.10.11 consulta a árvore FCMGMT/FibreAlliance:
 
 ```text
-virtualization.vminterface
+.1.3.6.1.3.94.1.6.1
 ```
 
-o Network reconhece que o objeto é inventariado pelo pipeline Hypervisor:
+Campos usados:
+
+```text
+connUnitId       → identidade persistente da connectivity unit
+connUnitType     → precisa identificar storage-subsystem(11)
+connUnitProduct  → modelo do array
+connUnitSn       → serial
+connUnitName     → nome complementar
+```
+
+Fluxo:
+
+```text
+Controller/IP A ─┐
+                 ├─ mesmo connUnitId → 1 asset STORAGE
+Controller/IP B ─┘
+```
+
+Se os IDs forem diferentes, o reconciliador não funde os registros pela semelhança de nome.
+
+Quando `connUnitSn` é válido, o serial continua sendo identidade preferencial. Sem serial, um `connUnitId` válido e único pode formar a identidade `FA:<id>`.
+
+O SNMP EngineID não é usado como identidade do array, porque pode ser específico da controladora.
+
+O terminal mostra:
+
+```text
+Storage FA-MIB: id=<id> product=<modelo> serial=<serial> type=storage-subsystem(11)
+```
+
+Falha ou ausência de FA-MIB não libera criação automática: o item continua sujeito às regras conservadoras de REVIEW/BLOCKED.
+
+## 4. DELEGATED / ownership Hypervisor — 1.10.10
+
+Quando um IP descoberto pela rede já existe no NetBox vinculado a `virtualization.vminterface`:
 
 ```text
 Network discovery
-→ IP existente em virtualization.vminterface
 → DELEGATED
 → NOOP
 → nenhuma criação de dcim.device
 ```
 
-O objetivo é impedir duplicação física de uma VM e remover falso `REVIEW`.
+`DELEGATED` nunca é consumido pelo IMPORT Network.
 
-`DELEGATED` nunca é consumido pelo IMPORT Network porque apenas `READY` é elegível.
+## 5. VM candidata sem correspondência
 
-## 4. VM candidata sem correspondência
-
-Um MAC/asset claramente virtual, mas ainda sem vínculo a uma VM do NetBox, não é criado como Device físico.
-
-Resultado:
+Um MAC/asset claramente virtual, mas ainda sem vínculo a uma VM do NetBox, não é criado como Device físico:
 
 ```text
 REVIEW
 VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
 ```
 
-Isso permite investigar lacuna do inventário Hypervisor sem contaminar `dcim.device`.
+## 6. Dell switches — 1.10.10
 
-## 5. Dell switches — 1.10.10
+Hardware model/ENTITY-MIB tem prioridade sobre SSH/Linux/Web genérico.
 
-O hardware model/ENTITY-MIB tem prioridade sobre SSH/Linux/Web genérico.
-
-Famílias reconhecidas incluem padrões Dell Networking como:
+Validados ao vivo:
 
 ```text
-Nxxxx
-PCTxxxx / PowerConnect
-Sxxxx...
-Zxxxx...
+N2024      → NETWORK_SWITCH/HIGH
+PCT7024    → NETWORK_SWITCH/HIGH
+S4128F-ON  → NETWORK_SWITCH/HIGH
 ```
 
-Exemplos do ambiente real:
+## 7. Diagnóstico Network
 
-```text
-N2024
-PCT7024
-S4128F-ON
-```
-
-Quando o modelo confirma a família, role interna:
-
-```text
-NETWORK_SWITCH
-```
-
-Target NetBox:
-
-```text
-NETWORK SWITCH
-```
-
-## 6. Diagnóstico Network
-
-A partir da 1.10.9/1.10.10, `netbox-discovery run` mostra:
+`netbox-discovery run` mostra:
 
 ```text
 NETWORK PLAN DIAGNÓSTICO
@@ -126,31 +130,31 @@ NETWORK PENDÊNCIAS POR MOTIVO
 NETWORK PENDÊNCIAS DETALHADAS
 ```
 
-READY e pendências exibem evidência CLASSIFY, SNMP e asset class quando disponível.
+READY e pendências exibem evidência CLASSIFY, SNMP, asset class e, quando disponível, identidade FA-MIB.
 
 Não faz parte da operação normal abrir PLAN com Python ad-hoc.
 
-## 7. Identidade Network
+## 8. Identidade Network
 
-Evidências fortes:
+Evidências fortes incluem:
 
 - serial válido;
 - MAC de gerenciamento autoritativo;
 - LLDP chassis ID válido;
-- IP associado de forma inequívoca.
+- IP associado de forma inequívoca;
+- `connUnitId` válido para storage FibreAlliance.
 
 Regras:
 
 - MAC secundário não funde assets sozinho;
 - nome sozinho não é identidade forte;
+- dois controllers de storage só são unidos automaticamente com identidade de array compatível;
 - IP de VM já pertencente a `virtualization.vminterface` não vira Device físico;
-- ausência em uma coleta não autoriza DELETE.
+- ausência em coleta não autoriza DELETE.
 
-## 8. Interfaces/IPs físicos
+## 9. Interfaces/IPs físicos
 
 O Network cria intenção apenas para interfaces de gerenciamento/OOB observadas.
-
-Não expande automaticamente todas as portas IF-MIB de um switch.
 
 ```text
 Device físico
@@ -159,7 +163,9 @@ Device físico
 → primary IPv4 quando aplicável
 ```
 
-## 9. Segurança do APPLY Network
+Não expande automaticamente todas as portas IF-MIB de um switch.
+
+## 10. Segurança do APPLY Network
 
 Antes de autorizar `--apply`, revisar o PLAN.
 
@@ -169,9 +175,7 @@ Antes de autorizar `--apply`, revisar o PLAN.
 - falha em APPLY para no primeiro erro inesperado;
 - não fazer correção em massa manual no NetBox para facilitar o discovery.
 
-## 10. Hypervisor
-
-Comandos:
+## 11. Hypervisor
 
 ```bash
 netbox-discovery hypervisor configure
@@ -182,7 +186,7 @@ netbox-discovery hypervisor run --apply
 netbox-discovery hypervisor status
 ```
 
-O fluxo multi-contexto está LIVE PASS na linha 1.10.8 para placement Tenant/Site, Cluster/Site, VM Parent/Site, APPLY/AUDIT e compare final.
+O fluxo multi-contexto está LIVE PASS para placement Tenant/Site, Cluster/Site, VM Parent/Site, APPLY/AUDIT e compare final.
 
 Validação de referência:
 
@@ -195,7 +199,7 @@ AMBIGUOUS: 0
 COMPARE STATUS: OK
 ```
 
-## 11. Falha parcial
+## 12. Falha parcial
 
 ```text
 1. confirmar processo/lock
@@ -205,7 +209,7 @@ COMPARE STATUS: OK
 5. somente então retomar
 ```
 
-## 12. Update
+## 13. Update
 
 ```bash
 netbox-discovery update status
@@ -215,7 +219,7 @@ netbox-discovery update run
 
 `stable` usa backup, validação, preservação de configuração e rollback de candidato inválido.
 
-## 13. Schedulers
+## 14. Schedulers
 
 ```bash
 netbox-discovery scheduler status
@@ -225,7 +229,7 @@ netbox-discovery update scheduler status
 
 Network e Hypervisor são opt-in.
 
-## 14. Caminhos
+## 15. Caminhos
 
 ```text
 Aplicação:              /opt/netbox-discovery

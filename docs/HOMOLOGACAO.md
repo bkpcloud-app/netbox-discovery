@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.10 — Matriz de Homologação
+# netbox-discovery 1.10.11 — Matriz de Homologação
 
 ## Estados
 
@@ -13,7 +13,7 @@ CI PASS não equivale a LIVE PASS.
 
 ## Hypervisor — estado de referência
 
-**Estado:** LIVE PASS na linha 1.10.8.
+**Estado:** LIVE PASS.
 
 Validação final real:
 
@@ -32,111 +32,111 @@ COMPARE STATUS: OK
 
 ## Network DCM — baseline 1.10.9
 
-Execução real em 27/07/2026:
-
 ```text
 Hosts ativos: 64
 Assets reconciliados: 60
 READY: 7
 REVIEW: 47
 BLOCKED: 6
-READY/CREATE: 3
-READY/NOOP: 4
 NetBox write: NÃO
 ```
 
-Diagnóstico detalhado mostrou que a maior classe de pendência era IP já pertencente a:
-
-```text
-virtualization.vminterface
-```
-
-Isso ocorreu em servidores Windows/Linux, appliances VMware e appliances Fortinet virtualizados já presentes no inventário Hypervisor.
-
-Também foram observados switches físicos Dell classificados genericamente:
-
-```text
-10.1.1.31  SW-DCM-SERVERS  Dell N2024      → LINUX_HOST/LOW
-10.1.1.38  SW_LINKS        PCT7024         → WEB_APPLIANCE/LOW
-10.1.1.50  SW-SAN-AE1      Dell S4128F-ON  → SNMP_DEVICE/LOW
-10.1.1.51  SW-SAN-AE2      Dell S4128F-ON  → SNMP_DEVICE/LOW
-```
-
-O APPLY Network não foi autorizado.
+A maior classe de falso REVIEW era IP já pertencente a `virtualization.vminterface`.
 
 ## 1.10.10 — ownership Network/Hypervisor
 
-**Estado:** NOT LIVE até update + novo dry-run real.
+**Estado:** LIVE PASS no dry-run real de 28/07/2026.
 
-Regra implementada:
-
-```text
-Network asset sem Device físico correspondente
-+ todos os IPs já vinculados a virtualization.vminterface
-→ DELEGATED
-→ NOOP
-→ OWNED_BY_HYPERVISOR_VM
-```
-
-Consequências esperadas:
-
-- remove falso REVIEW do pipeline Network;
-- não cria `dcim.device` para VM;
-- não altera a VM/IP;
-- IMPORT Network continua consumindo apenas `READY`.
-
-Proteção adicional:
+Resultado:
 
 ```text
-MAC/asset com identidade VMware
-+ sem correspondência VM no NetBox
-→ REVIEW
-→ VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
+Hosts ativos: 64
+Assets reconciliados: 60
+READY: 9
+DELEGATED/HYPERVISOR: 41
+REVIEW: 4
+BLOCKED: 6
+NetBox write: NÃO
 ```
 
-Isso protege principalmente novos `READY/CREATE` que possam ser VMs ainda não correlacionadas.
+As 41 VMs/appliances já inventariadas pelo Hypervisor foram corretamente convertidas de falso REVIEW para `DELEGATED/NOOP`.
+
+Duas VMs sem correspondência permaneceram protegidas:
+
+```text
+10.1.1.111 SRV-AE11  → VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
+10.1.1.168 SRV-GEP11 → VIRTUAL_MACHINE_CANDIDATE_NO_VM_MATCH
+```
 
 ## 1.10.10 — Dell Network Switch
 
-**Estado:** NOT LIVE até novo dry-run.
-
-O classificador passa a priorizar hardware model/ENTITY-MIB Dell Networking sobre SSH/Linux/Web genérico.
-
-Regressões cobrem:
+**Estado:** LIVE PASS no dry-run real.
 
 ```text
-N2024      → NETWORK_SWITCH/HIGH
-PCT7024    → NETWORK_SWITCH/HIGH
-S4128F-ON  → NETWORK_SWITCH/HIGH
+10.1.1.31 SW-DCM-SERVERS Dell N2024      → NETWORK_SWITCH/HIGH
+10.1.1.38 SW_LINKS       Dell PCT7024    → NETWORK_SWITCH/HIGH
+10.1.1.50 SW-SAN-AE1     Dell S4128F-ON  → NETWORK_SWITCH/HIGH
+10.1.1.51 SW-SAN-AE2     Dell S4128F-ON  → NETWORK_SWITCH/HIGH
 ```
 
-A regra é por família/modelo de hardware, não por IP, hostname, cliente ou Site.
+Todos apareceram como `READY/CREATE`, sem hardcode de IP/Site.
 
-## Resíduo propositalmente não resolvido nesta release
-
-Storages/controladoras continuam conservadores até obtermos evidência suficiente para definir identidade de array versus controladora:
+## Resíduo live após 1.10.10
 
 ```text
-ME4024
-ME5024
-MD3200BKP
-ME4012
+10.1.1.52 / .53 → ME4024, mesmo nome, identidades de controladora distintas
+10.1.1.54       → UNKNOWN / Seagate OUI
+10.1.1.55       → ME5024
+10.1.1.56 / .57 → MD3200BKP
+10.1.1.58 / .59 → ME4012
 ```
 
-Não serão criados/mesclados automaticamente no escuro.
+Os pares permaneceram BLOCKED em vez de serem unidos apenas pelo nome. Isso é o comportamento seguro esperado antes da 1.10.11.
 
-## Próxima validação live
+## 1.10.11 — PowerVault / FibreAlliance FA-MIB
+
+**Estado:** NOT LIVE até update + novo dry-run real.
+
+Implementação:
 
 ```text
-1. CI PASS 1.10.10
-2. publicar stable
-3. update no SNOC-AGL-DCM
-4. netbox-discovery run
-5. confirmar grande redução de REVIEW por DELEGATED
-6. confirmar N2024/PCT7024/S4128F-ON como NETWORK_SWITCH/HIGH
-7. revisar READY/CREATE, principalmente possíveis VMs sem match
-8. analisar apenas o resíduo de storage/UNKNOWN
-9. nenhum --apply até o PLAN físico estar correto
+DISCOVER
+→ consulta FCMGMT/FibreAlliance .1.3.6.1.3.94.1.6.1
+→ exige connUnitType=storage-subsystem(11)
+→ coleta connUnitId / connUnitProduct / connUnitSn
+→ CLASSIFY STORAGE/HIGH
+→ RECONCILE por serial ou FA connUnitId
+```
+
+Regra de merge:
+
+```text
+mesmo connUnitId → merge forte das interfaces/IPs de gerenciamento
+diferente connUnitId → não merge
+sem connUnitId válido → permanece conservador
+```
+
+O SNMP EngineID não é usado como identidade do array.
+
+Regressões automatizadas cobrem:
+
+- mesmo FA `connUnitId` em dois IPs/controladoras;
+- `storage-subsystem(11)` → STORAGE/HIGH;
+- serial/modelo vindos do FA-MIB;
+- IDs diferentes não são unidos;
+- identidade de array independente do MAC de gerenciamento da controladora.
+
+### Próxima validação live
+
+```text
+1. publicar 1.10.11 stable após CI PASS
+2. update no SNOC-AGL-DCM
+3. netbox-discovery run
+4. observar Storage FA-MIB nos PowerVault
+5. confirmar se .52/.53 e .58/.59 compartilham connUnitId real
+6. confirmar ME5024/.54 somente se a evidência FA provar relação
+7. MD3200 pode permanecer REVIEW/BLOCKED se não expuser FA-MIB
+8. nenhum --apply até revisão do novo PLAN
 ```
 
 ## Schedulers
