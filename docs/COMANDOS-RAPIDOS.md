@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.10 — Comandos rápidos
+# netbox-discovery 1.10.11 — Comandos rápidos
 
 ## Atualizar
 
@@ -26,10 +26,27 @@ BLOCKED: N
 NetBox write: NÃO
 ```
 
-Se houver VMs já inventariadas:
+## Storage / PowerVault — 1.10.11
+
+Quando o equipamento expõe FCMGMT/FibreAlliance MIB, procure na saída:
 
 ```text
-NETWORK DELEGADOS AO HYPERVISOR
+Storage FA-MIB: id=... product=... serial=... type=storage-subsystem(11)
+```
+
+Política:
+
+```text
+mesmo connUnitId → pode reconciliar os IPs como o mesmo STORAGE
+diferente connUnitId → não fundir
+sem FA identity → manter conservador
+```
+
+Não usar nome repetido como prova de que duas controladoras pertencem ao mesmo array.
+
+## Network — ownership Hypervisor
+
+```text
 DELEGATED | IP | nome | IP(s) já vinculado(s) a virtualization.vminterface
 ```
 
@@ -59,21 +76,10 @@ BLOCKED     → não escreve
 
 ## Dell switches — 1.10.10
 
-Modelos Dell Networking reconhecidos pelo hardware/ENTITY-MIB têm prioridade sobre Linux/SSH/Web genérico.
-
-Exemplos:
-
 ```text
-N2024
-PCT7024
-S4128F-ON
-```
-
-Esperado:
-
-```text
-role=NETWORK_SWITCH
-confidence=HIGH
+N2024      → NETWORK_SWITCH/HIGH
+PCT7024    → NETWORK_SWITCH/HIGH
+S4128F-ON  → NETWORK_SWITCH/HIGH
 ```
 
 ## Hypervisor
@@ -104,12 +110,6 @@ netbox-discovery version
 netbox-discovery status
 netbox-discovery self-test
 netbox-discovery health
-```
-
-O status Network mostra:
-
-```text
-PLAN: READY=N DELEGATED=N REVIEW=N BLOCKED=N
 ```
 
 ## Schedulers
