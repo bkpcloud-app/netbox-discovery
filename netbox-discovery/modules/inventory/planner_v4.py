@@ -36,52 +36,40 @@ def nested_id(value):
 
 def norm_mac(value):
     compact = re.sub(r"[^0-9A-Fa-f]", "", clean(value)).upper()
-    if len(compact) != 12:
+    if len(compact) != 12 or compact in ("000000000000", "FFFFFFFFFFFF"):
         return ""
     return ":".join(compact[i:i + 2] for i in range(0, 12, 2))
 
 
-def _safe_query(nb, endpoint):
-    try:
-        return v2.base.query(nb, endpoint, limit=10000)
-    except Exception:
-        return []
+def _required_query(nb, endpoint):
+    return v2.base.query(nb, endpoint, limit=10000)
 
 
 def netbox_state(nb, client, site):
     state = ORIG_NETBOX_STATE(nb, client, site)
-    state["vm_interfaces"] = _safe_query(nb, "virtualization/interfaces/")
-    state["inventory_items"] = _safe_query(nb, "dcim/inventory-items/")
-    state["console_ports"] = _safe_query(nb, "dcim/console-ports/")
-    state["console_server_ports"] = _safe_query(nb, "dcim/console-server-ports/")
-    state["power_ports"] = _safe_query(nb, "dcim/power-ports/")
-    state["power_outlets"] = _safe_query(nb, "dcim/power-outlets/")
-    state["front_ports"] = _safe_query(nb, "dcim/front-ports/")
-    state["rear_ports"] = _safe_query(nb, "dcim/rear-ports/")
-    state["device_bays"] = _safe_query(nb, "dcim/device-bays/")
-    state["module_bays"] = _safe_query(nb, "dcim/module-bays/")
+    state["vm_interfaces"] = _required_query(nb, "virtualization/interfaces/")
+    state["inventory_items"] = _required_query(nb, "dcim/inventory-items/")
+    state["console_ports"] = _required_query(nb, "dcim/console-ports/")
+    state["console_server_ports"] = _required_query(nb, "dcim/console-server-ports/")
+    state["power_ports"] = _required_query(nb, "dcim/power-ports/")
+    state["power_outlets"] = _required_query(nb, "dcim/power-outlets/")
+    state["front_ports"] = _required_query(nb, "dcim/front-ports/")
+    state["rear_ports"] = _required_query(nb, "dcim/rear-ports/")
+    state["device_bays"] = _required_query(nb, "dcim/device-bays/")
+    state["module_bays"] = _required_query(nb, "dcim/module-bays/")
     return state
 
 
 def _owner_id(row, field):
-    value = row.get(field) or {}
-    return nested_id(value)
+    return nested_id(row.get(field) or {})
 
 
 def _device_interfaces(state, device_id):
-    out = []
-    for row in state.get("interfaces") or []:
-        if _owner_id(row, "device") == device_id:
-            out.append(row)
-    return out
+    return [row for row in (state.get("interfaces") or []) if _owner_id(row, "device") == device_id]
 
 
 def _vm_interfaces(state, vm_id):
-    out = []
-    for row in state.get("vm_interfaces") or []:
-        if _owner_id(row, "virtual_machine") == vm_id:
-            out.append(row)
-    return out
+    return [row for row in (state.get("vm_interfaces") or []) if _owner_id(row, "virtual_machine") == vm_id]
 
 
 def _assigned_id(row):
@@ -91,35 +79,25 @@ def _assigned_id(row):
     return row.get("assigned_object_id")
 
 
-def _ips_for_interface_ids(state, interface_ids, assigned_type):
-    out = []
+def _rows_for_interface_ids(rows, interface_ids, assigned_type):
     wanted = set(interface_ids)
-    for row in state.get("ips") or []:
-        if clean(row.get("assigned_object_type")) != assigned_type:
-            continue
-        if _assigned_id(row) in wanted:
-            out.append(row)
-    return out
+    return [
+        row for row in (rows or [])
+        if clean(row.get("assigned_object_type")) == assigned_type and _assigned_id(row) in wanted
+    ]
 
 
-def _macs_for_interface_ids(state, interface_ids, assigned_type):
-    out = []
-    wanted = set(interface_ids)
-    for row in state.get("macs") or []:
-        if clean(row.get("assigned_object_type")) != assigned_type:
-            continue
-        if _assigned_id(row) in wanted:
-            out.append(row)
-    return out
-
-
-def _vm_interface_macs(row):
+def _vm_interface_macs(row, state):
     values = []
     primary = row.get("primary_mac_address") or {}
     if isinstance(primary, dict):
         values.append(norm_mac(primary.get("mac_address") or primary.get("mac")))
     for item in row.get("mac_addresses") or []:
         if isinstance(item, dict):
+            values.append(norm_mac(item.get("mac_address") or item.get("mac")))
+    iid = row.get("id")
+    for item in state.get("macs") or []:
+        if clean(item.get("assigned_object_type")) == "virtualization.vminterface" and _assigned_id(item) == iid:
             values.append(norm_mac(item.get("mac_address") or item.get("mac")))
     return set(value for value in values if value)
 
@@ -138,7 +116,7 @@ def _device_has_related_objects(state, device_id):
     )
     found = []
     for collection, field in checks:
-        count = sum(1 for row in state.get(collection) or [] if _owner_id(row, field) == device_id)
+        count = sum(1 for row in (state.get(collection) or []) if _owner_id(row, field) == device_id)
         if count:
             found.append("{0}={1}".format(collection, count))
     return found
@@ -151,7 +129,7 @@ def _device_scope_is_empty(device):
 
 def _repair_candidate(row, asset, vm, state):
     device_id = row.get("existing_device_id")
-    device = next((item for item in state.get("devices") or [] if item.get("id") == device_id), None)
+    device = next((item for item in (state.get("devices") or []) if item.get("id") == device_id), None)
     if not device:
         return None, "Device não existe mais"
     if clean(device.get("description")) != PRODUCT_DEVICE_DESCRIPTION:
@@ -174,42 +152,62 @@ def _repair_candidate(row, asset, vm, state):
         return None, "Device possui cabo/conexão manual"
 
     interface_ids = [item.get("id") for item in interfaces if item.get("id")]
-    ips = _ips_for_interface_ids(state, interface_ids, "dcim.interface")
     expected_ips = sorted(set(v2.base.norm_ip(ip) for ip in (asset.get("ips") or []) if v2.base.norm_ip(ip)))
-    live_ips = sorted(set(v2.base.norm_ip(item.get("address")) for item in ips if v2.base.norm_ip(item.get("address"))))
-    if not expected_ips or live_ips != expected_ips:
-        return None, "IPs do Device divergem do asset: live={0} expected={1}".format(live_ips, expected_ips)
-    if any(clean(item.get("description")) != PRODUCT_IP_DESCRIPTION for item in ips):
-        return None, "Device possui IP não criado pelo produto"
+    if len(expected_ips) != 1:
+        return None, "Reparo automático exige exatamente um IP descoberto"
 
-    mac_rows = _macs_for_interface_ids(state, interface_ids, "dcim.interface")
+    asset_macs = set(norm_mac(value) for value in (asset.get("macs") or []) if norm_mac(value))
+    if not asset_macs:
+        return None, "Asset sem MAC VMware forte"
+    vm_interfaces = _vm_interfaces(state, vm.get("id"))
+    matches = [item for item in vm_interfaces if _vm_interface_macs(item, state) & asset_macs]
+    if len(matches) != 1:
+        return None, "Interface da VM por MAC não é única: {0}".format(len(matches))
+    target_interface = matches[0]
+
+    ip_matches = [
+        item for item in (state.get("ips") or [])
+        if v2.base.norm_ip(item.get("address")) == expected_ips[0]
+    ]
+    if len(ip_matches) != 1:
+        return None, "IP global não é único: {0}".format(len(ip_matches))
+    ip_obj = ip_matches[0]
+    if clean(ip_obj.get("description")) != PRODUCT_IP_DESCRIPTION:
+        return None, "IP não foi criado pelo produto"
+
+    assignment_type = clean(ip_obj.get("assigned_object_type"))
+    assignment_id = _assigned_id(ip_obj)
+    if assignment_type == "dcim.interface" and assignment_id in set(interface_ids):
+        repair_mode = "FULL"
+    elif assignment_type == "virtualization.vminterface" and assignment_id == target_interface.get("id"):
+        repair_mode = "RECOVERY_AFTER_IP_MOVE"
+    else:
+        return None, "IP pertence a outro objeto: {0} ID {1}".format(assignment_type or "unassigned", assignment_id)
+
+    live_device_ips = _rows_for_interface_ids(state.get("ips"), interface_ids, "dcim.interface")
+    live_device_ip_values = sorted(set(v2.base.norm_ip(item.get("address")) for item in live_device_ips if v2.base.norm_ip(item.get("address"))))
+    expected_device_values = expected_ips if repair_mode == "FULL" else []
+    if live_device_ip_values != expected_device_values:
+        return None, "IPs remanescentes do Device divergem: live={0} expected={1}".format(live_device_ip_values, expected_device_values)
+
+    mac_rows = _rows_for_interface_ids(state.get("macs"), interface_ids, "dcim.interface")
     for item in mac_rows:
         description = clean(item.get("description"))
         if description and "netbox-discovery" not in description:
             return None, "Device possui MAC não criado pelo produto"
 
-    vm_interfaces = _vm_interfaces(state, vm.get("id"))
-    asset_macs = set(norm_mac(value) for value in (asset.get("macs") or []) if norm_mac(value))
-    matches = []
-    if asset_macs:
-        for item in vm_interfaces:
-            if _vm_interface_macs(item) & asset_macs:
-                matches.append(item)
-    if len(matches) != 1:
-        return None, "Interface da VM por MAC não é única: {0}".format(len(matches))
-    target_interface = matches[0]
-
-    if len(ips) != 1:
-        return None, "Reparo automático exige exatamente um IP no Device"
-    ip_obj = ips[0]
     vm_site_id = nested_id(vm.get("site"))
     site_id = nested_id(state.get("site"))
     if vm_site_id and site_id and vm_site_id != site_id:
         return None, "VM está em outro Site"
     if nested_id(vm.get("tenant")) not in (None, nested_id(state.get("tenant"))):
         return None, "VM está em outro Tenant"
+    current_primary_id = nested_id(vm.get("primary_ip4") or vm.get("primary_ip") or {})
+    if current_primary_id not in (None, ip_obj.get("id")):
+        return None, "VM já possui outro primary IPv4"
 
     return {
+        "mode": repair_mode,
         "device_id": device_id,
         "device_name": clean(device.get("name")),
         "vm_id": vm.get("id"),
