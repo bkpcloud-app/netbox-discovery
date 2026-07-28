@@ -13,7 +13,7 @@ from collections import Counter
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 HERE = os.path.dirname(os.path.abspath(__file__))
-PIPELINE_VERSION = "2.4-product"
+PIPELINE_VERSION = "2.5-product"
 
 
 def latest(pattern):
@@ -56,6 +56,8 @@ def _print_class_evidence(row, class_row):
             clean(class_row.get("serial")) or "-",
             clean(class_row.get("storage_unit_type")) or "-",
         ))
+    if clean(class_row.get("md32xx_pair_key")):
+        print("  Storage MD32xx pair: {0}".format(clean(class_row.get("md32xx_pair_key"))))
     if clean(class_row.get("identity_history_source")):
         print("  Anti-flap: identidade forte preservada de {0}".format(clean(class_row.get("identity_history_source"))))
     if clean(class_row.get("historical_vmware_mac")):
@@ -71,6 +73,7 @@ def print_plan_diagnostics(plan_path, classification_path):
 
     ready_create = [row for row in records if row.get("decision") == "READY" and row.get("action") == "CREATE"]
     ready_update = [row for row in records if row.get("decision") == "READY" and row.get("action") == "UPDATE_SAFE"]
+    ready_repair = [row for row in records if row.get("decision") == "READY" and row.get("action") == "REPAIR_SAFE_VM_DUPLICATE"]
     delegated = [row for row in records if row.get("decision") == "DELEGATED"]
     pending = [row for row in records if row.get("decision") in ("REVIEW", "BLOCKED")]
 
@@ -78,6 +81,7 @@ def print_plan_diagnostics(plan_path, classification_path):
     print("Planner: {0}".format(clean(plan.get("planner_version")) or "-"))
     print("READY/CREATE: {0}".format(len(ready_create)))
     print("READY/UPDATE_SAFE: {0}".format(len(ready_update)))
+    print("READY/REPAIR_SAFE: {0}".format(len(ready_repair)))
     print("DELEGATED/HYPERVISOR: {0}".format(len(delegated)))
     print("REVIEW: {0}".format(sum(1 for x in pending if x.get("decision") == "REVIEW")))
     print("BLOCKED: {0}".format(sum(1 for x in pending if x.get("decision") == "BLOCKED")))
@@ -103,6 +107,7 @@ def print_plan_diagnostics(plan_path, classification_path):
             print("  Fabricante/Modelo: {0} / {1}".format(
                 clean(row.get("manufacturer")) or "-", clean(row.get("model")) or "-"
             ))
+            print("  IPs: {0}".format(_format_list(row.get("ips"))))
             _print_class_evidence(row, class_row)
 
     if ready_update:
@@ -113,6 +118,19 @@ def print_plan_diagnostics(plan_path, classification_path):
                 clean(row.get("desired_name")) or "-",
             ))
             print("  Ajustes: {0}".format(_format_list(row.get("safe_diffs"))))
+
+    if ready_repair:
+        print("===== NETWORK REPAROS SEGUROS READY =====")
+        for pos, row in enumerate(ready_repair, 1):
+            repair = row.get("repair") or {}
+            print("[{0}/{1}] READY/REPAIR_SAFE | {2} | Device ID {3} -> VM ID {4}".format(
+                pos, len(ready_repair), clean(row.get("desired_name")) or "-",
+                repair.get("device_id") or "-", repair.get("vm_id") or "-",
+            ))
+            print("  IP: {0} -> VM interface ID {1}".format(
+                clean(repair.get("ip_address")) or "-", repair.get("vm_interface_id") or "-"))
+            print("  Modo: {0}".format(clean(repair.get("mode")) or "-"))
+            print("  Proteção: somente Device/IP/interfaces criados pelo netbox-discovery; sem vínculos manuais")
 
     reason_counts = Counter()
     for row in pending:
@@ -155,9 +173,9 @@ def main(argv=None):
     ap.add_argument("--output-dir", default=REPORTS)
     args = ap.parse_args(argv)
 
-    classifier = os.path.join(HERE, "classifier_v4.py")
-    reconciler = os.path.join(HERE, "reconciler_v4.py")
-    planner = os.path.join(HERE, "planner_v3.py")
+    classifier = os.path.join(HERE, "classifier_v5.py")
+    reconciler = os.path.join(HERE, "reconciler_v5.py")
+    planner = os.path.join(HERE, "planner_v4.py")
 
     cmd = [sys.executable, classifier, "--output-dir", args.output_dir]
     if args.input:
@@ -186,9 +204,9 @@ def main(argv=None):
 
     print("===== INVENTORY PIPELINE =====")
     print("Pipeline version: {0}".format(PIPELINE_VERSION))
-    print("CLASSIFY V4: OK")
-    print("RECONCILE V4: OK")
-    print("PLAN V3: OK")
+    print("CLASSIFY V5: OK")
+    print("RECONCILE V5: OK")
+    print("PLAN V4: OK")
     print("NetBox write: NÃO")
     return 0
 
