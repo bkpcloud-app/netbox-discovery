@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.10.16
+**Versão da política:** 1.10.17
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
@@ -24,11 +24,11 @@ REVIEW                          → não escreve
 BLOCKED                         → não escreve
 ```
 
-## Preflight global 1.10.16
+## Preflight global 1.10.17
 
 Antes da primeira escrita da finalização:
 
-1. recalcular o PLAN V6;
+1. recalcular o PLAN V7;
 2. validar todos os READY normais;
 3. validar ownership de todos os MACs esperados;
 4. validar todos os `REPAIR_SAFE_VM_DUPLICATE`;
@@ -40,44 +40,48 @@ Antes da primeira escrita da finalização:
 
 Uma consulta indisponível nunca é interpretada como coleção vazia.
 
-## MAC ownership de Devices
+## Criação de interface ausente na VM
 
-```text
-MAC ausente ou sem vínculo → permitido
-MAC na interface esperada → permitido
-MAC duplicado             → bloqueado
-MAC em outra interface    → bloqueado
-MAC em VM/outro objeto    → bloqueado
-```
-
-Após o IMPORT normal, `MAC RECONCILE` pode criar ou atribuir o objeto MAC somente quando o IP resolve uma única `dcim.interface` do Device esperado.
-
-## Fallback de VM com interface única sem MAC
-
-O produto só pode criar/atribuir um MAC VMware na interface da VM durante um reparo quando todas as condições forem verdadeiras:
+A 1.10.17 só pode criar uma `virtualization.vminterface` durante um reparo quando todas as condições forem verdadeiras:
 
 ```text
 uma única VM por nome
-exatamente uma interface live nessa VM
-interface sem outro MAC
+zero interfaces live nessa VM
 exatamente um MAC VMware forte
-MAC ausente, sem vínculo ou já na mesma interface
+MAC ausente ou sem vínculo
 MAC não duplicado
 MAC não pertencente a outro objeto
-todas as proteções de ownership do Device/IP válidas
+Device/IP/interfaces integralmente criados pelo produto
+Device sem serial, escopo físico, cabo ou objetos relacionados
+exatamente um IP observado ainda no Device duplicado
+VM sem outro primary IPv4
+```
+
+A interface criada deve usar:
+
+```text
+name=MGMT
+enabled=true
+description=Descoberto pelo netbox-discovery hypervisor
 ```
 
 Bloqueios obrigatórios:
 
 ```text
-VM com 0 ou mais de 1 interface
-interface com MAC divergente
+mais de uma VM por nome
+uma ou mais interfaces live no caminho zero-interface
 mais de um MAC VMware candidato
 MAC já pertencente a dcim.interface ou outra VM interface
 MAC duplicado globalmente
+Device/IP/interface sem ownership do produto
+qualquer vínculo manual ou objeto relacionado
 ```
 
-O MAC é revalidado antes da primeira escrita e novamente imediatamente antes do reparo destrutivo.
+## Fallback de interface única sem MAC
+
+Quando a VM já possui exatamente uma interface, o produto pode criar/atribuir o MAC VMware somente se a interface não possuir outro MAC e todas as demais proteções do reparo continuarem válidas.
+
+VM com múltiplas interfaces sem correspondência inequívoca permanece `BLOCKED`.
 
 ## DELETE restrito
 
@@ -92,7 +96,7 @@ A única remoção automática é um Device duplicado de VM quando:
 - não existe cabo ou conexão manual;
 - existe um único IP observado;
 - existe uma única VM pelo nome;
-- a interface alvo é comprovada por MAC exato ou pelo fallback de interface única;
+- a interface alvo é comprovada por MAC exato, interface única vazia ou criação protegida da interface ausente;
 - Tenant/Site permanecem válidos;
 - a VM não possui outro primary IPv4.
 
@@ -101,7 +105,7 @@ Se qualquer condição falhar:
 ```text
 BLOCKED
 REPAIR_SAFE_NOT_ELIGIBLE
-NetBox write: NÃO para o reparo
+nenhum DELETE é executado
 ```
 
 A VM nunca é removida.
@@ -113,23 +117,42 @@ PREFLIGHT GLOBAL
 → IMPORT normal
 → MAC RECONCILE de Devices
 → revalidação live do reparo
-→ VM MAC ENSURE, quando necessário
-→ move IP para a VM
-→ remove somente o Device duplicado do produto
+→ criar interface da VM, quando elegível
+→ criar/atribuir MAC e primary MAC
+→ mover IP para a VM
+→ definir primary IPv4 se vazio
+→ remover somente o Device duplicado do produto
 → AUDIT FINALIZE
 ```
 
 Se o IMPORT normal ou o MAC RECONCILE falhar, nenhum Device duplicado é removido.
 
-A criação do MAC na VM ocorre antes da movimentação do IP. Se uma falha posterior ocorrer, o estado permanece recuperável e um novo PLAN deve usar a correspondência MAC normal.
-
 ## Recuperação parcial
 
 ```text
-RECOVERY_AFTER_IP_MOVE
+interface criada sem MAC
+→ próxima execução usa fallback de interface única
+
+interface + MAC criados, IP ainda no Device
+→ próxima execução conclui REPAIR_SAFE
+
+IP já movido, Device ainda existe
+→ RECOVERY_AFTER_IP_MOVE
 ```
 
-A próxima execução pode concluir somente a limpeza restante, desde que todas as proteções continuem válidas.
+Nenhuma etapa de recuperação remove a VM.
+
+## MAC ownership de Devices
+
+```text
+MAC ausente ou sem vínculo → permitido
+MAC na interface esperada → permitido
+MAC duplicado             → bloqueado
+MAC em outra interface    → bloqueado
+MAC em VM/outro objeto    → bloqueado
+```
+
+Após o IMPORT normal, `MAC RECONCILE` pode criar ou atribuir o objeto MAC somente quando o IP resolve uma única `dcim.interface` do Device esperado.
 
 ## MD32xx
 
@@ -149,15 +172,16 @@ A ponte por nome nunca rebaixa um `DELEGATED` autoritativo.
 
 Identidade VMware e storage forte podem ser preservadas por até 48 horas no mesmo Site/IP.
 
-Histórico VMware não autoriza reparo sozinho. Ele precisa passar pela correspondência live ou pelo fallback restrito de interface única. `connUnitId=000...000` não é identidade.
+Histórico VMware não autoriza reparo sozinho. Ele precisa passar pelos gates de VM única, MAC VMware único e ownership integral do produto. `connUnitId=000...000` não é identidade.
 
-## Auditoria 1.10.16
+## Auditoria 1.10.17
 
 O audit combinado confirma:
 
 - convergência dos READY normais;
 - MACs de Devices nas interfaces corretas;
-- MAC da VM único, atribuído à interface correta e configurado como primary MAC;
+- interface criada na VM correta, quando aplicável;
+- MAC da VM único e configurado como primary MAC;
 - Device duplicado ausente;
 - IP atribuído à VM interface correta;
 - primary IPv4 correto;

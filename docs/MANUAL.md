@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.10.16 — PRODUCT V1  
+**Versão:** 1.10.17 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -22,19 +22,18 @@ Escrita explícita:
 netbox-discovery run --apply
 ```
 
-Fluxo 1.10.16:
+Fluxo 1.10.17:
 
 ```text
 DISCOVER
 → CLASSIFY V5
 → RECONCILE V5
-→ PLAN V6
+→ PLAN V7
 → PREFLIGHT GLOBAL FINALIZE
 → IMPORT normal
 → MAC RECONCILE de Devices
-→ VM MAC ENSURE, quando elegível
 → REPAIR_SAFE
-→ AUDIT FINALIZE
+→ AUDIT FINALIZE V7
 ```
 
 ## 2. Decisões
@@ -54,7 +53,7 @@ DISCOVER
 Antes da primeira escrita:
 
 ```text
-recalcula PLAN V6
+recalcula PLAN V7
 → valida READY normais
 → valida ownership dos MACs esperados
 → valida todos os REPAIR_SAFE
@@ -70,55 +69,82 @@ PREFLIGHT GLOBAL FINALIZE: BLOQUEADO
 NetBox write: NÃO
 ```
 
-## 4. Reparo de VM com interface única sem MAC
+## 4. Reparo quando a VM possui zero interfaces
 
-A 1.10.16 trata o caso em que existe uma VM inequívoca, mas sua única interface ainda não possui objeto MAC no NetBox.
+A 1.10.17 trata o caso validado no DCM em que existe uma VM inequívoca, mas ela não possui nenhuma `virtualization.vminterface` cadastrada no NetBox.
 
-O fallback só é elegível quando:
+O reparo só é elegível quando:
 
 1. existe uma única VM correspondente pelo nome;
-2. a VM possui exatamente uma interface live;
-3. a interface não possui nenhum outro MAC;
-4. existe exatamente um MAC VMware forte para o asset;
-5. o MAC está ausente, sem vínculo ou já pertence à mesma interface;
-6. o MAC não pertence a outro objeto e não está duplicado;
-7. Device, interface física e IP mantêm ownership integral do produto;
-8. o Device não possui serial, rack, location, cluster, cabo ou objetos relacionados;
+2. a VM possui exatamente zero interfaces live;
+3. existe exatamente um MAC VMware forte para o asset;
+4. o MAC está ausente ou sem vínculo e pertence ao produto quando já existe;
+5. o MAC não está duplicado e não pertence a outro objeto;
+6. Device, interfaces físicas e IP mantêm ownership integral do produto;
+7. o Device não possui serial, rack, location, cluster, cabo ou objetos relacionados;
+8. existe exatamente um IP descoberto e ele ainda está atribuído ao Device duplicado;
 9. a VM não possui outro primary IPv4.
 
 A execução faz, nesta ordem:
 
 ```text
-1. cria/atribui o MAC à única virtualization.vminterface
-2. define primary_mac_address dessa interface
-3. move o IP para a interface da VM
-4. define primary_ip4 da VM se estiver vazio
-5. limpa primary/oob do Device duplicado
-6. remove somente MACs do Device criados pelo produto
-7. remove somente o Device duplicado criado pelo produto
+1. revalida todos os pré-requisitos sem escrita
+2. cria virtualization.vminterface MGMT na VM
+3. cria/atribui o MAC VMware nessa interface
+4. define primary_mac_address da interface
+5. move o IP para a nova interface da VM
+6. define primary_ip4 da VM se estiver vazio
+7. limpa primary/oob do Device duplicado
+8. remove somente MACs do Device criados pelo produto
+9. remove somente o Device duplicado criado pelo produto
+10. executa AUDIT FINALIZE
 ```
 
-VM com mais de uma interface permanece `BLOCKED`. O produto não escolhe interface sem evidência.
-
-## 5. Caminho normal por MAC
-
-Quando o MAC VMware já existe no NetBox, a ação `REPAIR_SAFE_VM_DUPLICATE` continua exigindo correspondência exata com uma única interface da VM inequívoca.
-
-O anti-flap pode fornecer `historical_vmware_mac`, mas ele precisa ser OUI VMware e passar por uma das duas validações:
+A interface criada recebe:
 
 ```text
-correspondência exata com uma interface live
-```
-
-ou:
-
-```text
-VM única + exatamente uma interface vazia + MAC forte sem outro owner
+name: MGMT
+enabled: true
+description: Descoberto pelo netbox-discovery hypervisor
 ```
 
 A VM nunca é removida.
 
-## 6. MAC RECONCILE de Devices
+## 5. Reparo quando a VM já possui interface
+
+Há dois caminhos anteriores que continuam válidos:
+
+```text
+A. MAC VMware corresponde exatamente a uma única interface live
+B. VM única + exatamente uma interface sem MAC + MAC VMware forte sem outro owner
+```
+
+VM com duas ou mais interfaces sem correspondência inequívoca continua `BLOCKED`.
+
+## 6. Recuperação de falha parcial
+
+Se a criação da interface ou do MAC ocorrer e uma etapa posterior falhar, a próxima execução deve convergir por um dos fluxos existentes:
+
+```text
+interface criada sem MAC
+→ fallback de interface única
+
+interface + MAC criados, IP ainda no Device
+→ REPAIR_SAFE normal
+
+IP já movido, Device ainda existe
+→ RECOVERY_AFTER_IP_MOVE
+```
+
+Nenhuma remoção automática de VM existe.
+
+Relatório:
+
+```text
+/opt/netbox-discovery/reports/<SITE>-repair-journal-*.json
+```
+
+## 7. MAC RECONCILE de Devices
 
 Depois do IMPORT normal e antes do reparo destrutivo:
 
@@ -137,22 +163,6 @@ Relatório:
 
 ```text
 /opt/netbox-discovery/reports/<SITE>-mac-reconcile-*.json
-```
-
-## 7. Recuperação de falha parcial
-
-Se o IP já tiver sido movido, mas o Device duplicado ainda existir:
-
-```text
-RECOVERY_AFTER_IP_MOVE
-```
-
-A próxima execução faz novo preflight e conclui somente a limpeza segura restante.
-
-Relatório:
-
-```text
-/opt/netbox-discovery/reports/<SITE>-repair-journal-*.json
 ```
 
 ## 8. Dell PowerVault MD32xx
@@ -175,13 +185,14 @@ Device STORAGE
 
 ## 9. Audit final
 
-O `auditor_v6` valida:
+O `auditor_v7` valida:
 
 - READY normais;
 - MACs de Devices físicos;
-- MAC criado/atribuído à interface da VM no fallback;
+- interface criada na VM correta;
+- MAC VMware único e primary nessa interface;
 - Device duplicado removido;
-- IP na interface correta da VM;
+- IP atribuído à interface da VM;
 - primary IPv4 da VM;
 - idempotência como `DELEGATED/NOOP`.
 

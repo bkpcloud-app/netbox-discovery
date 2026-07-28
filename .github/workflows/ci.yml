@@ -5,6 +5,27 @@ on:
   pull_request:
 
 jobs:
+  network-1-10-17:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          show-progress: false
+
+      - name: Zero-interface VM repair regression
+        run: |
+          set -o pipefail
+          python3 tests/test_network_1_10_17.py 2>&1 | tee /tmp/network-1-10-17.log
+
+      - name: Upload failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: network-1-10-17-failure
+          path: /tmp/network-1-10-17.log
+          if-no-files-found: error
+
   validate:
     runs-on: ubuntu-latest
     steps:
@@ -17,7 +38,7 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.10.16"
+          test "$(cat VERSION)" = "1.10.17"
 
       - name: Documentation sync
         run: |

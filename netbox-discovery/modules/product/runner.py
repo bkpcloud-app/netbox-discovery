@@ -14,7 +14,7 @@ import sys
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 LOCK_FILE = "/var/lock/netbox-discovery-global.lock"
-RUNNER_VERSION = "2.5-product"
+RUNNER_VERSION = "2.6-product"
 
 
 def utc_stamp():
@@ -73,8 +73,8 @@ def execute(apply_mode):
         run_step("DISCOVER", [py, os.path.join(BASE, "modules/discovery/network_v3.py")], stages)
         run_step("CLASSIFY_RECONCILE_PLAN_FINAL", [py, os.path.join(BASE, "modules/inventory/pipeline.py")], stages)
         if apply_mode:
-            run_step("IMPORT_FINALIZE", [py, os.path.join(BASE, "modules/importers/importer_v6.py"), "--apply"], stages)
-            run_step("AUDIT_FINALIZE", [py, os.path.join(BASE, "modules/auditors/auditor_v6.py")], stages)
+            run_step("IMPORT_FINALIZE", [py, os.path.join(BASE, "modules/importers/importer_v7.py"), "--apply"], stages)
+            run_step("AUDIT_FINALIZE", [py, os.path.join(BASE, "modules/auditors/auditor_v7.py")], stages)
             audit_files = glob.glob(os.path.join(REPORTS, "{0}-audit-*.json".format(site)))
             status = "PASS"
             if audit_files:
