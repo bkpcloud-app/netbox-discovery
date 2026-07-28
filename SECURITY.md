@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.10.14
+**Versão da política:** 1.10.15
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
@@ -24,25 +24,40 @@ REVIEW                          → não escreve
 BLOCKED                         → não escreve
 ```
 
-## Preflight global 1.10.14
+## Preflight global 1.10.15
 
 Antes da primeira escrita da finalização:
 
-1. recalcular o PLAN V4;
+1. recalcular o PLAN V5;
 2. validar o estado global de todos os READY normais;
-3. reler Device, VM, VM interface, IP, interfaces físicas e MACs;
-4. consultar relações de inventário, console, energia, front/rear ports e bays;
-5. bloquear se qualquer consulta falhar ou qualquer relação inesperada existir;
-6. criar `REPAIR_JOURNAL` read-only;
-7. somente então permitir escrita.
+3. validar ownership de todos os MACs esperados;
+4. reler Device, VM, VM interface, IP, interfaces físicas e MACs;
+5. consultar relações de inventário, console, energia, front/rear ports e bays;
+6. bloquear se qualquer consulta falhar ou qualquer relação inesperada existir;
+7. criar `REPAIR_JOURNAL` read-only;
+8. somente então permitir escrita.
 
 Uma consulta indisponível nunca é interpretada como coleção vazia.
+
+## MAC ownership
+
+Antes da escrita:
+
+```text
+MAC ausente ou sem vínculo → permitido
+MAC na interface esperada → permitido
+MAC duplicado             → bloqueado
+MAC em outra interface    → bloqueado
+MAC em VM/outro objeto    → bloqueado
+```
+
+Após o IMPORT normal, `MAC RECONCILE` pode criar ou atribuir o objeto MAC somente quando o IP resolve uma única `dcim.interface` do Device esperado.
 
 ## DELETE restrito
 
 Não existe DELETE genérico no Network.
 
-A única remoção automática da 1.10.14 é um Device duplicado de VM quando todas as condições forem verdadeiras:
+A única remoção automática é um Device duplicado de VM quando todas as condições forem verdadeiras:
 
 - descrição do Device exatamente indica criação pelo produto;
 - interfaces e IP mantêm descrições de ownership do produto;
@@ -54,6 +69,8 @@ A única remoção automática da 1.10.14 é um Device duplicado de VM quando to
 - uma única VM interface pelo MAC VMware;
 - mesmo Tenant/Site;
 - VM sem outro primary IPv4.
+
+O `historical_vmware_mac` só pode ser usado se for OUI VMware e confirmar exatamente uma interface live da VM única.
 
 Se qualquer condição falhar:
 
@@ -67,7 +84,16 @@ A VM nunca é removida.
 
 ## Ordem segura
 
-O IMPORT normal é executado antes do reparo destrutivo. Se o import normal falhar, nenhum Device duplicado é removido.
+```text
+PREFLIGHT GLOBAL
+→ IMPORT normal
+→ MAC RECONCILE
+→ revalidação live
+→ REPAIR_SAFE
+→ AUDIT FINALIZE
+```
+
+Se o IMPORT normal ou o MAC RECONCILE falhar, nenhum Device duplicado é removido.
 
 Cada reparo recebe nova verificação live imediatamente antes da ação.
 
@@ -106,15 +132,16 @@ A ponte por nome só acrescenta ownership quando o IP não o prova. Nunca rebaix
 
 ## Identidade anti-flap
 
-Identidade VMware e storage forte podem ser preservadas por até 48 horas no mesmo Site/IP. Histórico não injeta MAC antigo em interface e não vence identidade física forte atual.
+Identidade VMware e storage forte podem ser preservadas por até 48 horas no mesmo Site/IP.
 
-`connUnitId=000...000` não é identidade.
+Histórico VMware não autoriza reparo sozinho; precisa coincidir com uma interface live da VM inequívoca. `connUnitId=000...000` não é identidade.
 
-## Auditoria 1.10.14
+## Auditoria 1.10.15
 
 O audit combinado confirma:
 
 - convergência dos READY normais;
+- MACs nas interfaces corretas;
 - Device duplicado ausente;
 - IP atribuído à VM interface correta;
 - primary IPv4 correto;

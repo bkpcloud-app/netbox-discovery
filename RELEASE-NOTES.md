@@ -1,3 +1,79 @@
+## V1.10.15 — Historical VMware repair + preserved-interface MAC reconcile
+
+Release criada a partir do APPLY live da 1.10.14 no DCM.
+
+### Evidência live
+
+O MD3200BKP foi criado corretamente como um único STORAGE com dois IPs, o preflight global passou e o IMPORT normal concluiu sem erros.
+
+Duas lacunas reais permaneceram:
+
+```text
+SRV-AE11
+→ historical_vmware_mac estava presente
+→ PLAN V4 avaliou somente asset.macs atual
+→ REPAIR_SAFE não foi elegível
+
+ME5024
+→ IP/interface existentes foram preservados
+→ ensure_mac não foi chamado nesse caminho
+→ AUDIT: MAC_MISSING 00:C0:FF:66:B4:BF
+```
+
+### PLAN V5
+
+O `historical_vmware_mac` do anti-flap pode participar do gate de reparo quando:
+
+- o asset continua `VIRTUAL_MACHINE_CANDIDATE`;
+- o valor pertence a um OUI VMware conhecido;
+- existe uma única VM pelo nome;
+- o MAC corresponde exatamente a uma interface live dessa VM;
+- todas as proteções de ownership do Device duplicado continuam válidas.
+
+O histórico não autoriza reparo sem confirmação live.
+
+### Preflight de MAC
+
+Antes da primeira escrita, todos os MACs esperados dos READY normais são verificados na tabela global.
+
+```text
+MAC ausente ou sem vínculo → permitido
+MAC na interface correta  → permitido
+MAC duplicado              → bloqueia
+MAC em outra interface/VM  → bloqueia
+```
+
+### MAC RECONCILE
+
+Após o IMPORT normal e antes do REPAIR_SAFE:
+
+```text
+IP único em dcim.interface
+→ confirma Device esperado
+→ cria/atribui MAC esperado
+→ garante primary_mac_address
+```
+
+Relatório próprio:
+
+```text
+<SITE>-mac-reconcile-*.json
+```
+
+### Componentes
+
+```text
+planner_v5.py       4.5-product
+importer_v5.py      5.3-product
+auditor_v5.py       6.3-product
+pipeline            2.6-product
+runner              2.4-product
+```
+
+Estado inicial: **CI/NOT LIVE até a única execução final `netbox-discovery run --apply`**.
+
+---
+
 ## V1.10.14 — One-pass Network finalization
 
 Release criada para concluir em uma única execução as pendências Network remanescentes do DCM.
@@ -80,13 +156,7 @@ Uma nova execução pode concluir somente a limpeza segura restante após novo p
 
 ### Audit combinado
 
-O `auditor_v4` valida:
-
-- READY normais e MD32xx;
-- Device duplicado removido;
-- IP na VM interface correta;
-- primary IPv4 correto;
-- idempotência do asset reparado como `DELEGATED/NOOP`.
+O `auditor_v4` valida READY normais e MD32xx, Device duplicado removido, IP na VM interface correta, primary IPv4 e idempotência `DELEGATED/NOOP`.
 
 ### Componentes
 
@@ -100,7 +170,7 @@ pipeline 2.5-product
 runner 2.3-product
 ```
 
-Estado inicial: **CI/NOT LIVE até a única execução final `netbox-discovery run --apply`**.
+Validação live parcial: MD32xx, preflight global e IMPORT normal passaram; findings corrigidos na 1.10.15.
 
 ---
 
