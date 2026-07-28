@@ -51,7 +51,7 @@ def check(base, package_root=""):
         "modules/inventory/planner_v6.py", "modules/inventory/planner_v7.py",
         "modules/inventory/pipeline.py", "modules/importers/importer_v2.py",
         "modules/importers/importer_v3.py", "modules/importers/importer_v4.py", "modules/importers/importer_v5.py",
-        "modules/importers/importer_v6.py", "modules/importers/importer_v7.py",
+        "modules/importers/importer_v6.py", "modules/importers/importer_v7.py", "modules/importers/importer_v8.py",
         "modules/auditors/auditor_v2.py", "modules/auditors/auditor_v3.py",
         "modules/auditors/auditor_v4.py", "modules/auditors/auditor_v5.py",
         "modules/auditors/auditor_v6.py", "modules/auditors/auditor_v7.py",
