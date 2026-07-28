@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.10.15 — PRODUCT V1  
+**Versão atual:** 1.10.16 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -18,7 +18,7 @@ netbox-discovery run
 ```
 
 ```text
-DISCOVER → CLASSIFY V5 → RECONCILE V5 → PLAN V5
+DISCOVER → CLASSIFY V5 → RECONCILE V5 → PLAN V6
 NetBox write: NÃO
 ```
 
@@ -32,10 +32,11 @@ netbox-discovery run --apply
 DISCOVER
 → CLASSIFY V5
 → RECONCILE V5
-→ PLAN V5
+→ PLAN V6
 → PREFLIGHT GLOBAL FINALIZE
 → IMPORT READY normal
 → MAC RECONCILE
+→ VM MAC ENSURE, quando necessário
 → REPAIR_SAFE
 → AUDIT FINALIZE
 ```
@@ -51,28 +52,45 @@ netbox-discovery hypervisor run --apply
 netbox-discovery hypervisor status
 ```
 
-## 1.10.15 — correção final do fluxo Network
+## 1.10.16 — reparo seguro de VM com interface única sem MAC no NetBox
 
-A release corrige, no mesmo `run --apply`, os dois problemas encontrados no APPLY real da 1.10.14:
+A execução live da 1.10.15 confirmou que o `SRV-AE11` possui:
 
 ```text
-SRV-AE11 não entrou no REPAIR_SAFE porque o planner ignorou historical_vmware_mac
-ME5024 possuía MAC esperado no PLAN, mas a interface existente foi preservada sem criar o objeto MAC
+VM única por nome: ID 359
+MAC VMware forte: 00:50:56:9F:9E:70
+Device duplicado integralmente criado pelo produto
 ```
 
-### Identidade histórica VMware no reparo seguro
+Porém, a interface da VM não possuía objeto MAC no NetBox. Por isso o PLAN retornou:
 
-O `historical_vmware_mac` do anti-flap pode participar da seleção da interface da VM somente quando:
+```text
+REPAIR_SAFE_NOT_ELIGIBLE: Interface da VM por MAC não é única: 0
+```
 
-- o asset continua `VIRTUAL_MACHINE_CANDIDATE`;
-- o MAC pertence a um OUI VMware conhecido;
-- existe uma única VM correspondente por nome;
-- o MAC corresponde exatamente a uma interface live dessa VM;
-- todas as proteções de ownership do Device, interface e IP continuam válidas.
+O PLAN V6 adiciona um único fallback conservador. O reparo só é promovido para `READY/REPAIR_SAFE_VM_DUPLICATE` quando todas as condições forem verdadeiras:
 
-O histórico não autoriza reparo sozinho. Ele apenas recupera a evidência forte que precisa confirmar uma interface real da VM no NetBox.
+- uma única VM já foi selecionada pelo nome;
+- essa VM possui exatamente uma interface live;
+- a interface não possui outro MAC;
+- existe exatamente um MAC VMware forte para o asset;
+- esse MAC está ausente, sem vínculo ou já pertence à mesma interface da VM;
+- o MAC não está duplicado e não pertence a outro objeto;
+- todas as proteções de ownership do Device, interfaces e IP da 1.10.14 continuam válidas.
 
-### MAC RECONCILE
+Antes de mover o IP ou remover o Device duplicado, o importer:
+
+```text
+cria/atribui o MAC à única interface da VM
+→ define primary_mac_address da interface
+→ move o IP para virtualization.vminterface
+→ define primary IPv4 da VM se vazio
+→ remove somente o Device duplicado criado pelo produto
+```
+
+VM com duas ou mais interfaces continua `BLOCKED`; o produto não escolhe interface por tentativa.
+
+## MAC RECONCILE de Devices físicos
 
 Após o IMPORT normal, o produto garante o objeto MAC mesmo quando o IP já estava vinculado à interface correta e o importer apenas preservou essa interface.
 
@@ -107,7 +125,19 @@ Resultado:
 
 ## REPAIR_SAFE de Device duplicado de VM
 
-A correção automática exige ownership completo do produto, ausência de vínculos manuais, VM e interface inequívocas, IP único e ausência de outro primary IPv4 na VM.
+A correção automática exige ownership completo do produto, ausência de vínculos manuais, VM inequívoca, IP único e ausência de outro primary IPv4 na VM.
+
+A interface alvo deve ser comprovada por um destes caminhos:
+
+```text
+MAC VMware corresponde exatamente a uma interface live
+```
+
+ou:
+
+```text
+VM única + exatamente uma interface sem MAC + MAC VMware forte e sem outro owner
+```
 
 Ação:
 
