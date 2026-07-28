@@ -267,8 +267,8 @@ def _create_vm_interface_and_mac(nb, row, verified, events, base_execute):
 
 
 def main(argv=None):
-    old_refresh = v5.refresh_plan
-    old_version = v5.IMPORTER_VERSION
+    old_v6_refresh = v6.refresh_plan
+    old_v6_version = v6.IMPORTER_VERSION
     original_verify = v4._verify_repair
     original_execute = v4._execute_repair
     old_print = builtins.print
@@ -295,8 +295,11 @@ def main(argv=None):
         return old_print(*args, **kwargs)
 
     try:
-        v5.refresh_plan = refresh_plan
-        v5.IMPORTER_VERSION = IMPORTER_VERSION
+        # importer_v6.main injects its own globals into importer_v5. Patch the
+        # v6 globals themselves so refresh/preflight use planner V7 and the
+        # final report records the 1.10.17 importer version.
+        v6.refresh_plan = refresh_plan
+        v6.IMPORTER_VERSION = IMPORTER_VERSION
         v4._verify_repair = verify_repair
         v4._execute_repair = execute_repair
         builtins.print = release_print
@@ -305,8 +308,8 @@ def main(argv=None):
         builtins.print = old_print
         v4._verify_repair = original_verify
         v4._execute_repair = original_execute
-        v5.refresh_plan = old_refresh
-        v5.IMPORTER_VERSION = old_version
+        v6.refresh_plan = old_v6_refresh
+        v6.IMPORTER_VERSION = old_v6_version
 
 
 if __name__ == "__main__":
