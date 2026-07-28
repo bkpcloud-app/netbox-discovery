@@ -13,7 +13,7 @@ from collections import Counter
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 HERE = os.path.dirname(os.path.abspath(__file__))
-PIPELINE_VERSION = "2.3-product"
+PIPELINE_VERSION = "2.4-product"
 
 
 def latest(pattern):
@@ -49,13 +49,17 @@ def _print_class_evidence(row, class_row):
         clean(class_row.get("snmp_name")) or "-", clean(class_row.get("snmp_object_id")) or "-",
         clean(class_row.get("management_mac")) or "-",
     ))
-    if clean(class_row.get("storage_unit_id")):
+    if clean(class_row.get("storage_unit_id")) or clean(class_row.get("storage_unit_product")):
         print("  Storage FA-MIB: id={0} product={1} serial={2} type={3}".format(
             clean(class_row.get("storage_unit_id")) or "-",
             clean(class_row.get("storage_unit_product")) or "-",
             clean(class_row.get("serial")) or "-",
             clean(class_row.get("storage_unit_type")) or "-",
         ))
+    if clean(class_row.get("identity_history_source")):
+        print("  Anti-flap: identidade forte preservada de {0}".format(clean(class_row.get("identity_history_source"))))
+    if clean(class_row.get("historical_vmware_mac")):
+        print("  VMware MAC histórico: {0}".format(clean(class_row.get("historical_vmware_mac"))))
     print("  Evidência CLASSIFY: {0}".format(_format_list(class_row.get("evidence"))))
 
 
@@ -161,9 +165,9 @@ def main(argv=None):
     ap.add_argument("--output-dir", default=REPORTS)
     args = ap.parse_args(argv)
 
-    classifier = os.path.join(HERE, "classifier_v3.py")
+    classifier = os.path.join(HERE, "classifier_v4.py")
     reconciler = os.path.join(HERE, "reconciler_v3.py")
-    planner = os.path.join(HERE, "planner_v2.py")
+    planner = os.path.join(HERE, "planner_v3.py")
 
     cmd = [sys.executable, classifier, "--output-dir", args.output_dir]
     if args.input:
@@ -192,9 +196,9 @@ def main(argv=None):
 
     print("===== INVENTORY PIPELINE =====")
     print("Pipeline version: {0}".format(PIPELINE_VERSION))
-    print("CLASSIFY V3: OK")
+    print("CLASSIFY V4: OK")
     print("RECONCILE V3: OK")
-    print("PLAN V2: OK")
+    print("PLAN V3: OK")
     print("NetBox write: NÃO")
     return 0
 
