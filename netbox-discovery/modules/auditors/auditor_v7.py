@@ -13,7 +13,6 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from modules.auditors import auditor_v4 as v4
-from modules.auditors import auditor_v5 as v5
 from modules.auditors import auditor_v6 as v6
 
 AUDITOR_VERSION = "6.5-product"
@@ -101,8 +100,8 @@ def _resolve_created_interface(nb, row):
 
 
 def main(argv=None):
-    old_generate = v5.generate_fresh_plan
-    old_version = v5.AUDITOR_VERSION
+    old_v6_generate = v6.generate_fresh_plan
+    old_v6_version = v6.AUDITOR_VERSION
     original_repair_checks = v4._repair_checks
 
     def repair_checks(nb, row, fresh_plan, checks):
@@ -135,14 +134,17 @@ def main(argv=None):
                 clean(mac_row.get("mac_address") or mac_row.get("mac")), interface.get("id")))
 
     try:
-        v5.generate_fresh_plan = generate_fresh_plan
-        v5.AUDITOR_VERSION = AUDITOR_VERSION
+        # auditor_v6.main injects its own globals into auditor_v5. Patch the
+        # v6 globals themselves so the combined audit uses PLAN V7 and records
+        # the 1.10.17 auditor version.
+        v6.generate_fresh_plan = generate_fresh_plan
+        v6.AUDITOR_VERSION = AUDITOR_VERSION
         v4._repair_checks = repair_checks
         return v6.main(argv)
     finally:
         v4._repair_checks = original_repair_checks
-        v5.generate_fresh_plan = old_generate
-        v5.AUDITOR_VERSION = old_version
+        v6.generate_fresh_plan = old_v6_generate
+        v6.AUDITOR_VERSION = old_v6_version
 
 
 if __name__ == "__main__":
