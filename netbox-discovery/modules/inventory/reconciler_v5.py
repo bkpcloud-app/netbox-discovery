@@ -18,8 +18,6 @@ from modules.inventory import reconciler_v4 as v4
 
 RECONCILER_VERSION = "3.3-product"
 ORIG_V4_BUILD_ASSETS = v4.ORIG_BUILD_ASSETS
-ORIG_MERGE_REASON = v2.base.merge_reason
-ORIG_ASSET_ID = v2.base.asset_id
 
 
 def clean(value):
@@ -41,17 +39,16 @@ def _valid_pair_groups(records):
             continue
         if any(clean(row.get("confidence")) != "HIGH" for row in rows):
             continue
-        serials = sorted(set(v2.base.norm_serial(row.get("serial")) for row in rows if v2.base.norm_serial(row.get("serial"))))
+        serials = sorted(set(
+            v2.base.norm_serial(row.get("serial"))
+            for row in rows if v2.base.norm_serial(row.get("serial"))
+        ))
         if len(serials) > 1:
             continue
         try:
             values = sorted(int(ipaddress.ip_address(clean(row.get("ip")))) for row in rows)
         except Exception:
             continue
-        # MD32xx has two RAID controller management endpoints. For automatic
-        # reconciliation require exactly two consecutive addresses in the same
-        # configured site, same exact sysName/sysObjectID pair key, and no
-        # conflicting serial. This avoids generic same-name merging.
         if values[1] - values[0] != 1:
             continue
         allowed.add(key)
@@ -67,19 +64,28 @@ def build_assets_core(records):
         row["md32xx_merge_token"] = key if key in allowed else ""
         prepared.append(row)
 
+    # At runtime reconciler_v3 has already installed its FA-aware merge_reason
+    # and asset_id. Wrap those current functions instead of reverting to the
+    # legacy base implementation.
+    current_merge_reason = v2.base.merge_reason
+    current_asset_id = v2.base.asset_id
+
     def merge_reason(a, b):
         ta = clean(a.get("md32xx_merge_token"))
         tb = clean(b.get("md32xx_merge_token"))
         if ta and ta == tb:
             return "DELL_MD32XX_CONTROLLER_PAIR:{0}".format(ta), 99
-        return ORIG_MERGE_REASON(a, b)
+        return current_merge_reason(a, b)
 
     def asset_id(rows):
-        tokens = sorted(set(clean(row.get("md32xx_merge_token")) for row in rows if clean(row.get("md32xx_merge_token"))))
+        tokens = sorted(set(
+            clean(row.get("md32xx_merge_token"))
+            for row in rows if clean(row.get("md32xx_merge_token"))
+        ))
         if len(tokens) == 1:
             digest = hashlib.sha1(tokens[0].encode("utf-8")).hexdigest()[:20].upper()
             return "MD32XX:{0}".format(digest)
-        return ORIG_ASSET_ID(rows)
+        return current_asset_id(rows)
 
     old_merge = v2.base.merge_reason
     old_asset = v2.base.asset_id
@@ -93,7 +99,11 @@ def build_assets_core(records):
 
     by_ip = dict((clean(row.get("ip")), row) for row in prepared if clean(row.get("ip")))
     for asset in assets:
-        tokens = sorted(set(clean((by_ip.get(clean(ip)) or {}).get("md32xx_merge_token")) for ip in (asset.get("ips") or []) if clean((by_ip.get(clean(ip)) or {}).get("md32xx_merge_token"))))
+        tokens = sorted(set(
+            clean((by_ip.get(clean(ip)) or {}).get("md32xx_merge_token"))
+            for ip in (asset.get("ips") or [])
+            if clean((by_ip.get(clean(ip)) or {}).get("md32xx_merge_token"))
+        ))
         if len(tokens) == 1 and len(asset.get("ips") or []) == 2:
             asset["storage_pair_type"] = "DELL_MD32XX_DUAL_CONTROLLER"
             asset["storage_pair_key"] = tokens[0]
