@@ -1,272 +1,123 @@
-## V1.10.17 — Create missing VM interface during safe duplicate repair
+## V1.10.18 — Clear parent primary IP before VM reassignment
 
-Release criada a partir do APPLY live da 1.10.16 no DCM.
+Release criada a partir do APPLY live da 1.10.17 no DCM.
 
-### Evidência live da 1.10.16
-
-```text
-Planner: 4.6-product
-READY/REPAIR_SAFE: 0
-SRV-AE11 → BLOCKED
-VM única: ID 359
-MAC VMware: 00:50:56:9F:9E:70
-Interfaces cadastradas na VM: 0
-```
-
-A 1.10.16 bloqueou corretamente:
+### Evidência live da 1.10.17
 
 ```text
-REPAIR_SAFE_NOT_ELIGIBLE:
-Fallback de interface única exige exatamente uma interface na VM: 0
-```
-
-O conjunto normal permaneceu saudável:
-
-```text
+READY/REPAIR_SAFE: 1
+VM interface MGMT criada na VM ID 359
+MAC 00:50:56:9F:9E:70 criado/atribuído
 PREFLIGHT GLOBAL FINALIZE: OK
+IMPORT normal: 12/12
 MAC RECONCILE: PASS
-Assets FAIL: 0
-Checks FAIL: 0
-Status: PASS_WITH_WARNINGS
 ```
 
-### PLAN V7
-
-Adiciona um terceiro caminho estritamente protegido para `REPAIR_SAFE_VM_DUPLICATE`:
+O NetBox bloqueou a transferência do IP:
 
 ```text
-VM única por nome
-+ zero virtualization.vminterface
-+ exatamente um MAC VMware forte
-+ MAC ausente ou sem vínculo
-+ MAC não duplicado e sem outro owner
-+ Device/IP/interfaces integralmente criados pelo produto
-→ READY/REPAIR_SAFE_VM_DUPLICATE
+Cannot reassign IP address while it is designated as the primary IP for the parent object
 ```
 
-O plano registra:
+Nenhum Device foi removido. A VM, a interface e o MAC foram preservados. O IP e o Device permaneceram no estado anterior.
+
+### Importer V8
+
+Corrige a ordem de operação do `REPAIR_SAFE_VM_DUPLICATE`:
 
 ```text
-vm_interface_mode=CREATE_SINGLE_VM_INTERFACE
-vm_interface_name=MGMT
-vm_mac_mode=ENSURE_CREATED_VM_INTERFACE
+revalidar reparo
+→ validar primary_ip4/primary_ip6/oob_ip do Device
+→ limpar referências que apontam para o IP alvo
+→ mover o IP para virtualization.vminterface
+→ definir primary IPv4 da VM
+→ remover somente o Device duplicado criado pelo produto
 ```
 
-### Importer V7
+Se qualquer primary/oob apontar para outro IP, bloqueia antes do IP move e antes do DELETE.
 
-Antes de qualquer escrita destrutiva, o importer revalida:
+### Recuperação do estado parcial
 
-- Device, Tenant/Site e ownership do produto;
-- ausência de serial, rack, location, cluster e objetos relacionados;
-- interfaces físicas e IP ainda inalterados;
-- VM ainda sem interfaces;
-- MAC VMware ainda único e sem outro proprietário;
-- VM ainda sem outro primary IPv4.
+A interface `MGMT` e o MAC criados pela 1.10.17 são reutilizados. A 1.10.18 não cria uma segunda interface.
 
-Depois executa:
+### Regressões
 
-```text
-cria virtualization.vminterface MGMT
-→ cria/atribui MAC VMware
-→ define primary_mac_address
-→ move o IP para a nova interface
-→ define primary IPv4 da VM se vazio
-→ remove somente o Device duplicado criado pelo produto
-```
-
-A VM nunca é removida.
-
-### Recuperação
-
-Falhas parciais convergem de forma segura:
-
-```text
-interface criada sem MAC
-→ fallback de interface única na próxima execução
-
-interface + MAC criados, IP ainda no Device
-→ REPAIR_SAFE normal
-
-IP já movido
-→ RECOVERY_AFTER_IP_MOVE
-```
-
-### Auditor V7
-
-Adiciona validações específicas:
-
-```text
-REPAIR_VM_INTERFACE_CREATED_OK
-REPAIR_VM_MAC_OK
-REPAIR_DUPLICATE_DEVICE_REMOVED
-REPAIR_IP_ON_VM
-REPAIR_VM_PRIMARY_IP_OK
-REPAIR_IDEMPOTENCY_DELEGATED
-```
+- NetBox simulado rejeita reassignment enquanto o Device ainda tem primary IP;
+- importer V8 limpa o primary antes do PATCH do IP;
+- ordem validada: `Device primary clear → IP move → Device delete`;
+- primary apontando para outro IP bloqueia sem qualquer escrita.
 
 ### Componentes
 
 ```text
 planner_v7.py       4.7-product
-importer_v7.py      5.5-product
+importer_v8.py      5.6-product
 auditor_v7.py       6.5-product
 pipeline            2.8-product
-runner              2.6-product
+runner              2.7-product
 ```
 
 Estado inicial: **CI/NOT LIVE até a única execução final `netbox-discovery run --apply`**.
 
 ---
 
-## V1.10.16 — Single-interface VM MAC bootstrap before safe repair
+## V1.10.17 — Create missing VM interface during safe duplicate repair
 
-Release criada a partir do APPLY live da 1.10.15 no DCM.
+Adicionou criação protegida de `virtualization.vminterface MGMT` para VM inequívoca com zero interfaces e um único MAC VMware forte.
 
-### Evidência anterior
-
-```text
-VM única ID 359
-MAC VMware forte 00:50:56:9F:9E:70
-Interface da VM por MAC não é única: 0
-```
-
-O PLAN V6 adicionou fallback para:
+Validação live parcial:
 
 ```text
-VM única por nome
-+ exatamente uma interface live
-+ interface sem outro MAC
-+ exatamente um MAC VMware forte
-+ MAC não duplicado e sem outro owner
-→ READY/REPAIR_SAFE_VM_DUPLICATE
+interface MGMT criada
+MAC VMware criado/atribuído
+IP move bloqueado porque o IP ainda era primary do Device
+Device preservado
 ```
-
-A validação live mostrou que a VM possuía zero interfaces, não uma. O produto permaneceu `BLOCKED`, sem escrita destrutiva. Esse cenário foi tratado na 1.10.17.
 
 ---
 
-## V1.10.15 — Historical VMware repair + preserved-interface MAC reconcile
+## V1.10.16 — Single-interface VM MAC bootstrap
 
-Release criada a partir do APPLY live da 1.10.14 no DCM.
+Adicionou fallback para VM única com exatamente uma interface sem MAC.
 
-### Lacunas tratadas
+---
 
-```text
-SRV-AE11
-→ historical_vmware_mac estava presente
-→ PLAN anterior avaliava somente asset.macs atual
+## V1.10.15 — Historical VMware repair + MAC reconcile
 
-ME5024
-→ IP/interface existentes foram preservados
-→ ensure_mac não foi chamado nesse caminho
-→ AUDIT: MAC_MISSING 00:C0:FF:66:B4:BF
-```
-
-Após o IMPORT normal:
-
-```text
-IP único em dcim.interface
-→ confirma Device esperado
-→ cria/atribui MAC esperado
-→ garante primary_mac_address
-```
-
-Validação live:
-
-```text
-MAC RECONCILE: PASS
-Assets FAIL: 0
-Checks FAIL: 0
-```
+Adicionou uso conservador de MAC VMware histórico e reconciliação de MAC em interfaces físicas preservadas.
 
 ---
 
 ## V1.10.14 — One-pass Network finalization
 
-Adicionou:
-
-- classificação e reconciliação do Dell PowerVault MD32xx com duas controladoras;
-- `REPAIR_SAFE_VM_DUPLICATE`;
-- preflight global e `REPAIR_JOURNAL`;
-- recuperação `RECOVERY_AFTER_IP_MOVE`;
-- audit combinado.
-
-Validação live:
-
-```text
-MD3200BKP .56/.57 → 1 STORAGE com MGMT + MGMT-2
-PREFLIGHT GLOBAL FINALIZE: OK
-IMPORT normal: 12/12, erros=0
-```
+Adicionou MD32xx, `REPAIR_SAFE_VM_DUPLICATE`, preflight global, journal, recuperação parcial e audit combinado.
 
 ---
 
 ## V1.10.13 — Preserve authoritative Hypervisor IP delegation
 
-```text
-IP já vinculado a virtualization.vminterface
-→ DELEGATED/NOOP
-→ ponte por nome não pode rebaixar para REVIEW
-```
-
-Validação live: `42 DELEGATED` e `READY/CREATE=0`.
+IP em `virtualization.vminterface` permanece `DELEGATED/NOOP`.
 
 ---
 
 ## V1.10.12 — Identity anti-flap + VM ownership by name
 
-Adicionou retenção conservadora de identidade VMware/FA-MIB por até 48 horas, correlação por nome único e bloqueio de Device físico + VM.
+Retenção conservadora de identidade VMware/storage e correlação por VM única.
 
 ---
 
 ## V1.10.11 — PowerVault / FibreAlliance storage identity
 
-Adicionou leitura FCMGMT/FibreAlliance, classificação `STORAGE/HIGH` e reconciliação por serial/`connUnitId` válido.
+Leitura FA-MIB e reconciliação de storage por identidade forte.
 
 ---
 
 ## V1.10.10 — Ownership Network/Hypervisor + Dell Networking
 
-Validação live:
-
-```text
-DELEGATED/HYPERVISOR: 41
-N2024      → NETWORK_SWITCH/HIGH
-PCT7024    → NETWORK_SWITCH/HIGH
-S4128F-ON  → NETWORK_SWITCH/HIGH
-```
+Classificação Dell N2024/PCT7024/S4128F-ON e delegação Hypervisor.
 
 ---
 
 ## V1.10.9 — Diagnóstico automático do PLAN Network
 
-Adicionou diagnóstico completo no terminal para READY, REVIEW, BLOCKED, matching, SNMP e evidências.
-
----
-
-## V1.10.8 — VM acompanha Tenant/Site do Host/Cluster
-
-Hypervisor multi-contexto concluído ao vivo:
-
-```text
-Objetos comparados: 282
-OK: 282
-MISMATCH: 0
-MISSING: 0
-AMBIGUOUS: 0
-COMPARE STATUS: OK
-```
-
-Estado: LIVE PASS.
-
----
-
-## V1.10.7 — Cluster/Site + compare read-only
-
-Migração coordenada de Cluster/Hosts e compare oficial. Estado: LIVE PASS.
-
----
-
-## V1.10.6 — Preflight global Hypervisor
-
-Recalcula PLAN e revalida identidade antes da primeira escrita. Estado: LIVE PASS.
+Diagnóstico detalhado de READY, DELEGATED, REVIEW e BLOCKED.
