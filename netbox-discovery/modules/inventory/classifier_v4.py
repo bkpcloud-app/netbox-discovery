@@ -11,6 +11,11 @@ import sys
 import time
 from collections import Counter
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+BASE = os.path.abspath(os.path.join(HERE, "..", ".."))
+if BASE not in sys.path:
+    sys.path.insert(0, BASE)
+
 from modules.inventory import classifier_v2 as v2
 from modules.inventory import classifier_v3 as v3
 
@@ -19,7 +24,6 @@ HISTORY_MAX_AGE_SECONDS = 48 * 60 * 60
 HISTORY_MAX_FILES = 20
 VMWARE_MAC_PREFIXES = ("00:05:69", "00:0C:29", "00:1C:14", "00:50:56")
 ORIG_V2_WRITE_OUTPUTS = v2.write_outputs
-ORIG_V3_FA_STORAGE = v3._fa_storage
 
 CSV_FIELDS = [
     "ip", "hostname", "role", "manufacturer", "model", "serial", "platform", "asset_class",
@@ -49,12 +53,6 @@ def valid_fa_id(value):
 
 
 def fa_storage(d):
-    """Treat an all-zero connUnitId as absent, not as array identity.
-
-    Some PowerVault controllers return connUnitType=storage-subsystem and a
-    valid product/serial while connUnitId is all zeros. Serial remains strong
-    array evidence; the zero ID must never become an identity key.
-    """
     primary = d.get("snmp_entity_primary") or {}
     type_id = clean(primary.get("fa_conn_unit_type_id"))
     unit_id = valid_fa_id(primary.get("fa_conn_unit_id"))
@@ -164,8 +162,6 @@ def _restore_storage(current, source_path, previous):
     current["classification_score"] = max(int(current.get("classification_score") or 0), 99)
     current["confidence"] = "HIGH"
     current["asset_class"] = "PHYSICAL_DEVICE"
-
-    # FA-MIB/array serial is stronger than controller MAC OUI/generic SNMP text.
     if clean(previous.get("manufacturer")):
         current["manufacturer"] = previous.get("manufacturer")
         current["manufacturer_source"] = "history:fcmgmt-mib"
@@ -180,7 +176,6 @@ def _restore_storage(current, source_path, previous):
     for key in ("storage_unit_type", "storage_unit_product", "storage_unit_status", "storage_unit_state"):
         if clean(previous.get(key)):
             current[key] = previous.get(key)
-
     current["identity_history_source"] = source_path
     _append_evidence(current, "Historical strong storage identity retained after transient FA-MIB miss")
 
