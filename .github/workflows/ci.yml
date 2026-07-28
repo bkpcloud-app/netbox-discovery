@@ -5,6 +5,15 @@ on:
   pull_request:
 
 jobs:
+  network-1-10-17:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Zero-interface VM repair regression
+        run: python3 tests/test_network_1_10_17.py
+
   validate:
     runs-on: ubuntu-latest
     steps:
@@ -80,9 +89,6 @@ jobs:
 
       - name: Network 1.10.16 single-interface VM repair
         run: python3 tests/test_network_1_10_16.py
-
-      - name: Network 1.10.17 zero-interface VM repair
-        run: python3 tests/test_network_1_10_17.py
 
       - name: Secret sanity check
         run: |
