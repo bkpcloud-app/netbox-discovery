@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.10.16 — PRODUCT V1  
+**Versão atual:** 1.10.17 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -18,7 +18,7 @@ netbox-discovery run
 ```
 
 ```text
-DISCOVER → CLASSIFY V5 → RECONCILE V5 → PLAN V6
+DISCOVER → CLASSIFY V5 → RECONCILE V5 → PLAN V7
 NetBox write: NÃO
 ```
 
@@ -32,11 +32,10 @@ netbox-discovery run --apply
 DISCOVER
 → CLASSIFY V5
 → RECONCILE V5
-→ PLAN V6
+→ PLAN V7
 → PREFLIGHT GLOBAL FINALIZE
 → IMPORT READY normal
 → MAC RECONCILE
-→ VM MAC ENSURE, quando necessário
 → REPAIR_SAFE
 → AUDIT FINALIZE
 ```
@@ -52,43 +51,49 @@ netbox-discovery hypervisor run --apply
 netbox-discovery hypervisor status
 ```
 
-## 1.10.16 — reparo seguro de VM com interface única sem MAC no NetBox
+## 1.10.17 — reparo seguro quando a VM não possui interface no NetBox
 
-A execução live da 1.10.15 confirmou que o `SRV-AE11` possui:
+A validação live da 1.10.16 comprovou o último cenário pendente do `SRV-AE11`:
 
 ```text
 VM única por nome: ID 359
 MAC VMware forte: 00:50:56:9F:9E:70
 Device duplicado integralmente criado pelo produto
+Interfaces cadastradas na VM: 0
 ```
 
-Porém, a interface da VM não possuía objeto MAC no NetBox. Por isso o PLAN retornou:
+O PLAN V7 promove o conflito para `READY/REPAIR_SAFE_VM_DUPLICATE` somente quando todas as proteções forem verdadeiras:
 
-```text
-REPAIR_SAFE_NOT_ELIGIBLE: Interface da VM por MAC não é única: 0
-```
-
-O PLAN V6 adiciona um único fallback conservador. O reparo só é promovido para `READY/REPAIR_SAFE_VM_DUPLICATE` quando todas as condições forem verdadeiras:
-
-- uma única VM já foi selecionada pelo nome;
-- essa VM possui exatamente uma interface live;
-- a interface não possui outro MAC;
+- existe exatamente uma VM correspondente pelo nome;
+- a VM não possui nenhuma `virtualization.vminterface`;
 - existe exatamente um MAC VMware forte para o asset;
-- esse MAC está ausente, sem vínculo ou já pertence à mesma interface da VM;
-- o MAC não está duplicado e não pertence a outro objeto;
-- todas as proteções de ownership do Device, interfaces e IP da 1.10.14 continuam válidas.
+- o MAC não está duplicado nem pertence a outro objeto;
+- o Device, suas interfaces e o IP foram criados pelo `netbox-discovery`;
+- o Device não possui serial, rack, location, cluster, cabo ou objetos relacionados;
+- existe exatamente um IP descoberto e esse IP ainda pertence ao Device duplicado;
+- a VM não possui outro primary IPv4.
 
-Antes de mover o IP ou remover o Device duplicado, o importer:
+A execução protegida ocorre nesta ordem:
 
 ```text
-cria/atribui o MAC à única interface da VM
-→ define primary_mac_address da interface
-→ move o IP para virtualization.vminterface
-→ define primary IPv4 da VM se vazio
-→ remove somente o Device duplicado criado pelo produto
+1. revalidar todos os pré-requisitos sem escrita
+2. criar virtualization.vminterface MGMT na VM
+3. criar/atribuir o MAC VMware nessa interface
+4. definir primary_mac_address da interface
+5. mover o IP para a interface da VM
+6. definir primary IPv4 da VM, se vazio
+7. remover MACs do Device criados pelo produto
+8. remover somente o Device duplicado criado pelo produto
+9. auditar interface, MAC, IP, VM e idempotência
 ```
 
-VM com duas ou mais interfaces continua `BLOCKED`; o produto não escolhe interface por tentativa.
+Se houver qualquer drift antes da criação da interface, o preflight bloqueia sem escrita. A VM nunca é removida.
+
+## 1.10.16 — VM com uma interface sem MAC
+
+Quando a VM já possui exatamente uma interface, mas essa interface não possui objeto MAC, o produto pode garantir o MAC VMware e então executar o mesmo reparo seguro.
+
+VM com duas ou mais interfaces sem correspondência inequívoca continua `BLOCKED`.
 
 ## MAC RECONCILE de Devices físicos
 
@@ -103,7 +108,7 @@ IP único
 → primary_mac_address: garante
 ```
 
-Antes da primeira escrita, o preflight global verifica se algum MAC esperado já pertence a outra interface ou outro tipo de objeto. Conflito bloqueia toda a execução.
+Conflito de ownership bloqueia antes da primeira escrita.
 
 ## Dell PowerVault MD32xx
 
@@ -125,31 +130,15 @@ Resultado:
 
 ## REPAIR_SAFE de Device duplicado de VM
 
-A correção automática exige ownership completo do produto, ausência de vínculos manuais, VM inequívoca, IP único e ausência de outro primary IPv4 na VM.
-
-A interface alvo deve ser comprovada por um destes caminhos:
+A interface alvo pode ser comprovada por três caminhos:
 
 ```text
-MAC VMware corresponde exatamente a uma interface live
+1. MAC VMware corresponde exatamente a uma interface live
+2. VM única + exatamente uma interface sem MAC + MAC VMware forte
+3. VM única + zero interfaces + MAC VMware forte → criar MGMT protegida
 ```
 
-ou:
-
-```text
-VM única + exatamente uma interface sem MAC + MAC VMware forte e sem outro owner
-```
-
-Ação:
-
-```text
-IP do Device duplicado
-→ interface da VM correta
-→ primary IPv4 da VM, somente se vazio
-→ remove MACs do Device criados pelo produto
-→ remove somente o Device duplicado criado pelo produto
-```
-
-A VM nunca é removida. Falha depois da movimentação do IP pode ser retomada por `RECOVERY_AFTER_IP_MOVE`.
+Em todos os caminhos, o produto exige ownership completo do Device/IP/interfaces e ausência de vínculos manuais.
 
 ## Decisões Network
 
@@ -178,26 +167,19 @@ identidade VMware + uma única VM com mesmo nome
 → DELEGATED/NOOP
 ```
 
-Quando já existe Device físico:
-
-```text
-Device físico + identidade VMware + VM única
-→ BLOCKED ou REPAIR_SAFE_VM_DUPLICATE
-```
+Device físico criado pelo produto + VM inequívoca pode entrar no fluxo `REPAIR_SAFE`; qualquer Device sem ownership integral do produto permanece `BLOCKED`.
 
 ## Segurança operacional
 
 ```text
-run                 → dry-run
-run --apply         → escrita explícita
-PREFLIGHT GLOBAL    → antes da primeira escrita
-POST/PATCH/DELETE   → sem retry cego
-DELETE genérico     → não existe
-DELETE seguro       → somente Device duplicado com ownership completo do produto
-Schedulers Network → opt-in
+netbox-discovery run          = dry-run
+netbox-discovery run --apply  = escrita somente de READY
+DELEGATED / REVIEW / BLOCKED  = não escrevem
+DELETE de VM                  = proibido
+DELETE de Device              = somente REPAIR_SAFE com ownership integral do produto
 ```
 
-Network, Hypervisor, Compare e Update compartilham o lock global.
+Network, Hypervisor, Compare e Update compartilham lock global. POST/PATCH não recebem retry cego.
 
 ## Caminhos
 
@@ -211,15 +193,17 @@ Backups:                /opt/netbox-discovery/backups
 Lock global:            /var/lock/netbox-discovery-global.lock
 ```
 
-Relatórios adicionais:
-
-```text
-<SITE>-repair-journal-*.json
-<SITE>-mac-reconcile-*.json
-<SITE>-import-finalize-*.json
-<SITE>-audit-finalize-*.json
-```
-
 ## Homologação
 
-**CI PASS não equivale a LIVE PASS.** A matriz oficial fica em `docs/HOMOLOGACAO.md`.
+**CI PASS não equivale a LIVE PASS.**
+
+A matriz oficial fica em `docs/HOMOLOGACAO.md`.
+
+## Documentação obrigatória
+
+- `README.md`
+- `docs/MANUAL.md`
+- `docs/COMANDOS-RAPIDOS.md`
+- `docs/HOMOLOGACAO.md`
+- `RELEASE-NOTES.md`
+- `SECURITY.md`
