@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.10.18 — PRODUCT V1  
+**Versão atual:** 1.10.19 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -19,15 +19,15 @@ netbox-discovery run --apply
 ```
 
 ```text
-DISCOVER
-→ CLASSIFY V5
+DISCOVER V4
+→ CLASSIFY V6
 → RECONCILE V5
-→ PLAN V7
+→ PLAN V8
 → PREFLIGHT GLOBAL FINALIZE
-→ IMPORT READY normal
+→ IMPORT READY normal V9
 → MAC RECONCILE
 → REPAIR_SAFE
-→ AUDIT FINALIZE
+→ AUDIT FINALIZE V8
 ```
 
 ### Hypervisor
@@ -40,6 +40,64 @@ netbox-discovery hypervisor run --compare
 netbox-discovery hypervisor run --apply
 netbox-discovery hypervisor status
 ```
+
+## 1.10.19 — qualidade de identidade do inventário
+
+A 1.10.19 transforma evidência que antes terminava como objeto genérico em identidade útil, sem tornar a escrita menos conservadora.
+
+### Impressoras
+
+O DISCOVER consulta Printer-MIB de forma read-only e incorpora, quando disponíveis:
+
+```text
+prtGeneralPrinterName
+prtGeneralSerialNumber
+hrDeviceDescr
+```
+
+Fabricante, modelo e serial explícitos passam pelo CLASSIFY V6. Um Device já criado pelo produto com tipo genérico só pode receber um Device Type exato quando:
+
+```text
+match forte por SERIAL/MAC/IP
++ confiança HIGH
++ Device criado pelo netbox-discovery
++ tipo atual reconhecidamente genérico
++ fabricante/modelo exatos no novo discovery
+```
+
+Device manual ou tipo não genérico nunca é substituído automaticamente.
+
+### Moxa NPort 5210
+
+O `sysObjectID .1.3.6.1.4.1.8691.2.7` é classificado como:
+
+```text
+Role: INDUSTRIAL_COMMUNICATION
+Manufacturer: Moxa
+Model: NPort 5210
+Confidence: HIGH
+```
+
+### Nomes SNMP repetidos
+
+Dois equipamentos físicos HIGH com o mesmo `sysName` não permanecem bloqueados apenas pelo nome quando possuem identidades fortes distintas. O PLAN cria nomes determinísticos com sufixo de serial ou MAC, por exemplo:
+
+```text
+SW-BA17-LB43JZ
+SW-BA17-KPC2C1
+```
+
+A regra não é aplicada quando existe identidade fraca, conflito de IP, objeto existente ou ambiguidade de serial/MAC.
+
+### Preservação da identidade existente
+
+Quando uma coleta momentânea perde evidência, mas SERIAL/MAC/IP apontam para um Device existente com identidade não genérica, o PLAN mantém o objeto live e registra:
+
+```text
+LIVE_IDENTITY_PRESERVED_OVER_WEAK_OBSERVATION
+```
+
+Não existe escrita nesse caminho. Também são reconhecidos aliases de fabricante, como `Dell Inc.` e `Dell`, para não gerar drift falso.
 
 ## 1.10.18 — liberar primary IP antes de transferir o endereço
 
@@ -62,22 +120,6 @@ A 1.10.18 corrige a ordem do reparo:
 ```
 
 Se qualquer primary/oob do Device apontar para outro IP, o reparo bloqueia antes da transferência e antes do DELETE.
-
-O estado parcial deixado pela 1.10.17 é recuperável:
-
-```text
-VM ID 359 preservada
-interface MGMT criada
-MAC 00:50:56:9F:9E:70 criado e atribuído
-IP ainda no Device 324
-Device 324 ainda existente
-```
-
-A próxima execução usa a interface/MAC já existentes. Não cria outra interface.
-
-## 1.10.17 — VM sem interface no NetBox
-
-O PLAN V7 permite criar uma única interface `MGMT` quando existe VM inequívoca, zero interfaces, um MAC VMware forte e ownership integral do Device/IP pelo produto.
 
 ## Caminhos de REPAIR_SAFE
 

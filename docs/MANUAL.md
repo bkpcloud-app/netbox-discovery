@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.10.18 — PRODUCT V1  
+**Versão:** 1.10.19 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -15,18 +15,18 @@ netbox-discovery run
 netbox-discovery run --apply
 ```
 
-Fluxo 1.10.18:
+Fluxo 1.10.19:
 
 ```text
-DISCOVER
-→ CLASSIFY V5
+DISCOVER V4
+→ CLASSIFY V6
 → RECONCILE V5
-→ PLAN V7
+→ PLAN V8
 → PREFLIGHT GLOBAL FINALIZE
-→ IMPORT normal
+→ IMPORT normal V9
 → MAC RECONCILE
-→ REPAIR_SAFE com liberação do primary IP do Device
-→ AUDIT FINALIZE V7
+→ REPAIR_SAFE
+→ AUDIT FINALIZE V8
 ```
 
 ## 2. Decisões
@@ -34,83 +34,110 @@ DISCOVER
 | Decisão/Ação | Significado | Escrita |
 |---|---|---|
 | `READY/CREATE` | novo Device físico validado | somente com `--apply` |
-| `READY/UPDATE_SAFE` | complemento seguro | somente com `--apply` |
+| `READY/UPDATE_SAFE` | complemento ou enriquecimento seguro | somente com `--apply` |
 | `READY/REPAIR_SAFE_VM_DUPLICATE` | corrige Device duplicado criado pelo produto | após preflight global |
-| `READY/NOOP` | inventário já convergente | não altera |
+| `READY/NOOP` | inventário já convergente ou identidade live preservada | não altera |
 | `DELEGATED` | ownership do Hypervisor | não |
 | `REVIEW` | evidência insuficiente | não |
 | `BLOCKED` | conflito forte | não |
 
-## 3. Falha live tratada pela 1.10.18
+## 3. Printer-MIB
 
-Na 1.10.17, o produto criou:
-
-```text
-VM ID 359
-virtualization.vminterface MGMT
-MAC 00:50:56:9F:9E:70
-primary_mac_address da interface
-```
-
-A transferência de `10.1.1.111/24` falhou porque o IP ainda era o primary IPv4 do Device duplicado:
+A 1.10.19 consulta de forma read-only:
 
 ```text
-Cannot reassign IP address while it is designated as the primary IP for the parent object
+prtGeneralPrinterName
+prtGeneralSerialNumber
+hrDeviceDescr
 ```
 
-A VM, a interface e o MAC foram preservados. O IP e o Device também permaneceram no estado anterior. Portanto, o estado é recuperável.
+A resposta é incorporada ao inventário como evidência `printer-mib`. O CLASSIFY utiliza apenas fabricante/modelo/serial explicitamente encontrados.
 
-## 4. Ordem correta do reparo
+Quando não existe modelo exato, o objeto continua genérico e não recebe alteração automática.
 
-Para qualquer `REPAIR_SAFE_VM_DUPLICATE` em modo `FULL`:
+## 4. Upgrade seguro de Device Type genérico
+
+Um Device Type pode mudar de genérico para exato somente quando todos os requisitos abaixo forem verdadeiros:
 
 ```text
-1. revalidar todo o reparo
-2. verificar primary_ip4, primary_ip6 e oob_ip do Device
-3. bloquear se qualquer campo apontar para outro IP
-4. limpar somente referências que apontem para o IP alvo
-5. mover o IP para virtualization.vminterface
-6. definir primary_ip4 da VM se vazio
-7. limpar MACs duplicados do Device criados pelo produto
-8. remover somente o Device duplicado criado pelo produto
-9. executar audit e preview de idempotência
+Device description = Criado pelo netbox-discovery
+match forte = SERIAL, MAC ou IP
+confidence = HIGH
+tipo atual = placeholder genérico
+fabricante/modelo destino = explícitos e não genéricos
+nenhum conflito adicional no PLAN
 ```
 
-Evento esperado:
+Exemplo:
 
 ```text
-PRIMARY_IP_CLEARED_BEFORE_MOVE
+Unidentified / Generic Printer
+→ Kyocera / ECOSYS M2040dn
 ```
 
-A liberação do primary IP acontece antes do PATCH de reassignment do IP.
+No momento do `--apply`, o importer relê o Device e bloqueia se o tipo deixou de ser genérico ou se o objeto não pertence ao produto.
 
-## 5. Recuperação do estado parcial da 1.10.17
+## 5. Preservação de identidade live
 
-A próxima execução não deve criar outra interface. O PLAN deve encontrar a interface `MGMT` existente pelo MAC VMware e produzir novamente:
+Uma coleta pode perder temporariamente SNMP, banner ou fingerprint. Quando SERIAL/MAC/IP ainda apontam para um Device existente com identidade específica, o PLAN não degrada o objeto para `Unknown Server` ou outro placeholder.
 
 ```text
-READY/REPAIR_SAFE_VM_DUPLICATE
-Device ID 324 → VM ID 359
-IP 10.1.1.111/24 → interface MGMT existente
+LIVE_IDENTITY_PRESERVED_OVER_WEAK_OBSERVATION
 ```
 
-Depois:
+Esse caminho é `READY/NOOP`: não altera o NetBox.
+
+## 6. Alias de fabricante
+
+Aliases reconhecidos evitam drift falso quando modelo e identidade são equivalentes:
 
 ```text
-Device primary_ip4 = null
-→ IP reassigned para virtualization.vminterface
-→ VM primary_ip4 = IP 801
-→ Device 324 removido
+Dell Inc. = Dell
+Ubiquiti Networks = Ubiquiti
+Kyocera Document Solutions = Kyocera
+Hewlett-Packard = HP
 ```
 
-## 6. Preflight global
+A nomenclatura já existente no Device é preservada. Não há renomeação em massa de fabricante.
+
+## 7. Colisão segura de nomes SNMP
+
+Equipamentos físicos diferentes podem publicar o mesmo `sysName`. O PLAN somente resolve automaticamente quando todos possuem:
+
+- confiança HIGH;
+- asset class física;
+- serial ou MAC único;
+- nenhum Device existente;
+- nenhum conflito de IP;
+- apenas os motivos `DUPLICATE_DESIRED_NAME` e `RECONCILE_REVIEW_CANDIDATE`.
+
+O nome recebe sufixo determinístico:
+
+```text
+SW-BA17-LB43JZ
+SW-BA17-KPC2C1
+```
+
+Sem identidade forte, permanece `REVIEW/BLOCKED`.
+
+## 8. Moxa NPort 5210
+
+```text
+sysObjectID: .1.3.6.1.4.1.8691.2.7
+Role: INDUSTRIAL_COMMUNICATION
+Manufacturer: Moxa
+Model: NPort 5210
+Confidence: HIGH
+```
+
+## 9. Preflight global
 
 Antes da primeira escrita:
 
 ```text
-recalcula PLAN V7
+recalcula PLAN V8
 → valida READY normais
-→ valida ownership de MACs
+→ valida ownership global de IP/MAC
 → valida REPAIR_SAFE
 → relê Device, VM, interfaces, IPs e relacionamentos
 → cria REPAIR_JOURNAL
@@ -119,17 +146,23 @@ recalcula PLAN V7
 
 Qualquer drift bloqueia.
 
-## 7. Caminhos aceitos de interface VM
+## 10. REPAIR_SAFE de VM duplicada
+
+Ordem protegida:
 
 ```text
-A. MAC VMware corresponde a uma interface live
-B. VM única + uma interface vazia + MAC VMware forte
-C. VM única + zero interfaces + MAC VMware forte → criar MGMT
+1. revalidar Device, VM, interface, IP e MAC
+2. bloquear primary/oob divergente
+3. limpar referência primary/oob que aponta para o IP alvo
+4. mover IP para virtualization.vminterface
+5. definir primary IPv4 da VM se vazio
+6. remover somente MACs e Device criados pelo produto
+7. auditar convergência e idempotência
 ```
 
-VM com múltiplas interfaces sem correspondência inequívoca permanece `BLOCKED`.
+A VM nunca é removida.
 
-## 8. Proteções obrigatórias
+## 11. Proteções obrigatórias do reparo
 
 - Device, interfaces e IP criados pelo produto;
 - Device sem serial, rack, location, cluster, virtual chassis ou device bay;
@@ -140,43 +173,26 @@ VM com múltiplas interfaces sem correspondência inequívoca permanece `BLOCKED
 - MAC VMware único e sem owner conflitante;
 - primary/oob do Device vazio ou apontando para o próprio IP alvo.
 
-A VM nunca é removida.
-
-## 9. Recuperação de falha parcial
-
-```text
-interface criada sem MAC
-→ fallback de interface única
-
-interface + MAC criados, IP ainda no Device
-→ REPAIR_SAFE com liberação do primary IP
-
-IP já movido, Device ainda existe
-→ RECOVERY_AFTER_IP_MOVE
-```
-
-## 10. Audit final
+## 12. Audit final
 
 O audit confirma:
 
 ```text
-Device duplicado ausente
-IP na virtualization.vminterface correta
-VM primary IPv4 correto
-MAC único e primary na interface da VM
-novo PLAN em DELEGATED/NOOP
 Assets FAIL: 0
 Checks FAIL: 0
+novo PLAN sem CREATE/UPDATE_SAFE/REPAIR_SAFE elegível
 ```
 
-## 11. Dell PowerVault MD32xx
+`PASS_WITH_WARNINGS` é aceito apenas quando os contadores de FAIL são zero e os WARNs estão detalhados.
+
+## 13. Dell PowerVault MD32xx
 
 ```text
 sysObjectID = .1.3.6.1.4.1.674.10893.2.31
 2 endpoints válidos → 1 STORAGE com MGMT + MGMT-2
 ```
 
-## 12. Hypervisor
+## 14. Hypervisor
 
 ```bash
 netbox-discovery hypervisor configure
@@ -186,9 +202,9 @@ netbox-discovery hypervisor run --compare
 netbox-discovery hypervisor run --apply
 ```
 
-Estado de referência: `282/282 OK`.
+Estado de referência homologado: `282/282 OK`.
 
-## 13. Caminhos
+## 15. Caminhos
 
 ```text
 Aplicação:              /opt/netbox-discovery
