@@ -1,3 +1,73 @@
+## V1.10.19 — Identity quality and safe generic enrichment
+
+Release criada a partir do APPLY live da 1.10.18 no FBA.
+
+### Evidência live de origem
+
+```text
+Hosts ativos: 288
+Assets reconciliados: 283
+READY processados: 175/175
+Runtime blocked: 0
+Erros: 0
+MAC RECONCILE: PASS
+Assets FAIL: 0
+Checks FAIL: 0
+Idempotência: READY/CREATE=0, READY/UPDATE_SAFE=0, READY/NOOP=175
+```
+
+O FBA ficou operacionalmente consistente, mas expôs qualidade insuficiente em impressoras genéricas, um Moxa NPort não reconhecido, nomes SNMP repetidos e drifts causados por perda transitória de evidência.
+
+### DISCOVER V4
+
+- leitura read-only de Printer-MIB;
+- coleta `prtGeneralPrinterName` e `prtGeneralSerialNumber`;
+- uso de `hrDeviceDescr` para fabricante/modelo explícitos;
+- enriquecimento somente quando Printer-MIB realmente responde.
+
+### CLASSIFY V6
+
+- impressora com Printer-MIB passa a `PRINTER/HIGH`;
+- fabricante, modelo e serial explícitos são preservados;
+- `sysObjectID .1.3.6.1.4.1.8691.2.7` vira `Moxa / NPort 5210 / INDUSTRIAL_COMMUNICATION / HIGH`.
+
+### PLAN V8
+
+- upgrade automático somente de Device Type genérico criado pelo produto para identidade exata HIGH;
+- preservação read-only de identidade live forte quando a observação atual enfraquece;
+- aliases de fabricante evitam drift falso, como `Dell Inc.` versus `Dell`;
+- colisão de `sysName` entre equipamentos físicos HIGH recebe nome determinístico por serial/MAC;
+- identidade fraca, IP conflitante ou objeto manual continuam REVIEW/BLOCKED.
+
+### IMPORT V9
+
+O importer revalida no momento da escrita:
+
+```text
+Device criado pelo netbox-discovery
++ tipo atual ainda genérico
++ classificação HIGH
++ fabricante/modelo idênticos ao PLAN
+```
+
+Somente depois assegura o Device Type exato e executa PATCH. Device manual ou tipo já específico bloqueia a alteração.
+
+### Componentes
+
+```text
+network_v4.py       4.3-product
+classifier_v6.py    5.1-product
+planner_v8.py       4.8-product
+importer_v9.py      5.7-product
+auditor_v8.py       6.6-product
+pipeline            2.9-product
+runner              2.8-product
+```
+
+Estado inicial: **CI/NOT LIVE até a única execução final `netbox-discovery run --apply` no FBA**.
+
+---
+
 ## V1.10.18 — Clear parent primary IP before VM reassignment
 
 Release criada a partir do APPLY live da 1.10.17 no DCM.
@@ -57,22 +127,11 @@ pipeline            2.8-product
 runner              2.7-product
 ```
 
-Estado inicial: **CI/NOT LIVE até a única execução final `netbox-discovery run --apply`**.
-
 ---
 
 ## V1.10.17 — Create missing VM interface during safe duplicate repair
 
 Adicionou criação protegida de `virtualization.vminterface MGMT` para VM inequívoca com zero interfaces e um único MAC VMware forte.
-
-Validação live parcial:
-
-```text
-interface MGMT criada
-MAC VMware criado/atribuído
-IP move bloqueado porque o IP ainda era primary do Device
-Device preservado
-```
 
 ---
 
