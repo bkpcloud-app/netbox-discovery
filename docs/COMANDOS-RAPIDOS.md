@@ -1,6 +1,6 @@
-# netbox-discovery 1.10.18 — Comandos rápidos
+# netbox-discovery 1.10.19 — Comandos rápidos
 
-## Atualizar e concluir o reparo
+## Atualizar e executar a validação live final
 
 ```bash
 netbox-discovery update run
@@ -8,66 +8,69 @@ netbox-discovery version
 netbox-discovery run --apply
 ```
 
-## Estado parcial esperado antes da correção
+Não existe etapa manual no NetBox entre esses comandos.
+
+## Versões esperadas
 
 ```text
-VM ID 359 preservada
-interface MGMT criada
-MAC 00:50:56:9F:9E:70 atribuído
-IP 10.1.1.111/24 ainda no Device 324
-Device 324 ainda existente
+Versão: 1.10.19
+Discovery: 4.3-product
+Classifier: 5.1-product
+Planner: 4.8-product
+Importer: 5.7-product
+Auditor: 6.6-product
+Pipeline: 2.9-product
+Runner: 2.8-product
 ```
 
-Não criar interface ou mover IP manualmente.
-
-## Saída esperada na 1.10.18
+## Melhorias que devem aparecer no PLAN
 
 ```text
-Versão: 1.10.18
-Planner: 4.7-product
-READY/REPAIR_SAFE: 1
-PREFLIGHT GLOBAL FINALIZE: OK
-PRIMARY_IP_CLEARED_BEFORE_MOVE
-Reparos seguros concluídos: 1
+Printer-MIB: name=... serial=...
+Moxa / NPort 5210 / INDUSTRIAL_COMMUNICATION
+PRODUCT_GENERIC_DEVICE_TYPE_UPGRADE
+LIVE_IDENTITY_PRESERVED_OVER_WEAK_OBSERVATION
+COLLISION_SAFE_NAME_FROM_STRONG_IDENTITY
 ```
 
-O produto executa:
+Nem todos os marcadores precisam existir em todo site. Eles aparecem somente quando a evidência correspondente for encontrada.
+
+## Escrita permitida
 
 ```text
-limpar primary_ip4 do Device
-→ mover IP para a interface MGMT existente da VM
-→ definir primary_ip4 da VM
-→ remover somente o Device duplicado
-→ AUDIT FINALIZE
+novo objeto físico HIGH                → READY/CREATE
+tipo genérico do produto para tipo exato HIGH → READY/UPDATE_SAFE
+objeto existente forte com coleta fraca → READY/NOOP
+objeto Hypervisor                      → DELEGATED/NOOP
+evidência insuficiente                 → REVIEW
+evidência conflitante                  → BLOCKED
 ```
 
-## Proteção nova
+## Proteção do Device Type
 
 ```text
-primary_ip4/primary_ip6/oob_ip vazio ou igual ao IP alvo → pode limpar
-qualquer campo apontando para outro IP                  → BLOCKED antes da escrita
+Device manual                          → não altera
+tipo atual específico                  → não altera
+confidence diferente de HIGH           → não altera
+fabricante/modelo genérico             → não altera
+Device criado pelo produto + tipo genérico + identidade exata → UPDATE_SAFE
 ```
 
 ## Audit esperado
 
 ```text
-REPAIR_DUPLICATE_DEVICE_REMOVED
-REPAIR_IP_ON_VM
-REPAIR_VM_PRIMARY_IP_OK
-REPAIR_IDEMPOTENCY_DELEGATED
+PREFLIGHT GLOBAL FINALIZE: OK
+Runtime blocked: 0
+Erros: 0
+MAC RECONCILE: PASS
 Assets FAIL: 0
 Checks FAIL: 0
+READY/CREATE após audit: 0
+READY/UPDATE_SAFE após audit: 0
+READY/REPAIR_SAFE após audit: 0
 ```
 
-A interface já criada pela 1.10.17 deve ser reutilizada. Não deve aparecer outra `MGMT`.
-
-## REVIEW residual
-
-```text
-10.1.1.54 → REVIEW
-```
-
-Pode permanecer assim sem impedir a conclusão.
+`PASS_WITH_WARNINGS` continua válido somente com `Assets FAIL: 0` e `Checks FAIL: 0`.
 
 ## Status
 
