@@ -13,7 +13,7 @@ from collections import Counter
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 HERE = os.path.dirname(os.path.abspath(__file__))
-PIPELINE_VERSION = "2.8-product"
+PIPELINE_VERSION = "2.9-product"
 
 
 def latest(pattern):
@@ -49,6 +49,11 @@ def _print_class_evidence(row, class_row):
         clean(class_row.get("snmp_name")) or "-", clean(class_row.get("snmp_object_id")) or "-",
         clean(class_row.get("management_mac")) or "-",
     ))
+    if class_row.get("printer_mib_detected"):
+        print("  Printer-MIB: name={0} serial={1}".format(
+            clean(class_row.get("printer_mib_name")) or "-",
+            clean(class_row.get("printer_mib_serial")) or "-",
+        ))
     if clean(class_row.get("storage_unit_id")) or clean(class_row.get("storage_unit_product")):
         print("  Storage FA-MIB: id={0} product={1} serial={2} type={3}".format(
             clean(class_row.get("storage_unit_id")) or "-",
@@ -107,6 +112,8 @@ def print_plan_diagnostics(plan_path, classification_path):
             print("  Fabricante/Modelo: {0} / {1}".format(
                 clean(row.get("manufacturer")) or "-", clean(row.get("model")) or "-"
             ))
+            if clean(row.get("identity_policy")):
+                print("  Política de identidade: {0}".format(clean(row.get("identity_policy"))))
             print("  IPs: {0}".format(_format_list(row.get("ips"))))
             _print_class_evidence(row, class_row)
 
@@ -118,6 +125,8 @@ def print_plan_diagnostics(plan_path, classification_path):
                 clean(row.get("desired_name")) or "-",
             ))
             print("  Ajustes: {0}".format(_format_list(row.get("safe_diffs"))))
+            if clean(row.get("identity_policy")):
+                print("  Política de identidade: {0}".format(clean(row.get("identity_policy"))))
 
     if ready_repair:
         print("===== NETWORK REPAROS SEGUROS READY =====")
@@ -181,9 +190,9 @@ def main(argv=None):
     ap.add_argument("--output-dir", default=REPORTS)
     args = ap.parse_args(argv)
 
-    classifier = os.path.join(HERE, "classifier_v5.py")
+    classifier = os.path.join(HERE, "classifier_v6.py")
     reconciler = os.path.join(HERE, "reconciler_v5.py")
-    planner = os.path.join(HERE, "planner_v7.py")
+    planner = os.path.join(HERE, "planner_v8.py")
 
     cmd = [sys.executable, classifier, "--output-dir", args.output_dir]
     if args.input:
@@ -212,9 +221,9 @@ def main(argv=None):
 
     print("===== INVENTORY PIPELINE =====")
     print("Pipeline version: {0}".format(PIPELINE_VERSION))
-    print("CLASSIFY V5: OK")
+    print("CLASSIFY V6: OK")
     print("RECONCILE V5: OK")
-    print("PLAN V7: OK")
+    print("PLAN V8: OK")
     print("NetBox write: NÃO")
     return 0
 
