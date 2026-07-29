@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.10.18
+**Versão da política:** 1.10.19
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
@@ -28,16 +28,47 @@ BLOCKED                         → não escreve
 
 Antes da primeira escrita:
 
-1. recalcular o PLAN V7;
+1. recalcular o PLAN V8;
 2. validar READY normais e todos os REPAIR_SAFE;
 3. reler Device, VM, interfaces, IPs, MACs e relacionamentos;
 4. bloquear qualquer drift ou consulta incompleta;
 5. criar journal read-only;
 6. somente então permitir escrita.
 
-## Regra de primary IP da 1.10.18
+## Printer-MIB
 
-O NetBox não permite reatribuir um IP enquanto ele está configurado como primary/oob do objeto pai atual.
+A coleta é exclusivamente read-only. O produto consulta OIDs de identidade e não executa SET SNMP.
+
+```text
+prtGeneralPrinterName
+prtGeneralSerialNumber
+hrDeviceDescr
+```
+
+A ausência de resposta não é interpretada como identidade de impressora.
+
+## Upgrade de Device Type genérico
+
+A alteração automática de Device Type é permitida somente quando:
+
+- o Device possui descrição exata `Criado pelo netbox-discovery`;
+- o match é forte por SERIAL, MAC ou IP;
+- a classificação atual é `HIGH`;
+- o tipo atual ainda é reconhecidamente genérico;
+- fabricante e modelo destino são explícitos e não genéricos;
+- o importer revalida todas essas condições imediatamente antes do PATCH.
+
+Device manual, Device Type específico, confiança baixa ou mudança concorrente bloqueiam. Não existe substituição genérica de catálogo.
+
+## Preservação de identidade live
+
+Quando uma observação fica fraca, mas a identidade forte aponta para Device existente com tipo específico, o PLAN preserva os campos live em `READY/NOOP`. Esse caminho não escreve.
+
+## Colisão de nomes
+
+Um `sysName` repetido só é desambiguado automaticamente quando todos os objetos são físicos, `HIGH`, novos e possuem serial/MAC únicos. Conflito de IP, identidade fraca ou objeto existente mantêm `REVIEW/BLOCKED`.
+
+## Regra de primary IP da 1.10.18
 
 Para um reparo em modo `FULL`:
 
@@ -76,32 +107,9 @@ MAC duplicado, MAC pertencente a outro objeto ou interface ambígua bloqueiam.
 
 ## DELETE restrito
 
-Não existe DELETE genérico no Network.
+Não existe DELETE genérico no Network. A VM nunca é removida.
 
-A única remoção automática é um Device duplicado de VM quando:
-
-- Device, interfaces e IP comprovam ownership do produto;
-- não existe serial, rack, location, cluster, cabo ou objeto relacionado;
-- existe exatamente um IP observado;
-- existe uma única VM correspondente;
-- a interface alvo é inequívoca;
-- a VM não possui outro primary IPv4;
-- primary/oob do Device está vazio ou aponta somente para o IP alvo.
-
-A VM nunca é removida.
-
-## Recuperação parcial
-
-```text
-interface criada sem MAC
-→ fallback de interface única
-
-interface + MAC criados, IP ainda no Device
-→ limpar primary do Device e concluir REPAIR_SAFE
-
-IP já movido, Device ainda existe
-→ RECOVERY_AFTER_IP_MOVE
-```
+A única remoção automática é um Device duplicado de VM quando existe ownership integral do produto e ausência de vínculos manuais.
 
 ## Concorrência e retry
 
