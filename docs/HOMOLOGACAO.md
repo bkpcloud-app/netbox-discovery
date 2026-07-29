@@ -24,24 +24,35 @@ AMBIGUOUS: 0
 COMPARE STATUS: OK
 ```
 
-## Network — funções LIVE PASS
+## Network — Site DCM
+
+**Estado:** LIVE PASS em 29/07/2026.
+
+### Funções validadas ao vivo
 
 ```text
 ownership por IP → DELEGATED
-Dell N2024/PCT7024/S4128F-ON → NETWORK_SWITCH/HIGH
 VM por nome único → DELEGATED
+Device físico + VM inequívoca → REPAIR_SAFE protegido
+Dell N2024/PCT7024/S4128F-ON → NETWORK_SWITCH/HIGH
 Dell MD3200BKP .56/.57 → 1 STORAGE com MGMT + MGMT-2
-preflight global base → PASS
+Dell ME4024/ME5024 → STORAGE com identidade forte
+preflight global → PASS
 IMPORT normal → PASS
 MAC RECONCILE de Devices → PASS
+recuperação após falha parcial → PASS
+reparo seguro de Device duplicado de VM → PASS
+idempotência pós-reparo → PASS
 ```
 
-## APPLY real da 1.10.17 — 28/07/2026, Site DCM
+## APPLY real da 1.10.18 — 29/07/2026, Site DCM
 
-### PLAN
+### Plano anterior à escrita
 
 ```text
+Versão: 1.10.18
 Planner: 4.7-product
+Pipeline: 2.8-product
 READY/CREATE: 0
 READY/UPDATE_SAFE: 0
 READY/REPAIR_SAFE: 1
@@ -50,100 +61,113 @@ REVIEW: 1
 BLOCKED: 0
 ```
 
-### SRV-AE11 — parte validada
-
-**Estado:** LIVE PARTIAL.
-
-A 1.10.17 validou ao vivo:
+### Reparo SRV-AE11
 
 ```text
-Device ID 324
-VM ID 359
-interface MGMT criada na VM
-MAC 00:50:56:9F:9E:70 criado/atribuído
-primary_mac_address da interface definido
+Device duplicado: ID 324
+VM correta: ID 359
+VM interface existente após recuperação: ID 533
+IP transferido: 10.1.1.111/24
 PREFLIGHT GLOBAL FINALIZE: OK
-IMPORT normal: 12/12
+Reparos seguros concluídos: 1
+Erros: 0
+```
+
+A ordem corrigida foi validada ao vivo:
+
+```text
+limpar primary/oob do Device antigo
+→ mover IP para virtualization.vminterface
+→ definir primary IPv4 da VM
+→ remover somente o Device duplicado
+```
+
+### Evidência de remoção segura
+
+```text
+Devices no Site antes: 14
+Devices no Site após: 13
+VM ID 359 preservada
+interface ID 533 preservada
+MAC VMware preservado
+Device ID 324 removido
+```
+
+### IMPORT normal e MAC reconcile
+
+```text
+Assets READY normais processados: 13/13
+Runtime blocked: 0
+Erros: 0
 MAC RECONCILE: PASS
 ```
 
-A transferência do IP foi bloqueada pelo próprio NetBox:
+### Idempotência posterior
 
 ```text
-HTTP 400
-Cannot reassign IP address while it is designated as the primary IP for the parent object
+READY/CREATE: 0
+READY/UPDATE_SAFE: 0
+READY/NOOP: 13
+BLOCKED: 0
 ```
 
-Resultado seguro:
+O `SRV-AE11` deixou de aparecer como conflito/reparo pendente. O IP agora possui ownership da camada Hypervisor.
+
+### AUDIT FINALIZE
 
 ```text
-VM preservada
-interface MGMT preservada
-MAC VMware preservado
-IP 10.1.1.111/24 permaneceu no Device
-Device 324 permaneceu existente
-nenhum DELETE do Device ocorreu
-```
-
-A causa confirmada foi ordem de operação: o IP ainda era `primary_ip4` do Device quando o PATCH tentou reatribuí-lo à VM interface.
-
-## 1.10.18 — correção da ordem primary IP → reassignment
-
-**Estado:** NOT LIVE até a execução final.
-
-A nova ordem é:
-
-```text
-revalidar reparo
-→ confirmar primary/oob vazio ou igual ao IP alvo
-→ limpar primary_ip4/primary_ip6/oob_ip do Device
-→ mover IP para virtualization.vminterface
-→ definir primary_ip4 da VM
-→ remover somente o Device duplicado
-→ auditar
-```
-
-Proteção adicional:
-
-```text
-primary/oob apontando para outro IP
-→ BLOCKED antes do IP move e antes do DELETE
-```
-
-## Única validação live da 1.10.18
-
-```bash
-netbox-discovery update run
-netbox-discovery version
-netbox-discovery run --apply
-```
-
-Critério de conclusão:
-
-```text
-Versão: 1.10.18
-Planner: 4.7-product
-READY/REPAIR_SAFE: 1 antes da escrita
-PREFLIGHT GLOBAL FINALIZE: OK
-PRIMARY_IP_CLEARED_BEFORE_MOVE
-Reparos seguros concluídos: 1
-Device ID 324 ausente
-VM ID 359 preservada
-uma única interface MGMT na VM
-MAC 00:50:56:9F:9E:70 único nessa interface
-IP 10.1.1.111/24 atribuído à virtualization.vminterface
-VM primary IPv4 correto
-novo PLAN: SRV-AE11 DELEGATED/NOOP
+Status: PASS_WITH_WARNINGS
+Assets PASS: 9
+Assets WARN: 5
 Assets FAIL: 0
+Checks PASS: 161
+Checks WARN: 9
 Checks FAIL: 0
 ```
 
-O `10.1.1.54` pode continuar `REVIEW`.
+Warnings conhecidos e não destrutivos:
+
+```text
+NAME_PRESERVED nos hosts VMware
+Dell Inc. versus Dell no fabricante/modelo esperado
+nome live ME4024-10-1-1-52 preservado
+```
+
+Esses warnings não representam falha de ownership, IP, interface, MAC, criação, remoção ou idempotência.
+
+## REVIEW residual
+
+```text
+10.1.1.54
+confidence=NONE
+role=UNKNOWN
+```
+
+O asset permanece `REVIEW`, sem escrita automática e sem impedir a homologação do ciclo seguro. Não deve ser forçado sem identidade forte.
+
+## Resultado final Network
+
+```text
+DISCOVER → PASS
+CLASSIFY V5 → PASS
+RECONCILE V5 → PASS
+PLAN V7 → PASS
+PREFLIGHT GLOBAL FINALIZE → PASS
+IMPORT normal → PASS
+MAC RECONCILE → PASS
+REPAIR_SAFE → PASS
+AUDIT FINALIZE → PASS_WITH_WARNINGS
+IDEMPOTÊNCIA → PASS
+```
+
+**Conclusão:** ciclo Network do Site DCM homologado como **LIVE PASS**.
 
 ## Schedulers
 
 ```text
 Auto-update stable: LIVE PASS
-Network scheduler: DISABLED durante homologação
-Hypervisor scheduler: DISABLED durante homologação
+Network scheduler: DISABLED
+Hypervisor scheduler: DISABLED
 ```
+
+A habilitação dos schedulers é uma decisão operacional separada da homologação funcional.
