@@ -66,7 +66,9 @@ def _device_by_id(state):
 
 
 def _vm_by_id(state):
-    return dict((row.get("id"), row) for row in (state.get("virtual_machines") or []) if row.get("id") is not None)
+    rows = list(state.get("virtual_machines") or [])
+    rows.extend(state.get("virtual_machines_global") or [])
+    return dict((row.get("id"), row) for row in rows if row.get("id") is not None)
 
 
 def _vm_interface_by_id(state):
@@ -104,6 +106,15 @@ def _vm_interface_macs(interface, state):
     return values
 
 
+def _nested_vm_reference(interface):
+    value = interface.get("virtual_machine") or {}
+    if isinstance(value, dict) and value.get("id") is not None:
+        return dict(value)
+    if isinstance(value, int):
+        return {"id": value, "name": "VM-ID-{0}".format(value)}
+    return {}
+
+
 def _find_vm_target(row, state):
     ip = norm_ip(row.get("primary_ip"))
     ifaces = _vm_interface_by_id(state)
@@ -115,10 +126,13 @@ def _find_vm_target(row, state):
     ]
     if len(ip_matches) == 1:
         ip_obj = ip_matches[0]
-        interface = ifaces.get(_assigned_id(ip_obj)) or {}
-        vm = vms.get(nested_id(interface.get("virtual_machine"))) or {}
+        assigned = ip_obj.get("assigned_object") or {}
+        interface = ifaces.get(_assigned_id(ip_obj)) or (dict(assigned) if isinstance(assigned, dict) else {})
+        vm_ref = _nested_vm_reference(interface)
+        vm = vms.get(nested_id(vm_ref)) or vm_ref
         if vm:
-            return vm, interface, ip_obj, "ip-vminterface-owner"
+            source = "ip-vminterface-owner" if nested_id(vm_ref) in vms else "ip-vminterface-owner-partial"
+            return vm, interface, ip_obj, source
 
     ids = []
     for reason in row.get("reasons") or []:
@@ -147,7 +161,8 @@ def _delegated_details(row, state):
         row["delegation_source"] = "centralized-hypervisor"
         return
     device = vm.get("device") or vm.get("host") or {}
-    row["delegation_status"] = "PASS"
+    complete = bool(clean(vm.get("name")) and (vm.get("cluster") or vm.get("site") or device))
+    row["delegation_status"] = "PASS" if complete else "PASS_PARTIAL"
     row["delegation_source"] = "centralized-hypervisor"
     row["delegated_target"] = {
         "source": source,
@@ -162,6 +177,7 @@ def _delegated_details(row, state):
         "cluster": nested_name(vm.get("cluster")),
         "physical_host": nested_name(device),
         "tenant": nested_name(vm.get("tenant")),
+        "details_complete": complete,
     }
     row["identity_policy"] = "CENTRALIZED_HYPERVISOR_AUTHORITY"
 
@@ -267,11 +283,11 @@ def _limit(name, default):
 
 def _apply_write_guard(plan, state):
     limits = {
-        "CREATE": _limit("NETBOX_DISCOVERY_MAX_CREATE", 100),
-        "UPDATE_SAFE": _limit("NETBOX_DISCOVERY_MAX_UPDATE", 150),
+        "CREATE": _limit("NETBOX_DISCOVERY_MAX_CREATE", 25),
+        "UPDATE_SAFE": _limit("NETBOX_DISCOVERY_MAX_UPDATE", 50),
         "REPAIR_SAFE_VM_DUPLICATE": _limit("NETBOX_DISCOVERY_MAX_REPAIR", 20),
-        "TOTAL": _limit("NETBOX_DISCOVERY_MAX_TOTAL_CHANGES", 200),
-        "PERCENT": _limit("NETBOX_DISCOVERY_MAX_CHANGE_PERCENT", 50),
+        "TOTAL": _limit("NETBOX_DISCOVERY_MAX_TOTAL_CHANGES", 75),
+        "PERCENT": _limit("NETBOX_DISCOVERY_MAX_CHANGE_PERCENT", 20),
     }
     eligible = [
         row for row in plan
