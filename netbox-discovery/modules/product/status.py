@@ -22,15 +22,15 @@ def load(path):
     if not path:
         return {}
     try:
-        with open(path, "r") as f:
-            value = json.load(f)
+        with open(path, "r") as handle:
+            value = json.load(handle)
             return value if isinstance(value, dict) else {}
     except Exception:
         return {}
 
 
-def val(d, key, default=0):
-    return (d or {}).get(key, default)
+def val(data, key, default=0):
+    return (data or {}).get(key, default)
 
 
 def enabled(unit):
@@ -38,6 +38,14 @@ def enabled(unit):
         return subprocess.call(["systemctl", "is-enabled", "--quiet", unit]) == 0
     except Exception:
         return False
+
+
+def execution_role(cfg):
+    product = cfg.get("product") or {}
+    virtualization = cfg.get("virtualization") or {}
+    return str(product.get("execution_role") or cfg.get("execution_role") or "network_proxy"), str(
+        virtualization.get("mode") or "centralized"
+    )
 
 
 def main():
@@ -60,7 +68,7 @@ def main():
     if not os.path.isfile(config_path):
         print("CONFIG: ainda não criada")
         print("Network scheduler: DISABLED")
-        print("Hypervisor: ainda não configurado")
+        print("Virtualização: CENTRALIZADA | coletor local NÃO REQUERIDO")
         return 0
 
     try:
@@ -74,8 +82,11 @@ def main():
     site = str((cfg.get("discovery") or {}).get("site") or "")
     tenant = str(cfg.get("tenant") or "")
     auto = cfg.get("automation") or {}
+    role, virtualization_mode = execution_role(cfg)
     network_timer = enabled("netbox-discovery.timer")
     print("Tenant/Site: {0}/{1}".format(tenant, site))
+    print("Função desta instalação: {0}".format(role))
+    print("Inventário de virtualização: {0}".format(virtualization_mode.upper()))
     print("Network scheduler: config={0} systemd={1} APPLY={2}".format(
         "ENABLED" if auto.get("enabled") else "DISABLED",
         "ENABLED" if network_timer else "DISABLED",
@@ -89,26 +100,34 @@ def main():
     run = load(latest("{0}-run-*.json".format(site)))
 
     print("Último Network RUN: {0}".format(run.get("status", "SEM EXECUÇÃO")))
+    if run.get("run_id"):
+        print("Run ID: {0}".format(run.get("run_id")))
     print("DISCOVER: {0}".format("{0} hosts".format(len(disc.get("devices") or [])) if disc else "sem relatório"))
     print("RECONCILE: {0}".format("{0} assets".format(recon.get("assets", len(recon.get("records") or []))) if recon else "sem relatório"))
     if plan:
-        ds = plan.get("decision_summary") or {}
-        ac = plan.get("action_summary") or {}
+        decisions = plan.get("decision_summary") or {}
+        actions = plan.get("action_summary") or {}
         print("PLAN: READY={0} DELEGATED={1} REVIEW={2} BLOCKED={3}".format(
-            val(ds, "READY"), val(ds, "DELEGATED"), val(ds, "REVIEW"), val(ds, "BLOCKED")))
-        print("      CREATE={0} UPDATE_SAFE={1} NOOP={2}".format(val(ac, "CREATE"), val(ac, "UPDATE_SAFE"), val(ac, "NOOP")))
+            val(decisions, "READY"), val(decisions, "DELEGATED"), val(decisions, "REVIEW"), val(decisions, "BLOCKED")))
+        print("      CREATE={0} UPDATE_SAFE={1} NOOP={2}".format(
+            val(actions, "CREATE"), val(actions, "UPDATE_SAFE"), val(actions, "NOOP")))
+        records = plan.get("records") or []
+        guard = next((row.get("write_guard") for row in records if row.get("write_guard")), {}) or {}
+        if guard:
+            print("WRITE GUARD: {0} | mudanças={1} ({2}%)".format(
+                guard.get("status", "?"), guard.get("eligible_total", 0), guard.get("change_percent", 0)))
     else:
         print("PLAN: sem relatório")
     if imp:
-        sm = imp.get("summary") or {}
+        summary = imp.get("summary") or {}
         print("IMPORT: mode={0} processados={1} blocked={2} erros={3}".format(
-            imp.get("mode", ""), val(sm, "assets_processed"), val(sm, "runtime_blocked"), val(sm, "errors")))
+            imp.get("mode", ""), val(summary, "assets_processed"), val(summary, "runtime_blocked"), val(summary, "errors")))
     else:
         print("IMPORT: sem relatório")
     if audit:
-        a = audit.get("asset_summary") or {}
+        assets = audit.get("asset_summary") or {}
         print("AUDIT: {0} | PASS={1} WARN={2} FAIL={3}".format(
-            audit.get("status", ""), val(a, "PASS"), val(a, "WARN"), val(a, "FAIL")))
+            audit.get("status", ""), val(assets, "PASS"), val(assets, "WARN"), val(assets, "FAIL")))
     else:
         print("AUDIT: sem relatório")
 
@@ -119,16 +138,21 @@ def main():
         hauto = hcfg.get("automation") or {}
         if sources:
             hrun = load(latest("{0}-hypervisor-run-*.json".format(site)))
-            print("Hypervisor sources: {0}".format(len(sources)))
+            print("Hypervisor local sources: {0}".format(len(sources)))
             print("Hypervisor scheduler: config={0} systemd={1} APPLY={2}".format(
                 "ENABLED" if hauto.get("enabled") else "DISABLED",
                 "ENABLED" if enabled("netbox-discovery-hypervisor.timer") else "DISABLED",
                 "SIM" if hauto.get("apply") else "NÃO"))
             print("Último Hypervisor RUN: {0}".format(hrun.get("status", "SEM EXECUÇÃO")))
+        elif virtualization_mode.lower() == "centralized" or role == "network_proxy":
+            print("Hypervisor local: NÃO REQUERIDO | inventário central consultado pelo NetBox")
         else:
-            print("Hypervisor: ainda não configurado")
+            print("Hypervisor local: NÃO CONFIGURADO")
     except Exception as exc:
-        print("Hypervisor: ERRO - {0}".format(exc))
+        if virtualization_mode.lower() == "centralized" or role == "network_proxy":
+            print("Hypervisor local: NÃO REQUERIDO | inventário centralizado")
+        else:
+            print("Hypervisor: ERRO - {0}".format(exc))
     return 0
 
 

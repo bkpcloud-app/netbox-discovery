@@ -35,12 +35,12 @@ for name in ('networks_file', 'exclusions_file', 'communities_file'):
     path = (cfg.get('discovery') or {}).get(name, '')
     if path and not os.path.isfile(path):
         raise RuntimeError('{0} não encontrado: {1}'.format(name, path))
-print('DISCOVER: OK')
-print('CLASSIFY V2: OK')
-print('RECONCILE V2: OK')
-print('PLAN V2: OK')
-print('IMPORT V2: OK')
-print('AUDIT: OK')
+print('DISCOVER V5: OK')
+print('CLASSIFY V7: OK')
+print('RECONCILE V5: OK')
+print('PLAN V9: OK')
+print('IMPORT V10: OK')
+print('AUDIT V9: OK')
 PY
 }
 
@@ -388,13 +388,13 @@ EOF
   check) check_product ;;
   self-test) exec "$PYTHON" "$BASE/modules/product/selftest.py" --base "$BASE" "$@" ;;
   health) exec "$PYTHON" "$BASE/modules/product/health.py" "$@" ;;
-  discover) exec "$PYTHON" "$BASE/modules/discovery/network.py" "$@" ;;
-  classify) exec "$PYTHON" "$BASE/modules/inventory/classifier_v2.py" "$@" ;;
-  reconcile) exec "$PYTHON" "$BASE/modules/inventory/reconciler_v2.py" "$@" ;;
-  plan) exec "$PYTHON" "$BASE/modules/inventory/planner_v2.py" "$@" ;;
+  discover) exec "$PYTHON" "$BASE/modules/discovery/network_v5.py" "$@" ;;
+  classify) exec "$PYTHON" "$BASE/modules/inventory/classifier_v7.py" "$@" ;;
+  reconcile) exec "$PYTHON" "$BASE/modules/inventory/reconciler_v5.py" "$@" ;;
+  plan) exec "$PYTHON" "$BASE/modules/inventory/planner_v9.py" "$@" ;;
   inventory|prepare) exec "$PYTHON" "$BASE/modules/inventory/pipeline.py" "$@" ;;
-  import) exec "$PYTHON" "$BASE/modules/importers/importer_v2.py" "$@" ;;
-  audit) exec "$PYTHON" "$BASE/modules/auditors/auditor_v2.py" "$@" ;;
+  import) exec "$PYTHON" "$BASE/modules/importers/importer_v10.py" "$@" ;;
+  audit) exec "$PYTHON" "$BASE/modules/auditors/auditor_v9.py" "$@" ;;
   run) exec "$PYTHON" "$BASE/modules/product/runner.py" "$@" ;;
   scheduled-run) exec "$PYTHON" "$BASE/modules/product/runner.py" --scheduled ;;
   status) exec "$PYTHON" "$BASE/modules/product/status.py" ;;

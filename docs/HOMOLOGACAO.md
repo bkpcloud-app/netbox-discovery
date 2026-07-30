@@ -1,4 +1,4 @@
-# netbox-discovery 1.10.19 — Matriz de Homologação
+# netbox-discovery 1.11.0 — Matriz de Homologação
 
 ## Estados
 
@@ -11,7 +11,7 @@ NOT LIVE      = ainda não validado ao vivo
 
 CI PASS não equivale a LIVE PASS.
 
-## Hypervisor
+## Hypervisor central
 
 **Estado:** LIVE PASS.
 
@@ -24,11 +24,11 @@ AMBIGUOUS: 0
 COMPARE STATUS: OK
 ```
 
-O bloco Hypervisor está encerrado e não depende da homologação Network 1.10.19.
+O coletor central continua responsável pelos vCenters. A release 1.11.0 não exige hypervisor local nas filiais.
 
 ## Network — Site DCM
 
-**Estado:** LIVE PASS em 29/07/2026 com a 1.10.18.
+**Estado anterior:** LIVE PASS em 29/07/2026 com a 1.10.18.
 
 ```text
 ownership Hypervisor → PASS
@@ -44,11 +44,11 @@ Assets FAIL: 0
 Checks FAIL: 0
 ```
 
-## Network — Site FBA, execução de origem 1.10.18
+A 1.11.0 ainda precisa de novo dry-run antes de qualquer APPLY no DCM.
+
+## Network — Site FBA, linha de base
 
 **Estado do ciclo 1.10.18:** LIVE PASS em 29/07/2026.
-
-### Descoberta e plano
 
 ```text
 Hosts ativos: 288
@@ -63,7 +63,7 @@ READY/NOOP: 171
 DELEGATED/HYPERVISOR: 37
 ```
 
-### APPLY
+### APPLY de referência
 
 ```text
 PREFLIGHT GLOBAL FINALIZE: OK
@@ -74,7 +74,7 @@ MAC RECONCILE: PASS
 Devices após: 179
 ```
 
-### Audit e idempotência
+### Audit de referência
 
 ```text
 Status: PASS_WITH_WARNINGS
@@ -89,52 +89,93 @@ READY/UPDATE_SAFE posterior: 0
 READY/NOOP posterior: 175
 ```
 
-O ciclo foi seguro e idempotente. As 69 pendências e 2 bloqueios não escreveram.
+## Network 1.11.0 — consolidação
 
-### Lacunas de qualidade encontradas no FBA
+**Estado:** CI/NOT LIVE até dry-run e APPLY controlado no FBA.
 
-```text
-impressoras com Generic Printer
-servidores/appliances com Unknown Server
-Moxa NP5210_4618 como WEB_APPLIANCE LOW
-2 switches físicos HIGH com o mesmo sysName SW-BA17
-Ubiquiti e Topdata existentes degradados por coleta fraca
-Dell Inc. versus Dell gerando drift falso
-```
-
-Essas lacunas motivaram a 1.10.19. Não são falhas do APPLY 1.10.18.
-
-## Network 1.10.19 — qualidade de identidade
-
-**Estado:** NOT LIVE até a execução final no FBA.
-
-### Funções novas cobertas por CI
+### Funções cobertas por regressão
 
 ```text
-Printer-MIB → fabricante/modelo/serial explícitos
-Moxa NPort 5210 por sysObjectID exato
-Device Type genérico do produto → tipo exato HIGH
-preservação de identidade live forte sobre coleta fraca
-aliases de fabricante sem drift falso
-colisão de sysName resolvida somente por serial/MAC forte
-revalidação do upgrade no importer antes do PATCH
+Siemens S7 estruturado
+EtherNet/IP CIP Identity
+ONVIF camera identity
+OUI virtual como candidato, nunca confirmação isolada
+hardware físico forte prevalece sobre indício de OUI virtual
+Discovery UID estável por serial
+nome existente no NetBox preservado
+VIRTUAL_CANDIDATE não cria Device físico
+DELEGATED_VM mostra VM/interface/cluster/host
+write guard bloqueia volume anormal
+importer rejeita PATCH de name
 ```
 
-### Critério de LIVE PASS
+### Primeira etapa obrigatória: instalação controlada da branch
 
-Executar uma única vez no FBA:
+A 1.11.0 não deve ser mesclada no canal `main/stable` antes do teste live. Na FBA, instalar diretamente a branch do PR:
 
 ```bash
-netbox-discovery update run
+cd /tmp
+rm -f install-from-github.sh
+curl -fsSL -o install-from-github.sh \
+  https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh
+chmod +x install-from-github.sh
+NETBOX_DISCOVERY_REF=agent/netbox-discovery-1.11.0-consolidation \
+  ./install-from-github.sh
+```
+
+A instalação preserva a configuração operacional existente conforme as proteções do bootstrap/updater.
+
+### Segunda etapa obrigatória: dry-run
+
+```bash
 netbox-discovery version
+netbox-discovery self-test
+netbox-discovery status
+netbox-discovery run
+```
+
+Não usar `--apply` antes de revisar o relatório.
+
+### Critérios do dry-run
+
+```text
+Versão: 1.11.0
+Discovery: 4.4-product
+Classifier: 5.2-product
+Planner: 4.9-product
+Pipeline: 3.0-product
+WRITE GUARD: PASS
+NetBox write: NÃO
+```
+
+Validar especificamente:
+
+1. Os dois switches `SW-BA17` aparecem como objetos distintos quando serial/MAC forem fortes.
+2. O nome SNMP original permanece como `observed_name`.
+3. Um nome alterado manualmente no NetBox aparece como nome efetivo e não gera diff de nome.
+4. A impressora `KM6E3D62` recebe identidade melhor quando Printer-MIB retornar dados, sem renomear o Device manual.
+5. Os 37 servidores aparecem como `DELEGATED_VM/PASS`, com VM, interface, cluster, host físico e site.
+6. O status mostra virtualização centralizada e hypervisor local não requerido.
+7. Ubiquiti e Topdata existentes não são rebaixados por perda transitória de evidência.
+8. iDRAC/service tag apresenta pai físico provável e permanece REVIEW quando a associação ainda não for segura.
+9. Industrial apresenta protocolo, fabricante/modelo/serial quando retornados; caso contrário continua REVIEW sem modelo inventado.
+10. CFTV usa ONVIF/fingerprint e não classifica apenas por porta web.
+11. `VIRTUAL_CANDIDATE` não produz `READY/CREATE` de Device.
+12. Nenhum item elegível está bloqueado pelo write guard em uma mudança normal.
+
+### APPLY controlado
+
+Somente depois do dry-run aprovado:
+
+```bash
 netbox-discovery run --apply
 ```
 
-A homologação exige:
+Critérios de LIVE PASS:
 
 ```text
-Versão: 1.10.19
 PREFLIGHT GLOBAL FINALIZE: OK
+WRITE GUARD: PASS
 Runtime blocked: 0
 Erros: 0
 MAC RECONCILE: PASS
@@ -143,14 +184,15 @@ Checks FAIL: 0
 preview posterior sem READY/CREATE, READY/UPDATE_SAFE ou READY/REPAIR_SAFE elegível
 ```
 
-Também deve ser verificado no relatório:
+### Proteções que precisam ser comprovadas
 
 ```text
-Printer-MIB somente quando houver resposta real
-UPDATE_SAFE apenas em Device criado pelo produto e ainda genérico
-objetos manuais/específicos preservados
-SW-BA17 distintos por nome determinístico ou ainda bloqueados com motivo seguro
-nenhuma regressão em DELEGATED Hypervisor
+PATCH automático de name inexistente
+Device manual/específico preservado
+VM central nunca criada como Device físico duplicado
+REVIEW/BLOCKED/DELEGATED não escrevem
+nenhuma VM removida
+write guard bloqueia cenário anormal antes da primeira escrita
 ```
 
 Até essa evidência, o estado correto da release é **CI/NOT LIVE**.
@@ -162,6 +204,7 @@ netbox-discovery run          → dry-run
 netbox-discovery run --apply  → escreve somente READY
 REVIEW/BLOCKED/DELEGATED      → não escrevem
 DELETE de VM                  → proibido
+Nome de Device existente      → não alterado
 Device Type manual/específico → não substituído
 ```
 
@@ -170,7 +213,7 @@ Device Type manual/específico → não substituído
 ```text
 Auto-update stable: LIVE PASS
 Network scheduler: DISABLED
-Hypervisor scheduler: DISABLED
+Hypervisor scheduler nas filiais: NÃO REQUERIDO
 ```
 
-A habilitação dos schedulers é decisão operacional separada.
+A habilitação do Network scheduler só deve ocorrer depois do LIVE PASS da 1.11.0.

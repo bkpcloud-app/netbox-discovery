@@ -13,7 +13,7 @@ from collections import Counter
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 HERE = os.path.dirname(os.path.abspath(__file__))
-PIPELINE_VERSION = "2.9-product"
+PIPELINE_VERSION = "3.0-product"
 
 
 def latest(pattern):
@@ -33,7 +33,7 @@ def _load_json(path):
 def _classification_by_ip(classification):
     out = {}
     for row in classification.get("records") or []:
-        ip = clean(row.get("ip"))
+        ip = clean(row.get("ip")).split("/", 1)[0]
         if ip:
             out[ip] = row
     return out
@@ -41,6 +41,29 @@ def _classification_by_ip(classification):
 
 def _format_list(values):
     return ", ".join(clean(x) for x in (values or []) if clean(x)) or "-"
+
+
+def _print_identity(row, class_row):
+    print("  Nome efetivo/observado: {0} / {1}".format(
+        clean(row.get("effective_name") or row.get("desired_name")) or "-",
+        clean(row.get("observed_name") or class_row.get("observed_name")) or "-",
+    ))
+    print("  Autoridade do nome: {0} | origem observada={1}".format(
+        clean(row.get("name_authority")) or "-",
+        clean(row.get("observed_name_source") or class_row.get("observed_name_source")) or "-",
+    ))
+    print("  Natureza: {0} | origem={1}".format(
+        clean(row.get("asset_nature") or class_row.get("asset_nature")) or "-",
+        clean(row.get("asset_nature_source") or class_row.get("asset_nature_source")) or "-",
+    ))
+    print("  Discovery UID: {0}".format(
+        clean(row.get("discovery_uid") or class_row.get("discovery_uid")) or "-"
+    ))
+    provenance = row.get("identity_provenance") or class_row.get("identity_provenance") or {}
+    if provenance:
+        parts = ["{0}={1}".format(key, clean(value)) for key, value in sorted(provenance.items()) if clean(value)]
+        if parts:
+            print("  Proveniência: {0}".format(", ".join(parts)))
 
 
 def _print_class_evidence(row, class_row):
@@ -61,6 +84,13 @@ def _print_class_evidence(row, class_row):
             clean(class_row.get("serial")) or "-",
             clean(class_row.get("storage_unit_type")) or "-",
         ))
+    if clean(class_row.get("identity_source")):
+        print("  Fonte principal de identidade: {0}".format(clean(class_row.get("identity_source"))))
+    facts = class_row.get("protocol_facts") or {}
+    if facts:
+        parts = ["{0}={1}".format(key, clean(value)) for key, value in sorted(facts.items()) if clean(value)]
+        if parts:
+            print("  Dados do protocolo: {0}".format(", ".join(parts)))
     if clean(class_row.get("md32xx_pair_key")):
         print("  Storage MD32xx pair: {0}".format(clean(class_row.get("md32xx_pair_key"))))
     if clean(class_row.get("identity_history_source")):
@@ -68,6 +98,36 @@ def _print_class_evidence(row, class_row):
     if clean(class_row.get("historical_vmware_mac")):
         print("  VMware MAC histórico: {0}".format(clean(class_row.get("historical_vmware_mac"))))
     print("  Evidência CLASSIFY: {0}".format(_format_list(class_row.get("evidence"))))
+    recommendations = row.get("review_recommendations") or class_row.get("review_recommendations") or []
+    if recommendations:
+        print("  Próxima evidência sugerida: {0}".format(_format_list(recommendations)))
+
+
+def _print_delegated(rows):
+    if not rows:
+        return
+    print("===== NETWORK VMS NO INVENTÁRIO CENTRALIZADO =====")
+    for pos, row in enumerate(rows, 1):
+        target = row.get("delegated_target") or {}
+        print("[{0}/{1}] DELEGATED_VM/PASS | {2} | observado={3}".format(
+            pos, len(rows), clean(row.get("primary_ip")) or "-",
+            clean(row.get("observed_name") or row.get("desired_name")) or "-",
+        ))
+        if target:
+            print("  VM: {0} (ID {1})".format(clean(target.get("vm_name")) or "-", target.get("vm_id") or "-"))
+            print("  Interface: {0} (ID {1}) | MAC={2}".format(
+                clean(target.get("interface_name")) or "-", target.get("interface_id") or "-",
+                _format_list(target.get("interface_macs")),
+            ))
+            print("  Cluster/Host físico/Site: {0} / {1} / {2}".format(
+                clean(target.get("cluster")) or "-", clean(target.get("physical_host")) or "-",
+                clean(target.get("site")) or "-",
+            ))
+            print("  Origem autoritativa: vCenter central | correlação={0}".format(
+                clean(target.get("source")) or "-"
+            ))
+        else:
+            print("  Detalhe da VM não resolvido; criação física continua suprimida.")
 
 
 def print_plan_diagnostics(plan_path, classification_path):
@@ -82,28 +142,29 @@ def print_plan_diagnostics(plan_path, classification_path):
     delegated = [row for row in records if row.get("decision") == "DELEGATED"]
     pending = [row for row in records if row.get("decision") in ("REVIEW", "BLOCKED")]
 
+    guard = next((row.get("write_guard") for row in records if row.get("write_guard")), {}) or {}
+
     print("===== NETWORK PLAN DIAGNÓSTICO =====")
     print("Planner: {0}".format(clean(plan.get("planner_version")) or "-"))
     print("READY/CREATE: {0}".format(len(ready_create)))
     print("READY/UPDATE_SAFE: {0}".format(len(ready_update)))
     print("READY/REPAIR_SAFE: {0}".format(len(ready_repair)))
-    print("DELEGATED/HYPERVISOR: {0}".format(len(delegated)))
+    print("DELEGATED/VM CENTRAL: {0}".format(len(delegated)))
     print("REVIEW: {0}".format(sum(1 for x in pending if x.get("decision") == "REVIEW")))
     print("BLOCKED: {0}".format(sum(1 for x in pending if x.get("decision") == "BLOCKED")))
+    if guard:
+        print("WRITE GUARD: {0} | mudanças={1} ({2}%) | violações={3}".format(
+            clean(guard.get("status")) or "-", guard.get("eligible_total", 0),
+            guard.get("change_percent", 0), _format_list(guard.get("violations")),
+        ))
     print("NetBox write: NÃO")
 
-    if delegated:
-        print("===== NETWORK DELEGADOS AO HYPERVISOR =====")
-        for pos, row in enumerate(delegated, 1):
-            print("[{0}/{1}] DELEGATED | {2} | {3} | {4}".format(
-                pos, len(delegated), clean(row.get("primary_ip")) or "-",
-                clean(row.get("desired_name")) or "-", clean(row.get("match_reason")) or "-",
-            ))
+    _print_delegated(delegated)
 
     if ready_create:
         print("===== NETWORK NOVOS OBJETOS READY =====")
         for pos, row in enumerate(ready_create, 1):
-            ip = clean(row.get("primary_ip"))
+            ip = clean(row.get("primary_ip")).split("/", 1)[0]
             class_row = by_ip.get(ip) or {}
             print("[{0}/{1}] READY | {2} | {3} | role={4} | confidence={5}".format(
                 pos, len(ready_create), ip or "-", clean(row.get("desired_name")) or "-",
@@ -115,18 +176,22 @@ def print_plan_diagnostics(plan_path, classification_path):
             if clean(row.get("identity_policy")):
                 print("  Política de identidade: {0}".format(clean(row.get("identity_policy"))))
             print("  IPs: {0}".format(_format_list(row.get("ips"))))
+            _print_identity(row, class_row)
             _print_class_evidence(row, class_row)
 
     if ready_update:
         print("===== NETWORK AJUSTES READY =====")
         for pos, row in enumerate(ready_update, 1):
+            ip = clean(row.get("primary_ip")).split("/", 1)[0]
+            class_row = by_ip.get(ip) or {}
             print("[{0}/{1}] READY | {2} | {3} | UPDATE_SAFE".format(
-                pos, len(ready_update), clean(row.get("primary_ip")) or "-",
-                clean(row.get("desired_name")) or "-",
+                pos, len(ready_update), ip or "-", clean(row.get("desired_name")) or "-",
             ))
             print("  Ajustes: {0}".format(_format_list(row.get("safe_diffs"))))
+            print("  Nome existente protegido: SIM")
             if clean(row.get("identity_policy")):
                 print("  Política de identidade: {0}".format(clean(row.get("identity_policy"))))
+            _print_identity(row, class_row)
 
     if ready_repair:
         print("===== NETWORK REPAROS SEGUROS READY =====")
@@ -136,18 +201,10 @@ def print_plan_diagnostics(plan_path, classification_path):
                 pos, len(ready_repair), clean(row.get("desired_name")) or "-",
                 repair.get("device_id") or "-", repair.get("vm_id") or "-",
             ))
-            interface_mode = clean(repair.get("vm_interface_mode"))
-            if interface_mode == "CREATE_SINGLE_VM_INTERFACE":
-                print("  VM interface: CRIAR {0} na VM ID {1}".format(
-                    clean(repair.get("vm_interface_name")) or "MGMT", repair.get("vm_id") or "-"))
-            else:
-                print("  VM interface ID: {0}".format(repair.get("vm_interface_id") or "-"))
-            print("  IP: {0} -> VM interface".format(clean(repair.get("ip_address")) or "-"))
-            print("  Modo: {0}".format(clean(repair.get("mode")) or "-"))
-            if clean(repair.get("vm_mac_mode")):
-                print("  VM MAC: {0}".format(clean(repair.get("vm_mac_address")) or "-"))
-                print("  Evidência VM MAC: {0}".format(clean(repair.get("vm_mac_evidence")) or "-"))
-            print("  Proteção: VM única, MAC VMware único e Device/IP/interfaces integralmente criados pelo produto")
+            print("  IP: {0} -> VM interface {1}".format(
+                clean(repair.get("ip_address")) or "-", clean(repair.get("vm_interface_name")) or "-"
+            ))
+            print("  Proteção: VM única e ownership integral do produto")
 
     reason_counts = Counter()
     for row in pending:
@@ -167,7 +224,7 @@ def print_plan_diagnostics(plan_path, classification_path):
         return
 
     for pos, row in enumerate(pending, 1):
-        ip = clean(row.get("primary_ip"))
+        ip = clean(row.get("primary_ip")).split("/", 1)[0]
         class_row = by_ip.get(ip) or {}
         print("[{0}/{1}] {2} | {3} | {4} | role={5} | confidence={6} score={7}".format(
             pos, len(pending), clean(row.get("decision")) or "-", ip or "-",
@@ -181,6 +238,13 @@ def print_plan_diagnostics(plan_path, classification_path):
         print("  Fabricante/Modelo/Serial: {0} / {1} / {2}".format(
             clean(row.get("manufacturer")) or "-", clean(row.get("model")) or "-", clean(row.get("serial")) or "-",
         ))
+        parent = row.get("oob_parent_candidate") or {}
+        if parent:
+            print("  Pai OOB provável: {0} (Device ID {1}) por service-tag {2}".format(
+                clean(parent.get("device_name")) or "-", parent.get("device_id") or "-",
+                clean(parent.get("serial")) or "-",
+            ))
+        _print_identity(row, class_row)
         _print_class_evidence(row, class_row)
 
 
@@ -190,9 +254,9 @@ def main(argv=None):
     ap.add_argument("--output-dir", default=REPORTS)
     args = ap.parse_args(argv)
 
-    classifier = os.path.join(HERE, "classifier_v6.py")
+    classifier = os.path.join(HERE, "classifier_v7.py")
     reconciler = os.path.join(HERE, "reconciler_v5.py")
-    planner = os.path.join(HERE, "planner_v8.py")
+    planner = os.path.join(HERE, "planner_v9.py")
 
     cmd = [sys.executable, classifier, "--output-dir", args.output_dir]
     if args.input:
@@ -221,9 +285,9 @@ def main(argv=None):
 
     print("===== INVENTORY PIPELINE =====")
     print("Pipeline version: {0}".format(PIPELINE_VERSION))
-    print("CLASSIFY V6: OK")
+    print("CLASSIFY V7: OK")
     print("RECONCILE V5: OK")
-    print("PLAN V8: OK")
+    print("PLAN V9: OK")
     print("NetBox write: NÃO")
     return 0
 

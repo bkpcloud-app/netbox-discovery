@@ -1,3 +1,98 @@
+## V1.11.0 — Consolidated identity, authority and write safety
+
+Release de consolidação criada a partir das evidências live do FBA e do DCM. O objetivo é entregar em um único pacote as melhorias de identidade, nomes, virtualização centralizada, industrial, CFTV, segurança de escrita e diagnóstico.
+
+### DISCOVER V5
+
+- mantém Printer-MIB e FibreAlliance já existentes;
+- adiciona catálogo de identidade SNMP/protocolo para equipamentos industriais;
+- preserva modelo/função específicos quando o `sysObjectID` ou descrição são inequívocos;
+- continua somente leitura.
+
+### Identity engine 1.0
+
+`modules/product/identity.py` centraliza:
+
+```text
+fabricante/modelo/serial/firmware
+observed_name e proveniência
+discovery_uid estável
+asset_nature físico/virtual/candidato
+S7, EtherNet/IP, BACnet e Modbus
+ONVIF e fingerprints CFTV
+recomendações de próxima evidência
+```
+
+### CLASSIFY V7
+
+- aplica identidade industrial estruturada;
+- distingue câmera, NVR, DVR, encoder e CFTV não resolvido;
+- trata OUI VMware/Hyper-V/KVM/Xen apenas como candidato virtual;
+- hardware com modelo/serial fortes permanece físico;
+- não inventa modelo quando a evidência é insuficiente.
+
+### PLAN V9
+
+- preserva explicitamente nome de Device existente no NetBox;
+- registra nome observado separadamente;
+- detalha `DELEGATED_VM/PASS` com VM, interface, MAC, cluster, host e site;
+- impede `VIRTUAL_CANDIDATE` de criar Device físico sem match central;
+- apresenta pai provável de iDRAC por service tag;
+- mantém colisão segura de `sysName` por serial/MAC;
+- adiciona write guard por contagem e percentual de mudança.
+
+### IMPORT V10
+
+- recalcula PLAN V9 antes da escrita;
+- rejeita qualquer PATCH automático do campo `name`;
+- mantém preflight global, ownership e reparos seguros existentes.
+
+### AUDIT V9
+
+- executa preview de idempotência com PLAN V9;
+- valida que a nova política de autoridade e write guard permanecem convergentes.
+
+### Operação centralizada
+
+Instalações de filial usam:
+
+```text
+execution_role: network_proxy
+virtualization mode: centralized
+Hypervisor local: não requerido
+```
+
+### Componentes
+
+```text
+network_v5.py       4.4-product
+classifier_v7.py    5.2-product
+planner_v9.py       4.9-product
+importer_v10.py     5.8-product
+auditor_v9.py       6.7-product
+identity.py         1.0-product
+pipeline            3.0-product
+runner              3.0-product
+```
+
+### Regressões 1.11.0
+
+- Siemens S7 estruturado;
+- EtherNet/IP CIP Identity;
+- ONVIF camera identity;
+- OUI virtual como candidato, não confirmação;
+- hardware físico forte prevalece;
+- `discovery_uid` por serial;
+- nome manual preservado;
+- candidato virtual não cria Device;
+- VM delegada detalhada;
+- write guard bloqueia impacto anormal;
+- importer rejeita PATCH de nome.
+
+Estado inicial: **CI/NOT LIVE até dry-run e APPLY controlado no FBA**.
+
+---
+
 ## V1.10.19 — Identity quality and safe generic enrichment
 
 Release criada a partir do APPLY live da 1.10.18 no FBA.

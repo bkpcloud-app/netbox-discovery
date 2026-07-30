@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.10.19 — PRODUCT V1  
+**Versão atual:** 1.11.0 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
@@ -19,18 +19,20 @@ netbox-discovery run --apply
 ```
 
 ```text
-DISCOVER V4
-→ CLASSIFY V6
+DISCOVER V5
+→ CLASSIFY V7
 → RECONCILE V5
-→ PLAN V8
-→ PREFLIGHT GLOBAL FINALIZE
-→ IMPORT READY normal V9
+→ PLAN V9
+→ WRITE GUARD + PREFLIGHT GLOBAL FINALIZE
+→ IMPORT READY normal V10
 → MAC RECONCILE
 → REPAIR_SAFE
-→ AUDIT FINALIZE V8
+→ AUDIT FINALIZE V9
 ```
 
-### Hypervisor
+### Hypervisor centralizado
+
+O inventário de virtualização pode ser executado no coletor central. Proxies de filial usam `execution_role: network_proxy` e consultam os objetos já existentes no NetBox; não precisam configurar nem executar vCenter localmente.
 
 ```bash
 netbox-discovery hypervisor configure
@@ -41,9 +43,85 @@ netbox-discovery hypervisor run --apply
 netbox-discovery hypervisor status
 ```
 
+## 1.11.0 — identidade consolidada, autoridade e segurança
+
+A 1.11.0 reúne em uma única release as melhorias de descoberta, classificação, reconciliação, nomes, virtualização, aplicação e auditoria.
+
+### Motor único de identidade
+
+`modules/product/identity.py` concentra:
+
+- normalização e proveniência de fabricante, modelo, serial e firmware;
+- `discovery_uid` estável por serial, chassis ou MAC;
+- nome observado separado do nome efetivo administrado no NetBox;
+- natureza física, virtual confirmada, candidata virtual ou desconhecida;
+- recomendações objetivas para ativos em REVIEW.
+
+### Equipamentos industriais
+
+O classificador interpreta evidências estruturadas e read-only de:
+
+```text
+Siemens S7
+EtherNet/IP / CIP Identity
+BACnet
+Modbus Device Identification
+SNMP sysObjectID / ENTITY-MIB
+```
+
+Quando o protocolo fornece dados, o inventário mantém fabricante, modelo, serial, firmware, função industrial e fonte da evidência. Sem prova suficiente, continua genérico e vai para REVIEW; o produto não inventa modelo.
+
+### Câmeras, NVRs e DVRs
+
+ONVIF/WS-Discovery e fingerprints conhecidos distinguem câmera, NVR, DVR, encoder e equipamento de videomonitoramento ainda não resolvido. Fabricante, modelo, serial e firmware são utilizados quando realmente retornados pelo equipamento.
+
+### Físico versus virtual
+
+A correspondência com `virtualization.vminterface` no NetBox é autoritativa. OUI VMware, Hyper-V, KVM, Xen ou VirtualBox sozinho gera apenas `VIRTUAL_CANDIDATE`; nunca confirma uma VM nem autoriza criar um Device físico duplicado.
+
+### Virtualização centralizada
+
+Itens já pertencentes a VMs aparecem como `DELEGATED_VM/PASS`, incluindo VM, interface, MAC, cluster, host físico, site e forma de correlação. A filial não executa vCenter local.
+
+### Nomes no NetBox
+
+```text
+Device existente no NetBox → nome protegido
+Nome observado por SNMP/ONVIF/DNS → registrado separadamente
+PATCH automático de name → proibido no importer
+```
+
+Nomes genéricos criados pelo produto podem ter identidade técnica enriquecida, mas um nome alterado manualmente não é desfeito pelo schedule.
+
+### Nomes SNMP repetidos
+
+Equipamentos físicos HIGH com `sysName` igual podem coexistir quando serial ou MAC demonstram identidades distintas. O PLAN usa sufixo determinístico por serial/MAC e mantém o `sysName` como nome observado.
+
+### iDRAC e gerenciamento OOB
+
+Quando o service tag identifica um servidor físico existente, o PLAN apresenta o pai provável e mantém o OOB em REVIEW até uma associação segura, evitando criar um servidor independente por engano.
+
+### Write guard
+
+Antes do APPLY, o PLAN mede CREATE, UPDATE_SAFE, REPAIR_SAFE e percentual de mudança. Um volume anormal transforma os itens elegíveis em BLOCKED antes da primeira escrita. O importer recalcula o PLAN V9 imediatamente antes de escrever.
+
+Limites podem ser ajustados por ambiente:
+
+```text
+NETBOX_DISCOVERY_MAX_CREATE
+NETBOX_DISCOVERY_MAX_UPDATE
+NETBOX_DISCOVERY_MAX_REPAIR
+NETBOX_DISCOVERY_MAX_TOTAL_CHANGES
+NETBOX_DISCOVERY_MAX_CHANGE_PERCENT
+```
+
+### Run ID
+
+Cada execução completa recebe um `run_id` único no relatório do runner para rastreabilidade operacional.
+
 ## 1.10.19 — qualidade de identidade do inventário
 
-A 1.10.19 transforma evidência que antes terminava como objeto genérico em identidade útil, sem tornar a escrita menos conservadora.
+A 1.10.19 introduziu Printer-MIB, Moxa NPort 5210, nomes SNMP repetidos com identidade forte e preservação de Device Type específico diante de perda transitória de evidência.
 
 ### Impressoras
 
@@ -55,71 +133,29 @@ prtGeneralSerialNumber
 hrDeviceDescr
 ```
 
-Fabricante, modelo e serial explícitos passam pelo CLASSIFY V6. Um Device já criado pelo produto com tipo genérico só pode receber um Device Type exato quando:
-
-```text
-match forte por SERIAL/MAC/IP
-+ confiança HIGH
-+ Device criado pelo netbox-discovery
-+ tipo atual reconhecidamente genérico
-+ fabricante/modelo exatos no novo discovery
-```
-
-Device manual ou tipo não genérico nunca é substituído automaticamente.
+Um Device criado pelo produto com tipo genérico só pode receber um Device Type exato quando há match forte, confiança HIGH e fabricante/modelo explícitos. Device manual ou tipo não genérico nunca é substituído automaticamente.
 
 ### Moxa NPort 5210
 
-O `sysObjectID .1.3.6.1.4.1.8691.2.7` é classificado como:
-
 ```text
+sysObjectID: .1.3.6.1.4.1.8691.2.7
 Role: INDUSTRIAL_COMMUNICATION
 Manufacturer: Moxa
 Model: NPort 5210
 Confidence: HIGH
 ```
 
-### Nomes SNMP repetidos
-
-Dois equipamentos físicos HIGH com o mesmo `sysName` não permanecem bloqueados apenas pelo nome quando possuem identidades fortes distintas. O PLAN cria nomes determinísticos com sufixo de serial ou MAC, por exemplo:
-
-```text
-SW-BA17-LB43JZ
-SW-BA17-KPC2C1
-```
-
-A regra não é aplicada quando existe identidade fraca, conflito de IP, objeto existente ou ambiguidade de serial/MAC.
-
 ### Preservação da identidade existente
 
-Quando uma coleta momentânea perde evidência, mas SERIAL/MAC/IP apontam para um Device existente com identidade não genérica, o PLAN mantém o objeto live e registra:
+Quando uma coleta momentânea perde evidência, mas SERIAL/MAC/IP apontam para um Device existente com identidade não genérica, o PLAN mantém o objeto live:
 
 ```text
 LIVE_IDENTITY_PRESERVED_OVER_WEAK_OBSERVATION
 ```
 
-Não existe escrita nesse caminho. Também são reconhecidos aliases de fabricante, como `Dell Inc.` e `Dell`, para não gerar drift falso.
-
 ## 1.10.18 — liberar primary IP antes de transferir o endereço
 
-A execução live da 1.10.17 criou corretamente a interface `MGMT` e o MAC VMware na VM ID 359. O NetBox, porém, bloqueou a transferência do IP porque `10.1.1.111/24` ainda estava configurado como primary IPv4 do Device duplicado:
-
-```text
-Cannot reassign IP address while it is designated as the primary IP for the parent object
-```
-
-A 1.10.18 corrige a ordem do reparo:
-
-```text
-1. revalidar Device, VM, interface, IP, MAC e ownership
-2. confirmar que primary_ip4/primary_ip6/oob_ip do Device estão vazios ou apontam para o mesmo IP alvo
-3. limpar a referência primary/oob do Device
-4. mover o IP para virtualization.vminterface
-5. definir primary IPv4 da VM, se vazio
-6. remover somente o Device duplicado criado pelo produto
-7. auditar convergência e idempotência
-```
-
-Se qualquer primary/oob do Device apontar para outro IP, o reparo bloqueia antes da transferência e antes do DELETE.
+O reparo de Device duplicado de VM limpa primeiro a referência primary/oob do Device, depois move o IP para `virtualization.vminterface`, define primary IPv4 da VM quando necessário e só então remove o Device integralmente criado pelo produto.
 
 ## Caminhos de REPAIR_SAFE
 
