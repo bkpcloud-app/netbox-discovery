@@ -33,8 +33,43 @@ def _has_explicit_windows_evidence(discovery):
     return False
 
 
+def _prefer_specific_serial_source(discovery, out):
+    """Keep the most specific authoritative source for the chosen serial.
+
+    CLASSIFY V7 correctly ranks ONVIF/Hikvision above generic ENTITY-MIB, but
+    both anonymous device-information variants previously collapsed into a
+    generic ONVIF label. Preserve whether the serial came from Hikvision
+    ISAPI/Hikvision enrichment or generic ONVIF so the PLAN is auditable.
+    """
+    selected = v7.identity.norm_serial(out.get("serial"))
+    if not selected:
+        return
+
+    matches = []
+    for service in discovery.get("open_services") or []:
+        for script_name, script_value in (service.get("scripts") or {}).items():
+            low = clean(script_name).casefold()
+            if not any(token in low for token in ("onvif", "hikvision", "isapi")):
+                continue
+            for value in v7._extract_labeled_serials(script_value):
+                if v7.identity.norm_serial(value) != selected:
+                    continue
+                if "hikvision" in low or "isapi" in low:
+                    matches.append((3, "onvif-hikvision-device-info"))
+                else:
+                    matches.append((2, "onvif-device-information"))
+
+    if not matches:
+        return
+    matches.sort(reverse=True)
+    out["serial_source"] = matches[0][1]
+    out["serial_confidence"] = "HIGH"
+
+
 def classify_device(discovery):
     out = ORIG_CLASSIFY_DEVICE(discovery)
+    _prefer_specific_serial_source(discovery, out)
+
     if out.get("windows_family"):
         out["classification_version"] = CLASSIFIER_VERSION
         return out
