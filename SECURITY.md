@@ -1,14 +1,14 @@
 # Segurança do repositório
 
-**Versão da política:** 1.11.0
+**Versão da política:** 1.11.2
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
 ## Nunca versionar
 
 - configuração real de cliente;
-- tokens e communities;
-- senhas VMware, Proxmox, Hyper-V ou NetBox;
+- tokens, communities e senhas;
+- credenciais VMware, Proxmox, Hyper-V, ONVIF, NetBox ou iDRAC;
 - chaves privadas;
 - relatórios, journals, logs e backups reais.
 
@@ -17,7 +17,7 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 ```text
 READY/CREATE                    → escreve somente com --apply
 READY/UPDATE_SAFE               → escreve somente com --apply
-READY/REPAIR_SAFE_VM_DUPLICATE  → escreve após write guard e preflight global
+READY/REPAIR_SAFE_VM_DUPLICATE  → escreve após write guard e preflight
 READY/NOOP                      → não altera
 DELEGATED                       → não escreve
 REVIEW                          → não escreve
@@ -29,69 +29,50 @@ BLOCKED                         → não escreve
 ```text
 Nome de Device existente → autoridade do NetBox
 Nome SNMP/ONVIF/DNS      → observação separada
-PATCH automático de name → proibido no importer V10
+PATCH automático de name → proibido no importer
 ```
 
-O schedule não pode desfazer uma alteração manual de nome.
+## Windows Server x Workstation
 
-## Write guard
-
-Antes da primeira escrita, o PLAN V9 mede:
-
-- CREATE;
-- UPDATE_SAFE;
-- REPAIR_SAFE;
-- total de mudanças;
-- percentual sobre Devices existentes.
-
-Se qualquer limite for excedido, todas as ações elegíveis são convertidas para BLOCKED/NOOP antes do importer.
-
-O importer recalcula o PLAN V9 imediatamente antes da escrita. Não é permitido usar um PLAN antigo para APPLY.
-
-## Preflight global
-
-Antes da primeira escrita:
-
-1. recalcular o PLAN V9;
-2. validar write guard, READY normais e REPAIR_SAFE;
-3. reler Device, VM, interfaces, IPs, MACs e relacionamentos;
-4. bloquear qualquer drift ou consulta incompleta;
-5. criar journal;
-6. somente então permitir escrita.
-
-## Coleta industrial e CFTV
-
-As consultas são exclusivamente read-only. O produto usa evidências de identidade como:
+Role de Windows só pode ser separado por fonte forte:
 
 ```text
-SNMP GET/WALK
-Siemens S7 information
-EtherNet/IP CIP Identity
-BACnet information
-Modbus device identification
-ONVIF/WS-Discovery
-Printer-MIB
+SMB OS explícito
+CPE Windows
+fingerprint/classe de SO com alta precisão
 ```
 
-Não executa SNMP SET nem comando de controle industrial. Quando não existe prova de modelo/função, o ativo continua genérico e entra em REVIEW.
+RDP, porta aberta ou hostname isolado não autorizam troca.
 
-## Físico versus virtual
+Correção automática `SERVER-WINDOWS ↔ WORKSTATION-WINDOWS` exige:
 
-Correspondência com `virtualization.vminterface` e inventário central é autoritativa. OUI de VMware, Hyper-V, KVM, Xen ou VirtualBox sozinho é apenas indício.
+1. Device criado pelo produto;
+2. match forte por serial, MAC ou IP;
+3. confiança HIGH;
+4. fonte SMB/CPE/fingerprint forte;
+5. role atual dentro da família Windows;
+6. PLAN com `WINDOWS_ROLE_CORRECTION_EXPLICIT_OS`;
+7. revalidação no importer.
 
-```text
-VIRTUAL_CANDIDATE sem VM central → REVIEW/NOOP
-```
+Device manual ou role fora dessa família é bloqueado.
 
-Isso impede criação automática de Device físico para uma VM ainda não correlacionada.
+## Serial
 
-## Virtualização centralizada
+O serial é tratado como identidade forte e recebe validação específica.
 
-Filiais podem operar como `network_proxy` com `virtualization.mode=centralized`. Ausência de configuração local de vCenter não é falha nesse modo.
+São proibidos:
+
+- placeholders, sequências de teste e caracteres repetidos;
+- IP ou MAC usados como serial;
+- serial igual a modelo ou hostname;
+- escrita com `serial_confidence` LOW/NONE/CONFLICT;
+- escolha automática quando fontes fortes equivalentes divergem.
+
+O PLAN deve manter fonte, candidatos, rejeições e conflito. O importer só preenche serial vazio quando a evidência é HIGH ou MEDIUM e não há conflito.
 
 ## Printer-MIB
 
-A coleta consulta apenas OIDs de identidade:
+A coleta é read-only e limitada a identidade:
 
 ```text
 prtGeneralPrinterName
@@ -99,75 +80,59 @@ prtGeneralSerialNumber
 hrDeviceDescr
 ```
 
-A ausência de resposta não é interpretada como identidade de impressora.
+Nenhum SNMP SET é executado. Valores padrão não são gravados.
 
-## Upgrade de Device Type genérico
+## Hikvision e ONVIF
 
-A alteração automática de Device Type é permitida somente quando:
-
-- o Device possui descrição exata `Criado pelo netbox-discovery`;
-- o match é forte por SERIAL, MAC ou IP;
-- a classificação atual é `HIGH`;
-- o tipo atual ainda é reconhecidamente genérico;
-- fabricante e modelo destino são explícitos e não genéricos;
-- o importer revalida tudo imediatamente antes do PATCH.
-
-Device manual, Device Type específico, confiança baixa ou mudança concorrente bloqueiam.
-
-## Preservação de identidade live
-
-Quando uma observação fica fraca, mas a identidade forte aponta para Device existente com tipo específico, o PLAN preserva os campos live em `READY/NOOP`. Esse caminho não escreve.
-
-## Colisão de nomes
-
-Um `sysName` repetido só é desambiguado automaticamente quando todos os objetos são físicos, `HIGH`, novos e possuem serial/MAC únicos. Conflito de IP, identidade fraca ou objeto existente mantêm REVIEW/BLOCKED.
-
-## Gerenciamento OOB
-
-Um iDRAC com service tag correspondente a servidor físico existente é apresentado como candidato de associação. A criação independente permanece em REVIEW até ser segura.
-
-## Regra de primary IP
-
-Para reparo em modo `FULL`:
+A coleta adicional é anônima e somente leitura:
 
 ```text
-primary_ip4/primary_ip6/oob_ip vazio
-→ pode continuar
-
-primary_ip4/primary_ip6/oob_ip apontando para o IP alvo
-→ limpar antes do reassignment
-
-qualquer campo apontando para outro IP
-→ BLOCKED antes do IP move e antes do DELETE
+GET /ISAPI/System/deviceInfo
+ONVIF GetDeviceInformation
 ```
 
-Ordem obrigatória:
+Ela só é tentada em candidatos fortes de CFTV. Não força autenticação, não tenta senha e não executa controle de câmera. Falha ou HTTP 401/403 significa apenas ausência de enriquecimento.
+
+## Coleta industrial
+
+São permitidas somente consultas de identificação read-only por SNMP, Siemens S7 information, EtherNet/IP CIP Identity, BACnet information e Modbus device identification. Não há SNMP SET nem comando de controle de processo.
+
+## Físico versus virtual
+
+Correspondência com `virtualization.vminterface` e inventário central é autoritativa. OUI VMware/Hyper-V/KVM/Xen/VirtualBox sozinho é apenas candidato e nunca autoriza criar Device físico duplicado.
+
+## Virtualização centralizada
+
+Filiais operam como `network_proxy`. Ausência de vCenter local não é falha. A VM nunca é removida pelo pipeline Network.
+
+## Write guard
+
+Antes da primeira escrita, o PLAN mede CREATE, UPDATE_SAFE, REPAIR_SAFE, total e percentual. Limites padrão:
 
 ```text
-revalidar ownership
-→ limpar primary/oob do Device
-→ mover IP para virtualization.vminterface
-→ definir primary IPv4 da VM
-→ remover somente o Device duplicado criado pelo produto
+CREATE: 25
+UPDATE_SAFE: 50
+REPAIR_SAFE: 20
+TOTAL: 75
+PERCENT: 20%
 ```
 
-## Reparo de interface VM
+Impacto acima do limite converte ações elegíveis em BLOCKED/NOOP.
 
-Caminhos aceitos:
+## Preflight global
 
-```text
-MAC VMware corresponde exatamente a uma interface live
-VM única + uma interface sem MAC + MAC VMware forte
-VM única + zero interfaces + MAC VMware forte → criar MGMT
-```
+Antes da escrita:
 
-MAC duplicado, MAC pertencente a outro objeto ou interface ambígua bloqueiam.
+1. recalcular PLAN V9;
+2. validar write guard;
+3. reler Device, VM, interfaces, IPs, MACs e relações;
+4. bloquear drift ou consulta incompleta;
+5. criar journal;
+6. somente então permitir POST/PATCH/DELETE protegido.
 
-## DELETE restrito
+## REPAIR_SAFE e DELETE
 
-Não existe DELETE genérico no Network. A VM nunca é removida.
-
-A única remoção automática é um Device duplicado de VM quando existe ownership integral do produto e ausência de vínculos manuais.
+Não existe DELETE genérico no Network. A VM nunca é removida. O único DELETE automático permitido é Device duplicado de VM integralmente criado pelo produto e sem vínculo manual.
 
 ## Concorrência e rastreabilidade
 
@@ -175,8 +140,8 @@ Network, Hypervisor, Compare e Update compartilham lock global.
 
 - cada runner recebe `run_id`;
 - POST/PATCH/DELETE não recebem retry cego;
-- falha parcial é preservada em journal/report;
-- não executar correções manuais em massa para contornar o produto.
+- falha parcial fica registrada;
+- não usar correções manuais em massa para contornar o produto.
 
 ## Credenciais Hypervisor
 
@@ -188,6 +153,4 @@ Permissão esperada: `0600`.
 
 ## Homologação
 
-`CI PASS` não significa `LIVE PASS`.
-
-Funcionalidade `NOT LIVE` não deve receber scheduler automático.
+`CI PASS` não significa `LIVE PASS`. A primeira execução de uma release no site deve ser dry-run.
