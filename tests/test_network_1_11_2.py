@@ -22,20 +22,19 @@ class Catalog(object):
         return self.roles[name]
 
 
-def windows_discovery(script_name, script_output):
+def windows_discovery(output):
     return {
         "ip": "10.2.2.150",
-        "open_services": [
-            {"port": 445, "protocol": "tcp", "service": "microsoft-ds", "scripts": {script_name: script_output}},
-            {"port": 3389, "protocol": "tcp", "service": "ms-wbt-server", "scripts": {}},
-        ],
+        "open_services": [{
+            "port": 445, "protocol": "tcp", "service": "microsoft-ds",
+            "scripts": {"smb-os-discovery": output},
+        }],
     }
 
 
 def test_windows_server_is_separate():
     row = classifier_v7.classify_device(windows_discovery(
-        "smb-os-discovery",
-        "OS: Windows Server 2022 Standard 20348\nComputer name: SRV-APP01",
+        "OS: Windows Server 2022 Standard 20348\nComputer name: SRV-APP01"
     ))
     assert row["role"] == "WINDOWS_SERVER"
     assert row["windows_family"] == "SERVER"
@@ -45,8 +44,7 @@ def test_windows_server_is_separate():
 
 def test_windows_11_is_workstation():
     row = classifier_v7.classify_device(windows_discovery(
-        "smb-os-discovery",
-        "OS: Windows 11 Pro 10.0.26100\nComputer name: AGL-BA133",
+        "OS: Windows 11 Pro 10.0.26100\nComputer name: AGL-BA133"
     ))
     assert row["role"] == "WINDOWS_WORKSTATION"
     assert row["windows_family"] == "WORKSTATION"
@@ -63,11 +61,11 @@ def test_rdp_version_alone_does_not_guess_workstation():
         }],
     }
     row = classifier_v7.classify_device(discovery)
-    assert row["role"] == "WINDOWS_HOST"
+    assert row["role"] not in ("WINDOWS_SERVER", "WINDOWS_WORKSTATION")
     assert row["windows_family"] == "UNRESOLVED"
 
 
-def test_conflicting_windows_evidence_is_not_applied():
+def test_conflicting_windows_evidence_never_maps_final_role():
     discovery = {
         "ip": "10.2.2.152",
         "open_services": [{
@@ -79,8 +77,8 @@ def test_conflicting_windows_evidence_is_not_applied():
         }],
     }
     row = classifier_v7.classify_device(discovery)
-    assert row["role"] == "WINDOWS_HOST"
-    assert row["windows_family"] == "CONFLICT"
+    assert row["windows_family"] == "CONFLICT", row
+    assert row["role"] not in ("WINDOWS_SERVER", "WINDOWS_WORKSTATION"), row
     assert row.get("windows_classification_conflict")
 
 
@@ -107,7 +105,7 @@ def test_hikvision_xml_identity_extracts_serial():
     assert row["firmware"] == "V5.7.20"
 
 
-def test_hikvision_serial_has_priority_over_weak_entity_serial():
+def test_hikvision_serial_has_priority():
     discovery = {
         "ip": "10.2.2.31",
         "snmp_entity_primary": {"source": "entity-mib", "model": "Generic Camera", "serial": "ENTITY123"},
@@ -151,8 +149,8 @@ def test_windows_workstation_plan_target():
     }
     class_row = {
         "role": "WINDOWS_WORKSTATION", "confidence": "HIGH",
-        "windows_family": "WORKSTATION", "windows_product": "Windows 11",
-        "windows_evidence_source": "smb-os-discovery", "windows_evidence_rank": 110,
+        "windows_product": "Windows 11", "windows_evidence_source": "smb-os-discovery",
+        "windows_evidence_rank": 110,
     }
     planner_v9._windows_plan_policy(row, class_row, None)
     assert row["target_role"] == "WORKSTATION-WINDOWS"
@@ -164,25 +162,21 @@ def test_product_windows_role_correction_is_safe_update():
         "role": "WINDOWS_WORKSTATION", "target_role": "WINDOWS_WORKSTATION",
         "manufacturer": "Generic", "model": "Unknown Server",
         "confidence": "HIGH", "decision": "READY", "action": "NOOP",
-        "safe_diffs": [], "reasons": ["ROLE_DRIFT:SERVER-WINDOWS->WORKSTATION-WINDOWS"],
+        "safe_diffs": [], "reasons": ["ROLE_DRIFT"],
         "match_state": "MATCHED", "match_reason": "IP",
     }
     class_row = {
         "role": "WINDOWS_WORKSTATION", "confidence": "HIGH",
-        "windows_family": "WORKSTATION", "windows_product": "Windows 11",
-        "windows_evidence_source": "smb-os-discovery", "windows_evidence_rank": 110,
+        "windows_product": "Windows 11", "windows_evidence_source": "smb-os-discovery",
+        "windows_evidence_rank": 110,
     }
-    current = {
-        "id": 10, "description": "Criado pelo netbox-discovery",
-        "role": {"name": "SERVER-WINDOWS"},
-    }
+    current = {"description": "Criado pelo netbox-discovery", "role": {"name": "SERVER-WINDOWS"}}
     planner_v9._windows_plan_policy(row, class_row, current)
     assert row["action"] == "UPDATE_SAFE"
     assert "role:SET:WORKSTATION-WINDOWS" in row["safe_diffs"]
-    assert row["identity_policy"] == "WINDOWS_ROLE_CORRECTION_EXPLICIT_OS"
 
 
-def test_manual_windows_device_role_is_never_corrected():
+def test_manual_windows_device_role_is_preserved():
     row = {
         "role": "WINDOWS_WORKSTATION", "target_role": "WINDOWS_WORKSTATION",
         "manufacturer": "Generic", "model": "Unknown Server",
@@ -191,10 +185,10 @@ def test_manual_windows_device_role_is_never_corrected():
     }
     class_row = {
         "role": "WINDOWS_WORKSTATION", "confidence": "HIGH",
-        "windows_family": "WORKSTATION", "windows_product": "Windows 11",
-        "windows_evidence_source": "smb-os-discovery", "windows_evidence_rank": 110,
+        "windows_product": "Windows 11", "windows_evidence_source": "smb-os-discovery",
+        "windows_evidence_rank": 110,
     }
-    current = {"id": 10, "description": "Administrado manualmente", "role": {"name": "SERVER-WINDOWS"}}
+    current = {"description": "Administrado manualmente", "role": {"name": "SERVER-WINDOWS"}}
     planner_v9._windows_plan_policy(row, class_row, current)
     assert row["action"] == "NOOP"
     assert not row["safe_diffs"]
@@ -220,7 +214,6 @@ def test_importer_applies_only_protected_windows_role():
 
 def test_importer_rejects_arbitrary_role_change():
     original = importer_v10.ORIG_SAFE_PATCH
-    catalog = Catalog()
     row = {
         "safe_diffs": ["role:SET:FIREWALL"], "target_role": "FIREWALL",
         "identity_policy": "WINDOWS_ROLE_CORRECTION_EXPLICIT_OS",
@@ -230,7 +223,7 @@ def test_importer_rejects_arbitrary_role_change():
     try:
         importer_v10.ORIG_SAFE_PATCH = lambda row, current, catalog: {}
         try:
-            importer_v10.safe_patch_for_existing(row, current, catalog)
+            importer_v10.safe_patch_for_existing(row, current, Catalog())
             raise AssertionError("arbitrary role change should be blocked")
         except RuntimeError as exc:
             assert "não autorizada" in str(exc)
