@@ -17,7 +17,7 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.10.19"
+          test "$(cat VERSION)" = "1.11.0"
 
       - name: Documentation sync
         run: |
@@ -89,6 +89,9 @@ jobs:
 
       - name: Network 1.10.19 identity quality
         run: python3 tests/test_network_1_10_19.py
+
+      - name: Network 1.11.0 consolidated identity and safety
+        run: python3 tests/test_network_1_11_0.py
 
       - name: Secret sanity check
         run: |
