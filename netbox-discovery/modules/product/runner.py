@@ -10,11 +10,12 @@ import json
 import os
 import subprocess
 import sys
+import uuid
 
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 LOCK_FILE = "/var/lock/netbox-discovery-global.lock"
-RUNNER_VERSION = "2.8-product"
+RUNNER_VERSION = "3.0-product"
 
 
 def utc_stamp():
@@ -27,11 +28,11 @@ def load_cfg():
     return load_config()
 
 
-def run_step(name, cmd, stages):
+def run_step(name, cmd, stages, environment):
     started = datetime.datetime.utcnow().isoformat() + "Z"
     print("===== {0} =====".format(name))
     try:
-        subprocess.check_call(cmd)
+        subprocess.check_call(cmd, env=environment)
         stages.append({"stage": name, "status": "OK", "started": started,
                        "finished": datetime.datetime.utcnow().isoformat() + "Z"})
     except Exception as exc:
@@ -41,17 +42,17 @@ def run_step(name, cmd, stages):
         raise
 
 
-def write_report(site, apply_mode, status, stages, error=""):
+def write_report(site, apply_mode, status, stages, run_id, error=""):
     if not os.path.isdir(REPORTS):
         os.makedirs(REPORTS)
     path = os.path.join(REPORTS, "{0}-run-{1}.json".format(site or "SITE", utc_stamp()))
     import_ok = any(x.get("stage") == "IMPORT_FINALIZE" and x.get("status") == "OK" for x in stages)
-    with open(path, "w") as f:
+    with open(path, "w") as handle:
         json.dump({
-            "stage": "RUN", "runner_version": RUNNER_VERSION,
+            "stage": "RUN", "runner_version": RUNNER_VERSION, "run_id": run_id,
             "status": status, "apply_requested": bool(apply_mode), "site": site,
             "stages": stages, "error": error, "netbox_write": bool(import_ok),
-        }, f, indent=2, sort_keys=True)
+        }, handle, indent=2, sort_keys=True)
     print("RUN REPORT: {0}".format(path))
     return path
 
@@ -67,30 +68,34 @@ def execute(apply_mode):
 
     cfg = load_cfg()
     site = str((cfg.get("discovery") or {}).get("site") or "SITE")
+    run_id = "{0}-{1}-{2}".format(site, utc_stamp(), uuid.uuid4().hex[:8].upper())
+    environment = dict(os.environ)
+    environment["NETBOX_DISCOVERY_RUN_ID"] = run_id
     py = sys.executable
     stages = []
     try:
-        run_step("DISCOVER", [py, os.path.join(BASE, "modules/discovery/network_v4.py")], stages)
-        run_step("CLASSIFY_RECONCILE_PLAN_FINAL", [py, os.path.join(BASE, "modules/inventory/pipeline.py")], stages)
+        print("RUN ID: {0}".format(run_id))
+        run_step("DISCOVER", [py, os.path.join(BASE, "modules/discovery/network_v5.py")], stages, environment)
+        run_step("CLASSIFY_RECONCILE_PLAN_FINAL", [py, os.path.join(BASE, "modules/inventory/pipeline.py")], stages, environment)
         if apply_mode:
-            run_step("IMPORT_FINALIZE", [py, os.path.join(BASE, "modules/importers/importer_v9.py"), "--apply"], stages)
-            run_step("AUDIT_FINALIZE", [py, os.path.join(BASE, "modules/auditors/auditor_v8.py")], stages)
+            run_step("IMPORT_FINALIZE", [py, os.path.join(BASE, "modules/importers/importer_v10.py"), "--apply"], stages, environment)
+            run_step("AUDIT_FINALIZE", [py, os.path.join(BASE, "modules/auditors/auditor_v9.py")], stages, environment)
             audit_files = glob.glob(os.path.join(REPORTS, "{0}-audit-*.json".format(site)))
             status = "PASS"
             if audit_files:
                 audit_path = max(audit_files, key=os.path.getmtime)
                 try:
-                    with open(audit_path, "r") as f:
-                        status = json.load(f).get("status") or "PASS"
+                    with open(audit_path, "r") as handle:
+                        status = json.load(handle).get("status") or "PASS"
                 except Exception:
                     status = "PASS"
         else:
             status = "PLAN_READY"
             print("IMPORT NÃO EXECUTADO: use 'netbox-discovery run --apply' para escrita real.")
-        write_report(site, apply_mode, status, stages)
+        write_report(site, apply_mode, status, stages, run_id)
         return 0
     except Exception as exc:
-        write_report(site, apply_mode, "FAIL", stages, str(exc))
+        write_report(site, apply_mode, "FAIL", stages, run_id, str(exc))
         raise
 
 
@@ -106,10 +111,10 @@ def scheduled():
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Pipeline único netbox-discovery")
-    ap.add_argument("--apply", action="store_true", help="habilita escrita READY no NetBox")
-    ap.add_argument("--scheduled", action="store_true", help="usa automation.enabled/apply do config.yml")
-    args = ap.parse_args(argv)
+    parser = argparse.ArgumentParser(description="Pipeline único netbox-discovery")
+    parser.add_argument("--apply", action="store_true", help="habilita escrita READY no NetBox")
+    parser.add_argument("--scheduled", action="store_true", help="usa automation.enabled/apply do config.yml")
+    args = parser.parse_args(argv)
     if args.scheduled:
         return scheduled()
     return execute(args.apply)
