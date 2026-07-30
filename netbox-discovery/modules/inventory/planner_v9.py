@@ -15,8 +15,13 @@ if BASE not in sys.path:
 from modules.inventory import planner_v8 as v8
 from modules.product import identity
 
-PLANNER_VERSION = "4.9-product"
+PLANNER_VERSION = "5.0-product"
 ORIG_BUILD_PLAN = v8.build_plan
+PRODUCT_DEVICE_DESCRIPTION = "Criado pelo netbox-discovery"
+WINDOWS_ROLE_MAP = {
+    "WINDOWS_SERVER": ("SERVER-WINDOWS", "Windows Server"),
+    "WINDOWS_WORKSTATION": ("WORKSTATION-WINDOWS", "Windows Workstation"),
+}
 
 
 def clean(value):
@@ -25,6 +30,11 @@ def clean(value):
 
 def norm(value):
     return re.sub(r"\s+", " ", clean(value)).strip().casefold()
+
+
+def slugify(value):
+    result = re.sub(r"[^a-z0-9]+", "-", clean(value).casefold()).strip("-")
+    return result[:100] or "item"
 
 
 def norm_ip(value):
@@ -207,6 +217,14 @@ def _attach_observed_identity(row, class_row):
     row["asset_nature_source"] = clean(class_row.get("asset_nature_source"))
     row["identity_provenance"] = class_row.get("identity_provenance") or {}
     row["review_recommendations"] = list(class_row.get("review_recommendations") or [])
+    row["windows_family"] = clean(class_row.get("windows_family"))
+    row["windows_product"] = clean(class_row.get("windows_product"))
+    row["windows_evidence_source"] = clean(class_row.get("windows_evidence_source"))
+    row["windows_evidence"] = list(class_row.get("windows_evidence") or [])
+    row["serial_confidence"] = clean(class_row.get("serial_confidence"))
+    row["serial_candidates"] = list(class_row.get("serial_candidates") or [])
+    row["serial_rejections"] = list(class_row.get("serial_rejections") or [])
+    row["serial_conflict"] = list(class_row.get("serial_conflict") or [])
     if row.get("existing_device_id"):
         row["effective_name"] = clean(row.get("desired_name"))
     else:
@@ -269,6 +287,92 @@ def _oob_parent_guard(row, class_row, serial_index):
         row["ip_intents"] = []
         row["reasons"] = ["OOB_MANAGEMENT_SHOULD_ATTACH_TO_PHYSICAL_PARENT"]
         row["identity_policy"] = "OOB_PARENT_REVIEW"
+
+
+def _strong_windows_source(class_row):
+    source = clean(class_row.get("windows_evidence_source"))
+    rank = int(class_row.get("windows_evidence_rank") or 0)
+    return rank >= 95 and any(token in source for token in (
+        "smb-os-discovery", "smb-system-info", "service-cpe", "os-cpe", "os-fingerprint", "os-class",
+    ))
+
+
+def _windows_plan_policy(row, class_row, current):
+    role = clean(class_row.get("role") or row.get("role"))
+    target = WINDOWS_ROLE_MAP.get(role)
+    if not target:
+        return
+    target_role, target_model = target
+    row["role"] = role
+    row["target_role"] = target_role
+    row["manufacturer"] = clean(row.get("manufacturer")) or "Generic"
+    if not clean(row.get("model")) or norm(row.get("model")) in (
+        "generic windows server", "generic windows workstation", "unknown server", "generic unknown",
+    ):
+        row["model"] = target_model
+    row["windows_role_policy"] = "EXPLICIT_EDITION"
+
+    if not current:
+        return
+    if clean(current.get("description")) != PRODUCT_DEVICE_DESCRIPTION:
+        return
+    if clean(row.get("confidence")) != "HIGH" or not _strong_windows_source(class_row):
+        return
+    if clean(row.get("match_state")) != "MATCHED":
+        return
+    match_reason = clean(row.get("match_reason")).upper()
+    if not any(token in match_reason for token in ("SERIAL", "MAC", "IP")):
+        return
+    current_role = nested_name(current.get("role"))
+    allowed = {"SERVER-WINDOWS", "WORKSTATION-WINDOWS", "WINDOWS_SERVER", "WINDOWS_WORKSTATION"}
+    if not current_role or norm(current_role) == norm(target_role) or current_role.upper() not in allowed:
+        return
+    if clean(row.get("decision")) != "READY":
+        return
+    diffs = [diff for diff in (row.get("safe_diffs") or []) if not clean(diff).startswith("role:SET:")]
+    diffs.append("role:SET:{0}".format(target_role))
+    row["safe_diffs"] = diffs
+    row["action"] = "UPDATE_SAFE"
+    row["reasons"] = [reason for reason in (row.get("reasons") or []) if not clean(reason).startswith("ROLE_DRIFT:")]
+    row["identity_policy"] = "WINDOWS_ROLE_CORRECTION_EXPLICIT_OS"
+    row["windows_role_correction"] = {
+        "from": current_role,
+        "to": target_role,
+        "source": clean(class_row.get("windows_evidence_source")),
+        "product": clean(class_row.get("windows_product")),
+    }
+
+
+def _fix_windows_prerequisites(plan, prereq, state):
+    roles = prereq.setdefault("roles", {})
+    device_types = prereq.setdefault("device_types", {})
+    for key, value in list(roles.items()):
+        if clean(value.get("name")) in WINDOWS_ROLE_MAP:
+            roles.pop(key, None)
+    for key, value in list(device_types.items()):
+        if norm(value.get("model")) in ("generic windows server", "generic windows workstation"):
+            device_types.pop(key, None)
+
+    live_roles = set(norm(item.get("name")) for item in (state.get("roles") or []))
+    live_types = set(
+        (norm(nested_name(item.get("manufacturer"))), norm(item.get("model")))
+        for item in (state.get("device_types") or [])
+    )
+    for row in plan:
+        role = clean(row.get("role"))
+        if role not in WINDOWS_ROLE_MAP:
+            continue
+        target_role, target_model = WINDOWS_ROLE_MAP[role]
+        if norm(target_role) not in live_roles:
+            roles[norm(target_role)] = {"name": target_role, "slug": slugify(target_role)}
+        manufacturer = clean(row.get("manufacturer")) or "Generic"
+        type_key = (norm(manufacturer), norm(target_model))
+        if type_key not in live_types:
+            device_types["{0}|{1}".format(type_key[0], type_key[1])] = {
+                "manufacturer": manufacturer,
+                "model": target_model,
+                "slug": slugify(manufacturer + "-" + target_model),
+            }
 
 
 def _limit(name, default):
@@ -340,9 +444,11 @@ def build_plan(recon, classification, state):
         ip = norm_ip(row.get("primary_ip"))
         class_row = by_ip.get(ip) or {}
         asset = assets.get(clean(row.get("asset_id"))) or {}
+        current = devices.get(row.get("existing_device_id")) if row.get("existing_device_id") else None
 
         _protect_existing_name(row, devices)
         _attach_observed_identity(row, class_row)
+        _windows_plan_policy(row, class_row, current)
         _virtual_candidate_guard(row, class_row)
         _oob_parent_guard(row, class_row, serials)
 
@@ -354,6 +460,7 @@ def build_plan(recon, classification, state):
         if not clean(row.get("asset_nature")):
             row["asset_nature"] = clean(asset.get("asset_nature"))
 
+    _fix_windows_prerequisites(plan, prereq, state)
     _apply_write_guard(plan, state)
     return plan, prereq
 
