@@ -42,25 +42,27 @@ def check(base, package_root=""):
     required = [
         "VERSION", "bin/netbox-discovery", "lib/config.py", "lib/netbox.py",
         "modules/discovery/network.py", "modules/discovery/network_v2.py", "modules/discovery/network_v3.py",
-        "modules/discovery/network_v4.py",
+        "modules/discovery/network_v4.py", "modules/discovery/network_v5.py",
         "modules/inventory/classifier.py", "modules/inventory/classifier_v2.py",
         "modules/inventory/classifier_v3.py", "modules/inventory/classifier_v4.py",
         "modules/inventory/classifier_v5.py", "modules/inventory/classifier_v6.py",
+        "modules/inventory/classifier_v7.py",
         "modules/inventory/reconciler_v2.py", "modules/inventory/reconciler_v3.py",
         "modules/inventory/reconciler_v4.py", "modules/inventory/reconciler_v5.py",
         "modules/inventory/planner_v2.py", "modules/inventory/planner_v3.py",
         "modules/inventory/planner_v4.py", "modules/inventory/planner_v5.py",
         "modules/inventory/planner_v6.py", "modules/inventory/planner_v7.py",
-        "modules/inventory/planner_v8.py",
+        "modules/inventory/planner_v8.py", "modules/inventory/planner_v9.py",
         "modules/inventory/pipeline.py", "modules/importers/importer_v2.py",
         "modules/importers/importer_v3.py", "modules/importers/importer_v4.py", "modules/importers/importer_v5.py",
         "modules/importers/importer_v6.py", "modules/importers/importer_v7.py", "modules/importers/importer_v8.py",
-        "modules/importers/importer_v9.py",
+        "modules/importers/importer_v9.py", "modules/importers/importer_v10.py",
         "modules/auditors/auditor_v2.py", "modules/auditors/auditor_v3.py",
         "modules/auditors/auditor_v4.py", "modules/auditors/auditor_v5.py",
         "modules/auditors/auditor_v6.py", "modules/auditors/auditor_v7.py", "modules/auditors/auditor_v8.py",
+        "modules/auditors/auditor_v9.py",
         "modules/product/configurator_v2.py", "modules/product/runner.py", "modules/product/updater.py",
-        "modules/product/health.py", "modules/product/selftest.py",
+        "modules/product/health.py", "modules/product/selftest.py", "modules/product/identity.py",
         "modules/hypervisor/configurator_v2.py", "modules/hypervisor/deps_vmware.py",
         "modules/hypervisor/engine_v2.py", "modules/hypervisor/engine_v3.py",
         "modules/hypervisor/resolver.py", "modules/hypervisor/structure.py",
@@ -90,7 +92,7 @@ def check(base, package_root=""):
         _check_release_docs(package_root, version, errors)
 
     for root, dirs, files in os.walk(base):
-        dirs[:] = [d for d in dirs if d not in ("vendor", "reports", "logs", "cache", "backups", "__pycache__")]
+        dirs[:] = [name for name in dirs if name not in ("vendor", "reports", "logs", "cache", "backups", "__pycache__")]
         for name in files:
             if not name.endswith(".py"):
                 continue
@@ -117,11 +119,11 @@ def check(base, package_root=""):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="netbox-discovery self-test sem dependência de config.yml")
-    ap.add_argument("--base", default=DEFAULT_BASE)
-    ap.add_argument("--package-root", default="")
-    ap.add_argument("--json", action="store_true")
-    args = ap.parse_args(argv)
+    parser = argparse.ArgumentParser(description="netbox-discovery self-test sem dependência de config.yml")
+    parser.add_argument("--base", default=DEFAULT_BASE)
+    parser.add_argument("--package-root", default="")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
 
     version, errors = check(os.path.abspath(args.base), os.path.abspath(args.package_root) if args.package_root else "")
     result = {"status": "PASS" if not errors else "FAIL", "version": version, "errors": errors}
