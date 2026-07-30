@@ -3,6 +3,7 @@
 from __future__ import print_function
 
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -26,6 +27,16 @@ PHYSICAL_ROLES = {
     "INDUSTRIAL_CONTROLLER", "INDUSTRIAL_DEVICE",
 }
 
+CCTV_MANUFACTURERS = {
+    "Hikvision", "Dahua", "Intelbras", "Axis Communications", "Vivotek",
+    "Uniview", "Reolink", "Hanwha Vision", "Bosch Security Systems",
+    "Ubiquiti", "TP-Link",
+}
+
+SERIAL_PLACEHOLDERS = {
+    "03000000",  # Pantum live evidence: factory/default value, not asset identity.
+}
+
 
 def clean(value):
     return "" if value is None else str(value).strip()
@@ -40,6 +51,73 @@ def _candidate_rank(candidate):
     )
 
 
+def _script_names(discovery):
+    values = []
+    for service in discovery.get("open_services") or []:
+        for name in (service.get("scripts") or {}).keys():
+            low = clean(name).lower()
+            if low and low not in values:
+                values.append(low)
+    return values
+
+
+def _valid_cctv_candidate(discovery, candidate):
+    """Reject generic WS-Discovery/UPnP and arbitrary MAC OUI as CCTV proof."""
+    if not candidate:
+        return False
+    source = clean(candidate.get("source"))
+    model = clean(candidate.get("model"))
+    manufacturer = identity.canonical_manufacturer(candidate.get("manufacturer"))
+    text = identity.norm(identity.evidence_text(discovery))
+    scripts = _script_names(discovery)
+
+    explicit_video = any(token in text for token in (
+        "networkvideotransmitter", "networkvideorecorder",
+        "network video transmitter", "network video recorder",
+        "network camera", "ip camera", "video encoder",
+        " type:camera", " type:nvr", " type:dvr", "/onvif/",
+    ))
+    onvif_script = any("onvif" in name for name in scripts)
+
+    if source == "onvif-device-information":
+        return bool(onvif_script or explicit_video or "onvif" in text)
+
+    if source == "cctv-fingerprint":
+        if model:
+            return True
+        if manufacturer not in CCTV_MANUFACTURERS:
+            return False
+        rtsp_signal = "rtsp" in text or any("rtsp" in name for name in scripts)
+        return bool(explicit_video or onvif_script or (rtsp_signal and manufacturer in CCTV_MANUFACTURERS))
+
+    return False
+
+
+def _normalize_model(manufacturer, model):
+    value = re.sub(r"\s+", " ", clean(model)).strip()
+    vendor = identity.canonical_manufacturer(manufacturer)
+    if vendor == "Kyocera":
+        match = re.search(r"\b(ECOSYS|TASKalfa)\s+([A-Z0-9][A-Z0-9._-]*)", value, re.I)
+        if match:
+            family = "ECOSYS" if match.group(1).lower() == "ecosys" else "TASKalfa"
+            return "{0} {1}".format(family, match.group(2))[:120]
+    return value[:120]
+
+
+def _sanitize_identity(out):
+    out["model"] = _normalize_model(out.get("manufacturer"), out.get("model"))
+    serial = identity.norm_serial(out.get("serial"))
+    if serial in SERIAL_PLACEHOLDERS:
+        out["serial"] = ""
+        out["serial_source"] = "rejected-placeholder"
+        evidence = list(out.get("evidence") or [])
+        marker = "Rejected placeholder serial: {0}".format(serial)
+        if marker not in evidence:
+            evidence.append(marker)
+        out["evidence"] = evidence
+    return out
+
+
 def classify_device(discovery):
     out = ORIG_CLASSIFY_DEVICE(discovery)
 
@@ -48,7 +126,7 @@ def classify_device(discovery):
     cctv = identity.cctv_identity(discovery)
     if industrial:
         candidates.append(industrial)
-    if cctv:
+    if _valid_cctv_candidate(discovery, cctv):
         candidates.append(cctv)
 
     if candidates:
@@ -66,6 +144,7 @@ def classify_device(discovery):
             for row in candidates
         ]
 
+    _sanitize_identity(out)
     identity.apply_observed_metadata(discovery, out)
 
     nature = clean(out.get("asset_nature"))
