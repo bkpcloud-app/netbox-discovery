@@ -9,6 +9,7 @@ if BASE not in sys.path:
     sys.path.insert(0, BASE)
 
 from modules.product import identity
+from modules.inventory import classifier_v7
 from modules.inventory import planner_v9
 from modules.importers import importer_v10
 
@@ -54,6 +55,41 @@ def test_onvif_camera_identity():
     assert row["manufacturer"] == "Hikvision"
     assert row["model"] == "DS-2CD2143G2-I"
     assert row["serial"] == "ABC123456"
+    assert classifier_v7._valid_cctv_candidate(discovery, row)
+
+
+def test_generic_wsdd_is_not_cctv():
+    discovery = {
+        "mac_vendor": "Dell",
+        "open_services": [{
+            "port": 3702, "protocol": "udp",
+            "scripts": {"wsdd-discover": "Device address: http://10.2.1.92/wsman"},
+        }],
+    }
+    row = identity.cctv_identity(discovery)
+    assert row
+    assert classifier_v7._valid_cctv_candidate(discovery, row) is False
+
+
+def test_arbitrary_mac_vendor_is_not_cctv():
+    discovery = {
+        "mac_vendor": "Seagate Cloud Systems",
+        "open_services": [{"port": 80, "protocol": "tcp", "service": "http"}],
+    }
+    row = identity.cctv_identity(discovery)
+    assert row
+    assert classifier_v7._valid_cctv_candidate(discovery, row) is False
+
+
+def test_kyocera_model_is_normalized():
+    assert classifier_v7._normalize_model("Kyocera", "ECOSYS M3655idn ECOSYS") == "ECOSYS M3655idn"
+
+
+def test_placeholder_printer_serial_is_rejected():
+    row = {"manufacturer": "Pantum", "model": "BM5100FDW", "serial": "03000000", "evidence": []}
+    classifier_v7._sanitize_identity(row)
+    assert row["serial"] == ""
+    assert row["serial_source"] == "rejected-placeholder"
 
 
 def test_virtual_mac_is_candidate_not_confirmation():
@@ -113,15 +149,33 @@ def test_delegated_vm_details_from_ip_owner():
     assert row["identity_policy"] == "CENTRALIZED_HYPERVISOR_AUTHORITY"
 
 
+def test_delegated_vm_keeps_partial_nested_reference():
+    row = {"primary_ip": "10.2.1.25", "decision": "DELEGATED", "reasons": []}
+    state = {
+        "ips": [{
+            "id": 10, "address": "10.2.1.25/24",
+            "assigned_object_type": "virtualization.vminterface",
+            "assigned_object": {"id": 20, "name": "Ethernet0", "virtual_machine": {"id": 30, "name": "SRV-BKP-BA"}},
+        }],
+        "vm_interfaces": [], "virtual_machines": [], "macs": [],
+    }
+    planner_v9._delegated_details(row, state)
+    assert row["delegation_status"] == "PASS_PARTIAL"
+    assert row["delegated_target"]["vm_name"] == "SRV-BKP-BA"
+    assert row["delegated_target"]["details_complete"] is False
+
+
 def test_write_guard_blocks_abnormal_change():
     rows = [
         {"decision": "READY", "action": "CREATE", "reasons": [], "interfaces": [1], "ip_intents": [1]}
-        for _ in range(101)
+        for _ in range(26)
     ]
     planner_v9._apply_write_guard(rows, {"devices": [{"id": pos} for pos in range(200)]})
     assert all(row["decision"] == "BLOCKED" for row in rows)
     assert all(row["action"] == "NOOP" for row in rows)
     assert rows[0]["write_guard"]["status"] == "BLOCK"
+    assert rows[0]["write_guard"]["limits"]["CREATE"] == 25
+    assert rows[0]["write_guard"]["limits"]["PERCENT"] == 20
 
 
 def test_importer_rejects_name_payload():
