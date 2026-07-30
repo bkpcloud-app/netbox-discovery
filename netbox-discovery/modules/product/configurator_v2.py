@@ -49,8 +49,22 @@ def sync_scheduler(enabled, schedule):
         subprocess.call(["systemctl", "disable", "--now", unit])
 
 
+def _ensure_execution_mode(path):
+    text = open(path, "r").read()
+    if "\nproduct:\n" not in "\n" + text:
+        text += "\nproduct:\n  execution_role: network_proxy\n"
+    if "\nvirtualization:\n" not in "\n" + text:
+        text += "\nvirtualization:\n  mode: centralized\n"
+    tmp = path + ".mode.tmp"
+    with open(tmp, "w") as handle:
+        handle.write(text.rstrip() + "\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
 def write_config(values):
     ORIG_WRITE_CONFIG(values)
+    _ensure_execution_mode(base.CONFIG_FILE)
     sync_scheduler(bool(values.get("automation_enabled")), values.get("schedule") or "daily")
 
 
@@ -70,8 +84,6 @@ def _related_id(value):
 
 
 def _tenant_group_for(cfg):
-    # Tenant Group is always explicit. Environment may override for automated
-    # deployment, otherwise only config.yml controls the relationship.
     env_group = clean(os.environ.get("NETBOX_DISCOVERY_TENANT_GROUP"))
     if env_group:
         return env_group
@@ -95,10 +107,7 @@ def ensure_netbox_structure():
     if group_name:
         group = _query_name(nb, "tenancy/tenant-groups/", group_name)
         if group is None:
-            group = nb.post("tenancy/tenant-groups/", {
-                "name": group_name,
-                "slug": slugify(group_name),
-            })
+            group = nb.post("tenancy/tenant-groups/", {"name": group_name, "slug": slugify(group_name)})
             print("Tenant Group {0}: CRIADO ID={1}".format(group_name, group.get("id")))
         else:
             print("Tenant Group {0}: OK ID={1}".format(group_name, group.get("id")))
@@ -128,10 +137,7 @@ def ensure_netbox_structure():
     site = _query_name(nb, "dcim/sites/", site_name)
     if site is None:
         site = nb.post("dcim/sites/", {
-            "name": site_name,
-            "slug": slugify(site_name),
-            "status": "active",
-            "tenant": tenant["id"],
+            "name": site_name, "slug": slugify(site_name), "status": "active", "tenant": tenant["id"],
         })
         print("Site {0}: CRIADO ID={1}".format(site_name, site.get("id")))
     else:
