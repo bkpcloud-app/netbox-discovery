@@ -14,13 +14,19 @@ if PROJECT_ROOT not in sys.path:
 from modules.discovery import network as base
 from modules.discovery import network_v2 as v2
 from modules.discovery import network_v3 as v3
+from modules.product import identity
 
-DISCOVERY_WRAPPER_VERSION = "4.3-product"
+DISCOVERY_WRAPPER_VERSION = "4.4-product"
 PRT_GENERAL_ROOT = ".1.3.6.1.2.1.43.5.1.1"
 PRT_NAME_COLUMN = "16"
 PRT_SERIAL_COLUMN = "17"
 HR_DEVICE_DESCR = ".1.3.6.1.2.1.25.3.2.1.3"
 ORIG_PROBE_SNMP_ENTITY = v2.probe_snmp_entity
+
+SERIAL_PLACEHOLDERS = {
+    "03000000", "12345678", "123456789", "1234567890", "0123456789",
+    "00000001", "99999999", "XXXXXXXX", "TEST", "DEMO",
+}
 
 
 def clean(value):
@@ -98,6 +104,59 @@ def _printer_model(text, manufacturer):
     return _first(patterns.get(manufacturer, []), clean(text))
 
 
+def _serial_valid(value, context=""):
+    serial = identity.norm_serial(value)
+    if not serial or serial in SERIAL_PLACEHOLDERS:
+        return ""
+    if len(serial) < 5 or len(serial) > 64:
+        return ""
+    if len(set(serial)) == 1:
+        return ""
+    if serial in ("ABCDEF", "ABCDEFG", "ABCDEFGHIJ"):
+        return ""
+    compact_context = identity.norm_serial(context)
+    if compact_context and serial == compact_context:
+        return ""
+    return serial
+
+
+def _extract_labeled_serials(text):
+    values = []
+    patterns = (
+        r"(?:Serial(?:\s+Number|\s+No\.?|Number)?|Device\s+Serial(?:\s+No\.?)?|S/N)\s*[:=#-]\s*([A-Za-z0-9][A-Za-z0-9._/-]{3,63})",
+        r"<(?:serialNumber|SerialNumber|SerialNO|serialNo)>\s*([^<]{4,64})\s*</",
+        r"[\"'](?:serialNumber|serial_no|serialNo|SerialNO)[\"']\s*:\s*[\"']([^\"']{4,64})[\"']",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, clean(text), re.I):
+            value = clean(match.group(1))
+            if value and value not in values:
+                values.append(value)
+    return values
+
+
+def _best_printer_serial(raw_serials, text, manufacturer, model, name):
+    candidates = []
+
+    def add(value, source, rank):
+        serial = _serial_valid(value, model or name or manufacturer)
+        if not serial:
+            return
+        key = (serial, source)
+        if key not in [(row[0], row[1]) for row in candidates]:
+            candidates.append((serial, source, rank))
+
+    for value in raw_serials:
+        add(value, "printer-mib", 100)
+    for value in _extract_labeled_serials(text):
+        add(value, "printer-description", 88)
+
+    candidates.sort(key=lambda row: (row[2], len(row[0])), reverse=True)
+    if not candidates:
+        return "", [], ""
+    return candidates[0][0], [row[0] for row in candidates], candidates[0][1]
+
+
 def _printer_entity(ip, snmp):
     if not snmp.get("available"):
         return {}
@@ -112,12 +171,14 @@ def _printer_entity(ip, snmp):
     hr_values = [clean(value) for oid, value_type, value in hr_rows if base.valid_snmp_value(value)]
     text = " ".join([
         clean(snmp.get("sysname")), clean(snmp.get("sysdescr")),
-        " ".join(names), " ".join(hr_values),
+        " ".join(names), " ".join(hr_values), " ".join(serials),
     ])
     manufacturer = _printer_manufacturer(text)
     model = _printer_model(text, manufacturer)
     name = names[0] if names else clean(snmp.get("sysname"))
-    serial = serials[0] if serials else ""
+    serial, serial_candidates, serial_source = _best_printer_serial(
+        serials, text, manufacturer, model, name,
+    )
 
     return {
         "index": "printer-mib:1",
@@ -140,7 +201,9 @@ def _printer_entity(ip, snmp):
         "management_ip": ip,
         "printer_mib_name": name,
         "printer_mib_serial": serial,
-        "printer_mib_text": text[:500],
+        "printer_mib_serial_source": serial_source,
+        "printer_mib_serial_candidates": serial_candidates,
+        "printer_mib_text": text[:1000],
     }
 
 
