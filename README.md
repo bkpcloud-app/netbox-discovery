@@ -2,130 +2,94 @@
 
 Produto BKPCLOUD para descoberta, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.11.0 — PRODUCT V1  
+**Versão atual:** 1.11.2 — PRODUCT V1  
 **Distribuição:** repositório público oficial `bkpcloud-app/netbox-discovery`  
 **Canal padrão:** `stable`  
 **NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
 
 > A documentação faz parte da release. O self-test e o CI bloqueiam publicação quando os documentos obrigatórios divergem do `VERSION`.
 
-## Pipelines
-
-### Network
+## Atualização e primeira execução
 
 ```bash
+netbox-discovery update run
+netbox-discovery version
+netbox-discovery self-test
 netbox-discovery run
-netbox-discovery run --apply
 ```
 
+`netbox-discovery run` é sempre dry-run. A escrita só ocorre com `netbox-discovery run --apply` depois da revisão do PLAN.
+
+## Pipeline Network
+
 ```text
-DISCOVER V5
-→ CLASSIFY V7
+DISCOVER V5 / 4.5-product
+→ CLASSIFY V7 / 5.3-product
 → RECONCILE V5
-→ PLAN V9
-→ WRITE GUARD + PREFLIGHT GLOBAL FINALIZE
-→ IMPORT READY normal V10
+→ PLAN V9 / 5.0-product
+→ WRITE GUARD + PREFLIGHT GLOBAL
+→ IMPORT V10 / 5.9-product
 → MAC RECONCILE
 → REPAIR_SAFE
 → AUDIT FINALIZE V9
 ```
 
-### Hypervisor centralizado
+## Windows Server x Workstation
 
-O inventário de virtualização pode ser executado no coletor central. Proxies de filial usam `execution_role: network_proxy` e consultam os objetos já existentes no NetBox; não precisam configurar nem executar vCenter localmente.
-
-```bash
-netbox-discovery hypervisor configure
-netbox-discovery hypervisor check
-netbox-discovery hypervisor run
-netbox-discovery hypervisor run --compare
-netbox-discovery hypervisor run --apply
-netbox-discovery hypervisor status
-```
-
-## 1.11.0 — identidade consolidada, autoridade e segurança
-
-A 1.11.0 reúne em uma única release as melhorias de descoberta, classificação, reconciliação, nomes, virtualização, aplicação e auditoria.
-
-### Motor único de identidade
-
-`modules/product/identity.py` concentra:
-
-- normalização e proveniência de fabricante, modelo, serial e firmware;
-- `discovery_uid` estável por serial, chassis ou MAC;
-- nome observado separado do nome efetivo administrado no NetBox;
-- natureza física, virtual confirmada, candidata virtual ou desconhecida;
-- recomendações objetivas para ativos em REVIEW.
-
-### Equipamentos industriais
-
-O classificador interpreta evidências estruturadas e read-only de:
+A versão 1.11.2 separa explicitamente no NetBox:
 
 ```text
-Siemens S7
-EtherNet/IP / CIP Identity
-BACnet
-Modbus Device Identification
-SNMP sysObjectID / ENTITY-MIB
+Windows Server                 → SERVER-WINDOWS
+Windows 11/10/8/7 Workstation → WORKSTATION-WINDOWS
 ```
 
-Quando o protocolo fornece dados, o inventário mantém fabricante, modelo, serial, firmware, função industrial e fonte da evidência. Sem prova suficiente, continua genérico e vai para REVIEW; o produto não inventa modelo.
-
-### Câmeras, NVRs e DVRs
-
-ONVIF/WS-Discovery e fingerprints conhecidos distinguem câmera, NVR, DVR, encoder e equipamento de videomonitoramento ainda não resolvido. Fabricante, modelo, serial e firmware são utilizados quando realmente retornados pelo equipamento.
-
-### Físico versus virtual
-
-A correspondência com `virtualization.vminterface` no NetBox é autoritativa. OUI VMware, Hyper-V, KVM, Xen ou VirtualBox sozinho gera apenas `VIRTUAL_CANDIDATE`; nunca confirma uma VM nem autoriza criar um Device físico duplicado.
-
-### Virtualização centralizada
-
-Itens já pertencentes a VMs aparecem como `DELEGATED_VM/PASS`, incluindo VM, interface, MAC, cluster, host físico, site e forma de correlação. A filial não executa vCenter local.
-
-### Nomes no NetBox
+A separação só ocorre quando a edição é comprovada por evidência forte, como:
 
 ```text
-Device existente no NetBox → nome protegido
-Nome observado por SNMP/ONVIF/DNS → registrado separadamente
-PATCH automático de name → proibido no importer
+smb-os-discovery
+smb-system-info
+CPE de serviço Windows
+fingerprint de SO com alta precisão
 ```
 
-Nomes genéricos criados pelo produto podem ter identidade técnica enriquecida, mas um nome alterado manualmente não é desfeito pelo schedule.
+Portas Windows ou uma versão genérica de RDP não bastam para decidir. Sem prova, o ativo permanece `WINDOWS_HOST` em REVIEW. Evidências fortes conflitantes também permanecem em REVIEW.
 
-### Nomes SNMP repetidos
+A correção automática de role de um Device existente exige simultaneamente:
 
-Equipamentos físicos HIGH com `sysName` igual podem coexistir quando serial ou MAC demonstram identidades distintas. O PLAN usa sufixo determinístico por serial/MAC e mantém o `sysName` como nome observado.
+- Device criado pelo `netbox-discovery`;
+- match forte por serial, MAC ou IP;
+- confiança HIGH;
+- edição comprovada por SMB/CPE/fingerprint forte;
+- role atual dentro da família Windows Server/Workstation.
 
-### iDRAC e gerenciamento OOB
+Device manual nunca recebe troca automática de role.
 
-Quando o service tag identifica um servidor físico existente, o PLAN apresenta o pai provável e mantém o OOB em REVIEW até uma associação segura, evitando criar um servidor independente por engano.
+## Qualidade de serial
 
-### Write guard
-
-Antes do APPLY, o PLAN mede CREATE, UPDATE_SAFE, REPAIR_SAFE e percentual de mudança. Um volume anormal transforma os itens elegíveis em BLOCKED antes da primeira escrita. O importer recalcula o PLAN V9 imediatamente antes de escrever.
-
-Limites podem ser ajustados por ambiente:
+O produto reúne candidatos de serial vindos de:
 
 ```text
-NETBOX_DISCOVERY_MAX_CREATE
-NETBOX_DISCOVERY_MAX_UPDATE
-NETBOX_DISCOVERY_MAX_REPAIR
-NETBOX_DISCOVERY_MAX_TOTAL_CHANGES
-NETBOX_DISCOVERY_MAX_CHANGE_PERCENT
+ONVIF / Hikvision ISAPI
+Printer-MIB
+FibreAlliance / storage
+Dell iDRAC service tag
+Siemens S7, EtherNet/IP, BACnet e Modbus
+ENTITY-MIB e descrições SNMP explícitas
 ```
 
-### Run ID
+A seleção considera a autoridade da fonte. São rejeitados:
 
-Cada execução completa recebe um `run_id` único no relatório do runner para rastreabilidade operacional.
+- valores padrão, de teste ou placeholders;
+- serial curto demais, longo demais ou repetitivo;
+- IP ou MAC usado como serial;
+- valor igual ao modelo ou nome do equipamento;
+- candidatos fortes conflitantes.
 
-## 1.10.19 — qualidade de identidade do inventário
+O PLAN registra `serial_candidates`, `serial_rejections`, `serial_confidence` e `serial_conflict`. Serial conflitante não é gravado.
 
-A 1.10.19 introduziu Printer-MIB, Moxa NPort 5210, nomes SNMP repetidos com identidade forte e preservação de Device Type específico diante de perda transitória de evidência.
+## Impressoras
 
-### Impressoras
-
-O DISCOVER consulta Printer-MIB de forma read-only e incorpora, quando disponíveis:
+A coleta read-only usa:
 
 ```text
 prtGeneralPrinterName
@@ -133,45 +97,61 @@ prtGeneralSerialNumber
 hrDeviceDescr
 ```
 
-Um Device criado pelo produto com tipo genérico só pode receber um Device Type exato quando há match forte, confiança HIGH e fabricante/modelo explícitos. Device manual ou tipo não genérico nunca é substituído automaticamente.
+Ela avalia todos os candidatos de serial, rejeita valores padrão e normaliza fabricante/modelo. Um nome manual existente no NetBox continua protegido.
 
-### Moxa NPort 5210
+## Hikvision e CFTV
 
-```text
-sysObjectID: .1.3.6.1.4.1.8691.2.7
-Role: INDUSTRIAL_COMMUNICATION
-Manufacturer: Moxa
-Model: NPort 5210
-Confidence: HIGH
-```
-
-### Preservação da identidade existente
-
-Quando uma coleta momentânea perde evidência, mas SERIAL/MAC/IP apontam para um Device existente com identidade não genérica, o PLAN mantém o objeto live:
+CFTV exige evidência específica; fabricante por MAC ou uma página web genérica não bastam. Para candidatos fortes, a coleta tenta de forma read-only e sem credencial:
 
 ```text
-LIVE_IDENTITY_PRESERVED_OVER_WEAK_OBSERVATION
+Hikvision ISAPI /ISAPI/System/deviceInfo
+ONVIF GetDeviceInformation
 ```
 
-## 1.10.18 — liberar primary IP antes de transferir o endereço
+Quando o equipamento permite consulta anônima, o produto obtém fabricante, modelo, firmware, serial, hardware ID e nome. Quando exige autenticação, nenhum serial é inventado e o ativo continua em REVIEW com a evidência disponível.
 
-O reparo de Device duplicado de VM limpa primeiro a referência primary/oob do Device, depois move o IP para `virtualization.vminterface`, define primary IPv4 da VM quando necessário e só então remove o Device integralmente criado pelo produto.
+## Industrial
 
-## Caminhos de REPAIR_SAFE
+O classificador interpreta evidências read-only de Siemens S7, EtherNet/IP/CIP, BACnet, Modbus Device Identification, SNMP sysObjectID e ENTITY-MIB. Modelo e função só são elevados com prova estruturada.
+
+## Virtualização centralizada
+
+Filiais usam:
+
+```yaml
+product:
+  execution_role: network_proxy
+virtualization:
+  mode: centralized
+```
+
+O coletor central mantém vCenter, clusters, hosts, VMs, interfaces e IPs. A descoberta da filial consulta o NetBox e marca IPs de VM como `DELEGATED_VM/PASS`; não cria Device físico duplicado.
+
+## Autoridade de nomes
 
 ```text
-1. MAC VMware corresponde exatamente a uma interface live
-2. VM única + uma interface sem MAC + MAC VMware forte
-3. VM única + zero interfaces + MAC VMware forte → criar MGMT protegida
+Device existente no NetBox → nome protegido
+Nome SNMP/ONVIF/DNS       → observado separadamente
+PATCH automático de name  → proibido no importer
 ```
 
-Todos os caminhos exigem:
+## Colisão de sysName
 
-- Device, interfaces e IP criados pelo produto;
-- nenhum serial, rack, location, cluster, cabo ou objeto relacionado;
-- exatamente um IP observado;
-- VM inequívoca e sem outro primary IPv4;
-- MAC VMware único e sem ownership conflitante.
+Dois equipamentos físicos HIGH podem publicar o mesmo `sysName` quando serial ou MAC provam identidades distintas. O nome efetivo recebe sufixo determinístico e o `sysName` original permanece como nome observado.
+
+## Write guard
+
+Limites padrão:
+
+```text
+CREATE:      25
+UPDATE_SAFE: 50
+REPAIR_SAFE: 20
+TOTAL:       75
+PERCENT:     20%
+```
+
+Impacto anormal transforma todas as ações elegíveis em `BLOCKED/NOOP` antes da primeira escrita.
 
 ## Segurança operacional
 
@@ -180,17 +160,10 @@ netbox-discovery run          = dry-run
 netbox-discovery run --apply  = escrita somente de READY
 DELEGATED / REVIEW / BLOCKED  = não escrevem
 DELETE de VM                  = proibido
-DELETE de Device              = somente REPAIR_SAFE com ownership integral do produto
+Nome manual                   = protegido
 ```
 
 Network, Hypervisor, Compare e Update compartilham lock global. POST/PATCH/DELETE não recebem retry cego.
-
-## Dell PowerVault MD32xx
-
-```text
-sysObjectID = .1.3.6.1.4.1.674.10893.2.31
-2 endpoints válidos → 1 Device STORAGE com MGMT + MGMT-2
-```
 
 ## Caminhos
 
@@ -199,10 +172,10 @@ Aplicação:              /opt/netbox-discovery
 Configuração principal: /opt/netbox-discovery/config.yml
 Config Hypervisor:      /etc/netbox-discovery/hypervisors.json
 Relatórios:             /opt/netbox-discovery/reports
-Backups:                /opt/netbox-discovery/backups
+Backups de update:      /var/lib/netbox-discovery/update-backups
 Lock global:            /var/lock/netbox-discovery-global.lock
 ```
 
 ## Homologação
 
-**CI PASS não equivale a LIVE PASS.** Estado oficial em `docs/HOMOLOGACAO.md`.
+**CI PASS não equivale a LIVE PASS.** O primeiro uso de cada release no site deve ser `netbox-discovery run`, sem `--apply`. Estado oficial em `docs/HOMOLOGACAO.md`.

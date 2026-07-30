@@ -86,10 +86,19 @@ def test_kyocera_model_is_normalized():
 
 
 def test_placeholder_printer_serial_is_rejected():
-    row = {"manufacturer": "Pantum", "model": "BM5100FDW", "serial": "03000000", "evidence": []}
-    classifier_v7._sanitize_identity(row)
+    discovery = {
+        "ip": "10.2.2.92",
+        "snmp_entity_primary": {
+            "source": "printer-mib", "manufacturer": "Pantum",
+            "model": "BM5100FDW", "serial": "03000000",
+            "printer_mib_serial": "03000000",
+        },
+        "open_services": [{"port": 9100, "protocol": "tcp", "service": "jetdirect"}],
+    }
+    row = classifier_v7.classify_device(discovery)
     assert row["serial"] == ""
-    assert row["serial_source"] == "rejected-placeholder"
+    assert row["serial_confidence"] == "NONE"
+    assert any(item["reason"] == "known-placeholder" for item in row["serial_rejections"])
 
 
 def test_virtual_mac_is_candidate_not_confirmation():
@@ -196,7 +205,7 @@ def main():
     for test in tests:
         test()
         print("PASS", test.__name__)
-    print("ALL 1.11.0 CONSOLIDATED TESTS PASSED")
+    print("ALL 1.11 CONSOLIDATED TESTS PASSED")
 
 
 if __name__ == "__main__":

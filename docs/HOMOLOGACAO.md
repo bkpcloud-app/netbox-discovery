@@ -1,10 +1,10 @@
-# netbox-discovery 1.11.0 — Matriz de Homologação
+# netbox-discovery 1.11.2 — Matriz de Homologação
 
 ## Estados
 
 ```text
 LIVE PASS     = validado ao vivo com evidência
-LIVE PARTIAL  = parte relevante validada, fluxo completo pendente
+LIVE PARTIAL  = parte relevante validada
 CI PASS       = regressões automatizadas passaram
 NOT LIVE      = ainda não validado ao vivo
 ```
@@ -13,7 +13,7 @@ CI PASS não equivale a LIVE PASS.
 
 ## Hypervisor central
 
-**Estado:** LIVE PASS.
+**Estado anterior:** LIVE PASS.
 
 ```text
 Objetos comparados: 282
@@ -24,108 +24,69 @@ AMBIGUOUS: 0
 COMPARE STATUS: OK
 ```
 
-O coletor central continua responsável pelos vCenters. A release 1.11.0 não exige hypervisor local nas filiais.
+O coletor central continua responsável pelos vCenters. Filiais não executam hypervisor local.
 
-## Network — Site DCM
+## FBA — linha de base
 
-**Estado anterior:** LIVE PASS em 29/07/2026 com a 1.10.18.
-
-```text
-ownership Hypervisor → PASS
-Dell switches → PASS
-MD32xx multi-endpoint → PASS
-ME4/ME5 storage → PASS
-preflight global → PASS
-IMPORT normal → PASS
-MAC RECONCILE → PASS
-REPAIR_SAFE de Device duplicado de VM → PASS
-idempotência → PASS
-Assets FAIL: 0
-Checks FAIL: 0
-```
-
-A 1.11.0 ainda precisa de novo dry-run antes de qualquer APPLY no DCM.
-
-## Network — Site FBA, linha de base
-
-**Estado do ciclo 1.10.18:** LIVE PASS em 29/07/2026.
+**Ciclo 1.10.18:** LIVE PASS em 29/07/2026.
 
 ```text
 Hosts ativos: 288
 Assets reconciliados: 283
-Devices antes: 175
-READY: 175
-REVIEW: 69
-BLOCKED: 2
-READY/CREATE: 4
-READY/UPDATE_SAFE: 0
-READY/NOOP: 171
+Devices após APPLY: 179
 DELEGATED/HYPERVISOR: 37
-```
-
-### APPLY de referência
-
-```text
-PREFLIGHT GLOBAL FINALIZE: OK
-Assets READY processados: 175/175
-Runtime blocked: 0
-Erros: 0
-MAC RECONCILE: PASS
-Devices após: 179
-```
-
-### Audit de referência
-
-```text
-Status: PASS_WITH_WARNINGS
-Assets PASS: 170
-Assets WARN: 5
 Assets FAIL: 0
-Checks PASS: 1809
-Checks WARN: 11
 Checks FAIL: 0
-READY/CREATE posterior: 0
-READY/UPDATE_SAFE posterior: 0
-READY/NOOP posterior: 175
 ```
 
-## Network 1.11.0 — consolidação
+**Dry-run 1.11.0 em 30/07/2026:** LIVE PARTIAL.
 
-**Estado:** CI/NOT LIVE até dry-run e APPLY controlado no FBA.
+```text
+Hosts ativos: 290
+Assets planejados: 285
+READY/CREATE: 5
+READY/UPDATE_SAFE: 10
+DELEGATED_VM: 37
+REVIEW: 64
+BLOCKED: 0
+WRITE GUARD: PASS
+NetBox write: NÃO
+```
+
+Esse dry-run confirmou nomes SNMP repetidos, Printer-MIB, virtualização centralizada e write guard, mas também revelou falsos positivos de CFTV, modelo repetido de Kyocera, serial placeholder Pantum e detalhes parciais de VM. Esses pontos foram corrigidos antes da 1.11.2.
+
+## Estado da 1.11.2
+
+**Estado:** CI/NOT LIVE até novo dry-run no FBA.
 
 ### Funções cobertas por regressão
 
 ```text
-Siemens S7 estruturado
-EtherNet/IP CIP Identity
-ONVIF camera identity
-OUI virtual como candidato, nunca confirmação isolada
-hardware físico forte prevalece sobre indício de OUI virtual
-Discovery UID estável por serial
-nome existente no NetBox preservado
-VIRTUAL_CANDIDATE não cria Device físico
-DELEGATED_VM mostra VM/interface/cluster/host
-write guard bloqueia volume anormal
-importer rejeita PATCH de name
+Windows Server separado de Windows Workstation
+Windows 11 → WORKSTATION-WINDOWS
+Windows Server 2022 → SERVER-WINDOWS
+RDP genérico não decide edição
+conflito de edição não altera role
+Device manual não recebe correção automática
+serial placeholder rejeitado
+serial forte conflitante bloqueado
+Printer-MIB escolhe serial válido
+Hikvision/ONVIF extrai modelo, firmware e serial
+CFTV genérico não classifica Dell/Seagate como câmera
+nome existente permanece protegido
+VM central permanece DELEGATED
+write guard bloqueia impacto anormal
 ```
 
-### Primeira etapa obrigatória: instalação controlada da branch
+## Atualização obrigatória
 
-A 1.11.0 não deve ser mesclada no canal `main/stable` antes do teste live. Na FBA, instalar diretamente a branch do PR:
+A release será distribuída pelo canal `stable`. Não usar instalador manual.
 
 ```bash
-cd /tmp
-rm -f install-from-github.sh
-curl -fsSL -o install-from-github.sh \
-  https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh
-chmod +x install-from-github.sh
-NETBOX_DISCOVERY_REF=agent/netbox-discovery-1.11.0-consolidation \
-  ./install-from-github.sh
+netbox-discovery update run
 ```
 
-A instalação preserva a configuração operacional existente conforme as proteções do bootstrap/updater.
-
-### Segunda etapa obrigatória: dry-run
+Depois:
 
 ```bash
 netbox-discovery version
@@ -136,34 +97,38 @@ netbox-discovery run
 
 Não usar `--apply` antes de revisar o relatório.
 
-### Critérios do dry-run
+## Versões esperadas
 
 ```text
-Versão: 1.11.0
-Discovery: 4.4-product
-Classifier: 5.2-product
-Planner: 4.9-product
+Versão: 1.11.2
+Discovery: 4.5-product
+Classifier: 5.3-product
+Planner: 5.0-product
+Importer: 5.9-product
 Pipeline: 3.0-product
 WRITE GUARD: PASS
 NetBox write: NÃO
 ```
 
-Validar especificamente:
+## Critérios do dry-run FBA
 
-1. Os dois switches `SW-BA17` aparecem como objetos distintos quando serial/MAC forem fortes.
-2. O nome SNMP original permanece como `observed_name`.
-3. Um nome alterado manualmente no NetBox aparece como nome efetivo e não gera diff de nome.
-4. A impressora `KM6E3D62` recebe identidade melhor quando Printer-MIB retornar dados, sem renomear o Device manual.
-5. Os 37 servidores aparecem como `DELEGATED_VM/PASS`, com VM, interface, cluster, host físico e site.
-6. O status mostra virtualização centralizada e hypervisor local não requerido.
-7. Ubiquiti e Topdata existentes não são rebaixados por perda transitória de evidência.
-8. iDRAC/service tag apresenta pai físico provável e permanece REVIEW quando a associação ainda não for segura.
-9. Industrial apresenta protocolo, fabricante/modelo/serial quando retornados; caso contrário continua REVIEW sem modelo inventado.
-10. CFTV usa ONVIF/fingerprint e não classifica apenas por porta web.
-11. `VIRTUAL_CANDIDATE` não produz `READY/CREATE` de Device.
-12. Nenhum item elegível está bloqueado pelo write guard em uma mudança normal.
+1. `SW-BA17-LB43JZ` e `SW-BA17-KPC2C1` continuam distintos.
+2. Nome manual no NetBox não gera PATCH de nome.
+3. Impressoras exibem serial válido, fonte, candidatos e rejeições.
+4. `03000000` não aparece como serial elegível.
+5. Kyocera não apresenta modelo duplicado, como `ECOSYS ... ECOSYS`.
+6. Hikvision recebe fabricante/modelo/firmware/serial quando ISAPI ou ONVIF anônimo responder.
+7. Câmera sem identidade suficiente permanece REVIEW, sem serial inventado.
+8. Dell/iDRAC não aparece como `VIDEO_SURVEILLANCE_DEVICE`.
+9. Windows Server comprovado aponta para `SERVER-WINDOWS`.
+10. Windows 11/10 comprovado aponta para `WORKSTATION-WINDOWS`.
+11. Windows sem edição comprovada permanece REVIEW.
+12. Device manual não recebe troca automática de role.
+13. Os 37 itens de VM continuam DELEGATED e não geram Device físico.
+14. `WRITE GUARD: PASS` e `NetBox write: NÃO`.
+15. Nenhum serial com `serial_confidence: CONFLICT` fica elegível para escrita.
 
-### APPLY controlado
+## APPLY controlado
 
 Somente depois do dry-run aprovado:
 
@@ -181,39 +146,25 @@ Erros: 0
 MAC RECONCILE: PASS
 Assets FAIL: 0
 Checks FAIL: 0
-preview posterior sem READY/CREATE, READY/UPDATE_SAFE ou READY/REPAIR_SAFE elegível
+preview posterior sem CREATE/UPDATE_SAFE/REPAIR_SAFE inesperado
 ```
 
-### Proteções que precisam ser comprovadas
+## Proteções obrigatórias
 
 ```text
 PATCH automático de name inexistente
-Device manual/específico preservado
-VM central nunca criada como Device físico duplicado
+Device manual preservado
+role Windows só muda com edição comprovada
+serial placeholder/conflitante não é gravado
+VM central nunca vira Device físico duplicado
 REVIEW/BLOCKED/DELEGATED não escrevem
-nenhuma VM removida
-write guard bloqueia cenário anormal antes da primeira escrita
-```
-
-Até essa evidência, o estado correto da release é **CI/NOT LIVE**.
-
-## Segurança operacional
-
-```text
-netbox-discovery run          → dry-run
-netbox-discovery run --apply  → escreve somente READY
-REVIEW/BLOCKED/DELEGATED      → não escrevem
-DELETE de VM                  → proibido
-Nome de Device existente      → não alterado
-Device Type manual/específico → não substituído
+nenhuma VM é removida
 ```
 
 ## Schedulers
 
 ```text
 Auto-update stable: LIVE PASS
-Network scheduler: DISABLED
-Hypervisor scheduler nas filiais: NÃO REQUERIDO
+Network scheduler: DISABLED durante homologação
+Hypervisor local na filial: NÃO REQUERIDO
 ```
-
-A habilitação do Network scheduler só deve ocorrer depois do LIVE PASS da 1.11.0.
