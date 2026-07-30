@@ -76,12 +76,8 @@ def _first(patterns, text):
 
 def _printer_model(text, manufacturer):
     patterns = {
-        "Kyocera": [
-            r"\b((?:ECOSYS|TASKalfa)\s*[A-Z0-9][A-Z0-9._-]*(?:\s+[A-Z0-9][A-Z0-9._-]*)?)\b",
-        ],
-        "HP": [
-            r"\b((?:HP\s+)?(?:LaserJet|OfficeJet|PageWide|DesignJet)\s+(?:Pro\s+|Enterprise\s+|Managed\s+)?[A-Z0-9][A-Z0-9 ._-]{1,45})",
-        ],
+        "Kyocera": [r"\b((?:ECOSYS|TASKalfa)\s*[A-Z0-9][A-Z0-9._-]*(?:\s+[A-Z0-9][A-Z0-9._-]*)?)\b"],
+        "HP": [r"\b((?:HP\s+)?(?:LaserJet|OfficeJet|PageWide|DesignJet)\s+(?:Pro\s+|Enterprise\s+|Managed\s+)?[A-Z0-9][A-Z0-9 ._-]{1,45})"],
         "Brother": [r"\b((?:MFC|DCP|HL|QL|TD|RJ)-?[A-Z0-9][A-Z0-9-]{2,})\b"],
         "Epson": [
             r"\b((?:WorkForce|EcoTank)\s+[A-Z0-9][A-Z0-9 ._-]{1,35})",
@@ -94,9 +90,7 @@ def _printer_model(text, manufacturer):
         "Ricoh": [r"\b((?:Aficio\s+)?(?:MP|IM|SP|M)\s*[A-Z0-9][A-Z0-9._-]{2,})\b"],
         "Lexmark": [r"\b((?:MS|MX|CS|CX|MB|MC)[0-9][A-Z0-9-]{2,})\b"],
         "Xerox": [r"\b((?:VersaLink|WorkCentre|Phaser|AltaLink)\s+[A-Z0-9][A-Z0-9 ._-]{1,35})"],
-        "Samsung": [
-            r"\b((?:ProXpress\s+)?(?:SL-)?[A-Z]{1,3}[0-9][A-Z0-9-]{2,})\b",
-        ],
+        "Samsung": [r"\b((?:ProXpress\s+)?(?:SL-)?[A-Z]{1,3}[0-9][A-Z0-9-]{2,})\b"],
         "Pantum": [r"\b((?:BM|M|P|CP|CM)[0-9][A-Z0-9-]{2,})\b"],
         "Zebra Technologies": [r"\b((?:ZT|ZD|GK|GX|ZE|ZQ)[0-9][A-Z0-9-]{2,})\b"],
         "OKI": [r"\b((?:C|B|MC|MB|ES)[0-9][A-Z0-9-]{2,})\b"],
@@ -142,8 +136,12 @@ def _best_printer_serial(raw_serials, text, manufacturer, model, name):
         serial = _serial_valid(value, model or name or manufacturer)
         if not serial:
             return
-        key = (serial, source)
-        if key not in [(row[0], row[1]) for row in candidates]:
+        existing = next((row for row in candidates if row[0] == serial), None)
+        if existing is None:
+            candidates.append((serial, source, rank))
+            return
+        if rank > existing[2]:
+            candidates.remove(existing)
             candidates.append((serial, source, rank))
 
     for value in raw_serials:
@@ -176,9 +174,7 @@ def _printer_entity(ip, snmp):
     manufacturer = _printer_manufacturer(text)
     model = _printer_model(text, manufacturer)
     name = names[0] if names else clean(snmp.get("sysname"))
-    serial, serial_candidates, serial_source = _best_printer_serial(
-        serials, text, manufacturer, model, name,
-    )
+    serial, serial_candidates, serial_source = _best_printer_serial(serials, text, manufacturer, model, name)
 
     return {
         "index": "printer-mib:1",
@@ -212,13 +208,10 @@ def probe_snmp_entity(ip, snmp):
     printer = _printer_entity(ip, snmp)
     if not printer:
         return entity
-
     inventory = list(entity.get("inventory") or [])
     inventory.append(printer)
     entity["inventory"] = inventory
     entity["count"] = len(inventory)
-    # Printer-MIB is device-specific. Prefer it only when it carries useful
-    # identity; otherwise keep the prior ENTITY-MIB primary untouched.
     if printer.get("model") or printer.get("serial") or printer.get("manufacturer"):
         entity["primary"] = printer
     return entity
