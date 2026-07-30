@@ -1,59 +1,107 @@
-# netbox-discovery 1.10.19 — Comandos rápidos
+# netbox-discovery 1.11.0 — Comandos rápidos
 
-## Atualizar e executar a validação live final
+## Atualizar e executar primeiro em dry-run
 
 ```bash
 netbox-discovery update run
 netbox-discovery version
-netbox-discovery run --apply
+netbox-discovery self-test
+netbox-discovery run
 ```
 
-Não existe etapa manual no NetBox entre esses comandos.
+Depois de revisar o PLAN:
+
+```bash
+netbox-discovery run --apply
+```
 
 ## Versões esperadas
 
 ```text
-Versão: 1.10.19
-Discovery: 4.3-product
-Classifier: 5.1-product
-Planner: 4.8-product
-Importer: 5.7-product
-Auditor: 6.6-product
-Pipeline: 2.9-product
-Runner: 2.8-product
+Versão: 1.11.0
+Discovery: 4.4-product
+Classifier: 5.2-product
+Planner: 4.9-product
+Importer: 5.8-product
+Auditor: 6.7-product
+Pipeline: 3.0-product
+Runner: 3.0-product
+Identity engine: 1.0-product
 ```
 
-## Melhorias que devem aparecer no PLAN
+## Informações novas no PLAN
 
 ```text
-Printer-MIB: name=... serial=...
-Moxa / NPort 5210 / INDUSTRIAL_COMMUNICATION
-PRODUCT_GENERIC_DEVICE_TYPE_UPGRADE
-LIVE_IDENTITY_PRESERVED_OVER_WEAK_OBSERVATION
-COLLISION_SAFE_NAME_FROM_STRONG_IDENTITY
+Nome efetivo/observado
+Autoridade do nome
+Discovery UID
+Natureza física/virtual
+Proveniência de identidade
+Dados estruturados do protocolo
+DELEGATED_VM/PASS com VM/interface/cluster/host
+WRITE GUARD
+Próxima evidência sugerida
 ```
 
-Nem todos os marcadores precisam existir em todo site. Eles aparecem somente quando a evidência correspondente for encontrada.
+Nem todos os marcadores aparecem em todo site. Eles dependem da evidência encontrada.
 
 ## Escrita permitida
 
 ```text
-novo objeto físico HIGH                → READY/CREATE
-tipo genérico do produto para tipo exato HIGH → READY/UPDATE_SAFE
-objeto existente forte com coleta fraca → READY/NOOP
-objeto Hypervisor                      → DELEGATED/NOOP
-evidência insuficiente                 → REVIEW
-evidência conflitante                  → BLOCKED
+novo objeto físico HIGH                       → READY/CREATE
+identidade exata sobre placeholder do produto → READY/UPDATE_SAFE
+objeto existente forte com coleta fraca       → READY/NOOP
+VM do inventário central                      → DELEGATED/NOOP
+candidato virtual sem VM central               → REVIEW/NOOP
+evidência insuficiente                         → REVIEW
+evidência conflitante ou impacto anormal       → BLOCKED
 ```
 
-## Proteção do Device Type
+## Nome manual
 
 ```text
-Device manual                          → não altera
-tipo atual específico                  → não altera
-confidence diferente de HIGH           → não altera
-fabricante/modelo genérico             → não altera
-Device criado pelo produto + tipo genérico + identidade exata → UPDATE_SAFE
+Nome existente no NetBox   → preservado
+Nome observado por SNMP    → exibido separadamente
+PATCH automático de name   → bloqueado no importer
+```
+
+## Industrial e CFTV
+
+Procure no relatório por:
+
+```text
+Siemens S7 structured identity
+EtherNet/IP CIP Identity
+BACnet device identity
+Modbus device identification
+ONVIF/WS-Discovery identity
+CCTV model/vendor fingerprint
+```
+
+## Virtualização centralizada na filial
+
+```text
+Função desta instalação: network_proxy
+Inventário de virtualização: CENTRALIZED
+Hypervisor local: NÃO REQUERIDO
+```
+
+Não configure o vCenter em cada filial.
+
+## Write guard
+
+```text
+WRITE GUARD: PASS
+```
+
+Se aparecer `BLOCK`, nenhuma ação elegível é escrita. Limites opcionais:
+
+```bash
+export NETBOX_DISCOVERY_MAX_CREATE=100
+export NETBOX_DISCOVERY_MAX_UPDATE=150
+export NETBOX_DISCOVERY_MAX_REPAIR=20
+export NETBOX_DISCOVERY_MAX_TOTAL_CHANGES=200
+export NETBOX_DISCOVERY_MAX_CHANGE_PERCENT=50
 ```
 
 ## Audit esperado
@@ -70,7 +118,7 @@ READY/UPDATE_SAFE após audit: 0
 READY/REPAIR_SAFE após audit: 0
 ```
 
-`PASS_WITH_WARNINGS` continua válido somente com `Assets FAIL: 0` e `Checks FAIL: 0`.
+`PASS_WITH_WARNINGS` só é válido com `Assets FAIL: 0` e `Checks FAIL: 0`.
 
 ## Status
 
