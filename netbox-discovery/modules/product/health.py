@@ -38,15 +38,23 @@ def timer_enabled(unit):
         return False
 
 
+def execution_role(cfg):
+    product = cfg.get("product") or {}
+    virtualization = cfg.get("virtualization") or {}
+    return str(product.get("execution_role") or cfg.get("execution_role") or "network_proxy"), str(
+        virtualization.get("mode") or "centralized"
+    )
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="netbox-discovery health")
-    ap.add_argument("--json", action="store_true")
-    args = ap.parse_args(argv)
+    parser = argparse.ArgumentParser(description="netbox-discovery health")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
 
     result = {
         "status": "OK", "severity": 0, "version": "?",
         "product": "OK", "netbox": "UNCONFIGURED", "update": "OK",
-        "network": "UNCONFIGURED", "hypervisor": "UNCONFIGURED", "problems": [],
+        "network": "UNCONFIGURED", "hypervisor": "CENTRALIZED", "problems": [],
     }
 
     version, errors = selftest_check(BASE)
@@ -57,12 +65,17 @@ def main(argv=None):
         result["problems"].extend(errors)
 
     cfg = None
+    role = "network_proxy"
+    virtualization_mode = "centralized"
     config_path = os.path.join(BASE, "config.yml")
     if os.path.isfile(config_path):
         try:
             from lib.config import load_config
             from lib.netbox import NetBox
             cfg = load_config()
+            role, virtualization_mode = execution_role(cfg)
+            result["execution_role"] = role
+            result["virtualization_mode"] = virtualization_mode
             NetBox().get("dcim/sites/?limit=1")
             result["netbox"] = "OK"
         except Exception as exc:
@@ -113,10 +126,17 @@ def main(argv=None):
             if configured != enabled:
                 result["severity"] = max(result["severity"], 1)
                 result["problems"].append("Hypervisor scheduler config/systemd divergentes")
+        elif virtualization_mode.lower() == "centralized" or role == "network_proxy":
+            result["hypervisor"] = "CENTRALIZED_NOT_REQUIRED"
+        else:
+            result["hypervisor"] = "UNCONFIGURED"
     except Exception as exc:
-        result["hypervisor"] = "WARNING"
-        result["severity"] = max(result["severity"], 1)
-        result["problems"].append("Hypervisor config: {0}".format(exc))
+        if virtualization_mode.lower() == "centralized" or role == "network_proxy":
+            result["hypervisor"] = "CENTRALIZED_NOT_REQUIRED"
+        else:
+            result["hypervisor"] = "WARNING"
+            result["severity"] = max(result["severity"], 1)
+            result["problems"].append("Hypervisor config: {0}".format(exc))
 
     result["status"] = "CRITICAL" if result["severity"] >= 2 else ("WARNING" if result["severity"] == 1 else "OK")
 
