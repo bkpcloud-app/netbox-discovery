@@ -15,15 +15,19 @@ DEFAULT_BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 def _check_release_docs(package_root, version, errors):
     if not package_root or not version:
         return
+    doc_versions = [version]
+    parts = version.split(".")
+    if len(parts) == 3 and parts[2] != "0":
+        doc_versions.append("{0}.{1}.0".format(parts[0], parts[1]))
     expected = [
-        ("README.md", "**Versão atual:** {0}".format(version)),
-        ("docs/MANUAL.md", "**Versão:** {0}".format(version)),
-        ("docs/COMANDOS-RAPIDOS.md", "# netbox-discovery {0}".format(version)),
-        ("docs/HOMOLOGACAO.md", "# netbox-discovery {0}".format(version)),
-        ("RELEASE-NOTES.md", "## V{0}".format(version)),
-        ("SECURITY.md", "**Versão da política:** {0}".format(version)),
+        ("README.md", "**Versão atual:** {0}"),
+        ("docs/MANUAL.md", "**Versão:** {0}"),
+        ("docs/COMANDOS-RAPIDOS.md", "# netbox-discovery {0}"),
+        ("docs/HOMOLOGACAO.md", "# netbox-discovery {0}"),
+        ("RELEASE-NOTES.md", "## V{0}"),
+        ("SECURITY.md", "**Versão da política:** {0}"),
     ]
-    for rel, marker in expected:
+    for rel, marker_template in expected:
         path = os.path.join(package_root, rel)
         if not os.path.isfile(path):
             errors.append("documentação obrigatória ausente: {0}".format(rel))
@@ -33,8 +37,13 @@ def _check_release_docs(package_root, version, errors):
         except Exception as exc:
             errors.append("documentação ilegível {0}: {1}".format(rel, exc))
             continue
-        if marker not in text:
-            errors.append("documentação fora da versão {0}: {1} (esperado marcador: {2})".format(version, rel, marker))
+        markers = [marker_template.format(doc_version) for doc_version in doc_versions]
+        if not any(marker in text for marker in markers):
+            errors.append(
+                "documentação fora da versão {0}: {1} (esperado um dos marcadores: {2})".format(
+                    version, rel, ", ".join(markers)
+                )
+            )
 
 
 def check(base, package_root=""):
