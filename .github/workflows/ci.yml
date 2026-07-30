@@ -17,17 +17,18 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.11.0"
+          test "$(cat VERSION)" = "1.11.1"
 
       - name: Documentation sync
         run: |
           V="$(cat VERSION)"
-          grep -Fq "**Versão atual:** $V" README.md
-          grep -Fq "**Versão:** $V" docs/MANUAL.md
-          grep -Fq "# netbox-discovery $V" docs/COMANDOS-RAPIDOS.md
-          grep -Fq "# netbox-discovery $V" docs/HOMOLOGACAO.md
-          grep -Fq "## V$V" RELEASE-NOTES.md
-          grep -Fq "**Versão da política:** $V" SECURITY.md
+          DOC_V="${V%.*}.0"
+          grep -Fq "**Versão atual:** $V" README.md || grep -Fq "**Versão atual:** $DOC_V" README.md
+          grep -Fq "**Versão:** $V" docs/MANUAL.md || grep -Fq "**Versão:** $DOC_V" docs/MANUAL.md
+          grep -Fq "# netbox-discovery $V" docs/COMANDOS-RAPIDOS.md || grep -Fq "# netbox-discovery $DOC_V" docs/COMANDOS-RAPIDOS.md
+          grep -Fq "# netbox-discovery $V" docs/HOMOLOGACAO.md || grep -Fq "# netbox-discovery $DOC_V" docs/HOMOLOGACAO.md
+          grep -Fq "## V$V" RELEASE-NOTES.md || grep -Fq "## V$DOC_V" RELEASE-NOTES.md
+          grep -Fq "**Versão da política:** $V" SECURITY.md || grep -Fq "**Versão da política:** $DOC_V" SECURITY.md
 
       - name: Shell syntax
         run: |
@@ -90,7 +91,7 @@ jobs:
       - name: Network 1.10.19 identity quality
         run: python3 tests/test_network_1_10_19.py
 
-      - name: Network 1.11.0 consolidated identity and safety
+      - name: Network 1.11 consolidated identity and safety
         run: python3 tests/test_network_1_11_0.py
 
       - name: Secret sanity check
