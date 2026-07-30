@@ -109,14 +109,28 @@ write guard bloqueia volume anormal
 importer rejeita PATCH de name
 ```
 
-### Primeira etapa obrigatória: dry-run
+### Primeira etapa obrigatória: instalação controlada da branch
 
-Na FBA:
+A 1.11.0 não deve ser mesclada no canal `main/stable` antes do teste live. Na FBA, instalar diretamente a branch do PR:
 
 ```bash
-netbox-discovery update run
+cd /tmp
+rm -f install-from-github.sh
+curl -fsSL -o install-from-github.sh \
+  https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/main/install-from-github.sh
+chmod +x install-from-github.sh
+NETBOX_DISCOVERY_REF=agent/netbox-discovery-1.11.0-consolidation \
+  ./install-from-github.sh
+```
+
+A instalação preserva a configuração operacional existente conforme as proteções do bootstrap/updater.
+
+### Segunda etapa obrigatória: dry-run
+
+```bash
 netbox-discovery version
 netbox-discovery self-test
+netbox-discovery status
 netbox-discovery run
 ```
 
