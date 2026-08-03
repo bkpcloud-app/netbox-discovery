@@ -16,7 +16,7 @@ from modules.discovery import network_v2 as v2
 from modules.discovery import network_v3 as v3
 from modules.product import identity
 
-DISCOVERY_WRAPPER_VERSION = "4.4-product"
+DISCOVERY_WRAPPER_VERSION = "4.4.1-product"
 PRT_GENERAL_ROOT = ".1.3.6.1.2.1.43.5.1.1"
 PRT_NAME_COLUMN = "16"
 PRT_SERIAL_COLUMN = "17"
@@ -172,8 +172,10 @@ def _printer_entity(ip, snmp):
         " ".join(names), " ".join(hr_values), " ".join(serials),
     ])
     manufacturer = _printer_manufacturer(text)
-    model = _printer_model(text, manufacturer)
     name = names[0] if names else clean(snmp.get("sysname"))
+    model = _printer_model(text, manufacturer)
+    if model and identity.norm(model) == identity.norm(name):
+        model = ""
     serial, serial_candidates, serial_source = _best_printer_serial(serials, text, manufacturer, model, name)
 
     return {
