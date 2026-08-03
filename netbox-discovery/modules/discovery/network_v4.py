@@ -16,7 +16,7 @@ from modules.discovery import network_v2 as v2
 from modules.discovery import network_v3 as v3
 from modules.product import identity
 
-DISCOVERY_WRAPPER_VERSION = "4.4.1-product"
+DISCOVERY_WRAPPER_VERSION = "4.4.2-product"
 PRT_GENERAL_ROOT = ".1.3.6.1.2.1.43.5.1.1"
 PRT_NAME_COLUMN = "16"
 PRT_SERIAL_COLUMN = "17"
@@ -26,6 +26,16 @@ ORIG_PROBE_SNMP_ENTITY = v2.probe_snmp_entity
 SERIAL_PLACEHOLDERS = {
     "03000000", "12345678", "123456789", "1234567890", "0123456789",
     "00000001", "99999999", "XXXXXXXX", "TEST", "DEMO",
+    "123456789012", "012345678901", "NOTAVAILABLE", "NOTAPPLICABLE",
+}
+
+PRINTER_HOSTNAME_PATTERNS = {
+    "Samsung": (r"^SEC[0-9A-F]{8,}$",),
+    "Brother": (r"^BRN[0-9A-F]{8,}$",),
+    "HP": (r"^NPI[0-9A-F]{6,}$",),
+    "Xerox": (r"^XRX[0-9A-F]{8,}$",),
+    "Epson": (r"^EPSON[0-9A-F]{6,}$",),
+    "Canon": (r"^CANON[0-9A-F]{6,}$",),
 }
 
 
@@ -76,7 +86,7 @@ def _first(patterns, text):
 
 def _printer_model(text, manufacturer):
     patterns = {
-        "Kyocera": [r"\b((?:ECOSYS|TASKalfa)\s*[A-Z0-9][A-Z0-9._-]*(?:\s+[A-Z0-9][A-Z0-9._-]*)?)\b"],
+        "Kyocera": [r"\b((?:ECOSYS|TASKalfa)\s*[A-Z0-9][A-Z0-9._-]*)\b"],
         "HP": [r"\b((?:HP\s+)?(?:LaserJet|OfficeJet|PageWide|DesignJet)\s+(?:Pro\s+|Enterprise\s+|Managed\s+)?[A-Z0-9][A-Z0-9 ._-]{1,45})"],
         "Brother": [r"\b((?:MFC|DCP|HL|QL|TD|RJ)-?[A-Z0-9][A-Z0-9-]{2,})\b"],
         "Epson": [
@@ -96,6 +106,18 @@ def _printer_model(text, manufacturer):
         "OKI": [r"\b((?:C|B|MC|MB|ES)[0-9][A-Z0-9-]{2,})\b"],
     }
     return _first(patterns.get(manufacturer, []), clean(text))
+
+
+def _printer_model_is_hostname(model, name, manufacturer):
+    """Reject vendor-generated host IDs, not legitimate models used as names."""
+    if not model or identity.norm(model) != identity.norm(name):
+        return False
+    vendor = identity.canonical_manufacturer(manufacturer)
+    compact = re.sub(r"[^A-Za-z0-9]", "", clean(model)).upper()
+    return any(
+        re.match(pattern, compact, re.I)
+        for pattern in PRINTER_HOSTNAME_PATTERNS.get(vendor, ())
+    )
 
 
 def _serial_valid(value, context=""):
@@ -174,7 +196,7 @@ def _printer_entity(ip, snmp):
     manufacturer = _printer_manufacturer(text)
     name = names[0] if names else clean(snmp.get("sysname"))
     model = _printer_model(text, manufacturer)
-    if model and identity.norm(model) == identity.norm(name):
+    if _printer_model_is_hostname(model, name, manufacturer):
         model = ""
     serial, serial_candidates, serial_source = _best_printer_serial(serials, text, manufacturer, model, name)
 
