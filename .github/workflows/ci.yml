@@ -17,7 +17,7 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.11.3"
+          test "$(cat VERSION)" = "1.11.4"
 
       - name: Documentation sync
         run: |
@@ -100,6 +100,9 @@ jobs:
 
       - name: Network 1.11.3 planner prerequisite shapes
         run: python3 tests/test_network_1_11_3.py
+
+      - name: Network 1.11.4 linked inventory stages
+        run: python3 tests/test_network_1_11_4.py
 
       - name: Secret sanity check
         run: |
