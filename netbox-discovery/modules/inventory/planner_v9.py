@@ -111,7 +111,8 @@ def _fix_windows_prerequisites(plan, prereq, state):
     for row in plan or []:
         if not isinstance(row, dict):
             continue
-        if clean(row.get("decision")) != "READY":
+        decision = clean(row.get("decision"))
+        if decision and decision != "READY":
             continue
         role = clean(row.get("role"))
         if role not in WINDOWS_ROLE_MAP:
