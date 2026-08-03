@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 
+import ipaddress
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -12,8 +14,9 @@ if BASE not in sys.path:
 
 from modules.inventory import classifier_v7 as v7
 
-CLASSIFIER_VERSION = "5.4-product"
+CLASSIFIER_VERSION = "5.5-product"
 ORIG_CLASSIFY_DEVICE = v7.classify_device
+ORIG_VALIDATE_SERIAL = v7._validate_serial
 
 PROTECTED_NON_WINDOWS_ROLES = set(v7.PHYSICAL_ROLES) | {
     "HYPERVISOR", "OOB_MANAGEMENT", "VMWARE_APPLIANCE",
@@ -25,6 +28,10 @@ def clean(value):
     return "" if value is None else str(value).strip()
 
 
+def norm(value):
+    return re.sub(r"\s+", " ", clean(value)).strip().casefold()
+
+
 def _has_explicit_windows_evidence(discovery):
     for evidence in v7._windows_evidence(discovery):
         family, product = v7._canonical_windows(evidence.get("text"))
@@ -33,14 +40,87 @@ def _has_explicit_windows_evidence(discovery):
     return False
 
 
-def _prefer_specific_serial_source(discovery, out):
-    """Keep the most specific authoritative source for the chosen serial.
+def _mac_shaped(value):
+    """Accept only values whose original syntax is actually MAC-like.
 
-    CLASSIFY V7 correctly ranks ONVIF/Hikvision above generic ENTITY-MIB, but
-    both anonymous device-information variants previously collapsed into a
-    generic ONVIF label. Preserve whether the serial came from Hikvision
-    ISAPI/Hikvision enrichment or generic ONVIF so the PLAN is auditable.
+    Arbitrary alphanumeric serials must not become MACs merely because removing
+    non-hexadecimal letters happens to leave twelve hexadecimal characters.
     """
+    raw = clean(value)
+    patterns = (
+        r"^[0-9A-Fa-f]{12}$",
+        r"^(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$",
+        r"^[0-9A-Fa-f]{4}(?:\.[0-9A-Fa-f]{4}){2}$",
+    )
+    return any(re.match(pattern, raw) for pattern in patterns)
+
+
+def _validate_serial(value, contexts):
+    serial = v7.identity.norm_serial(value)
+    if not serial:
+        return "", "empty-or-generic"
+    if serial in v7.SERIAL_PLACEHOLDERS:
+        return "", "known-placeholder"
+    if len(serial) < 5:
+        return "", "too-short"
+    if len(serial) > 64:
+        return "", "too-long"
+    if len(set(serial)) == 1:
+        return "", "repeated-character"
+    if serial in ("ABCDEF", "ABCDEFG", "ABCDEFGHIJ"):
+        return "", "sequential-placeholder"
+    if serial in contexts:
+        return "", "duplicates-model-name-ip-or-mac"
+    try:
+        ipaddress.ip_address(clean(value))
+        return "", "ip-address"
+    except Exception:
+        pass
+    if _mac_shaped(value) and v7.identity.norm_mac(value):
+        return "", "mac-address"
+    return serial, ""
+
+
+def _dedupe_serial_rejections(out):
+    unique = []
+    seen = set()
+    for item in out.get("serial_rejections") or []:
+        if not isinstance(item, dict):
+            continue
+        marker = (v7.identity.norm_serial(item.get("value")), clean(item.get("reason")))
+        if marker in seen:
+            continue
+        seen.add(marker)
+        unique.append(item)
+    out["serial_rejections"] = unique[:12]
+
+
+def _sanitize_printer_model(discovery, out):
+    if clean(out.get("role")) != "PRINTER":
+        return
+    model = clean(out.get("model"))
+    if not model:
+        return
+    names = [
+        out.get("observed_name"), out.get("hostname"),
+        discovery.get("snmp_name"), discovery.get("reverse_dns"),
+    ]
+    hostname_like = norm(model) in set(norm(value) for value in names if norm(value))
+    samsung_sec_name = bool(re.match(r"^SEC[0-9A-F]{8,}$", re.sub(r"[^A-Za-z0-9]", "", model), re.I))
+    if not hostname_like and not samsung_sec_name:
+        return
+    out["model_rejection"] = {
+        "value": model,
+        "reason": "duplicates-printer-hostname",
+    }
+    out["model"] = "Printer-MIB managed printer"
+    provenance = dict(out.get("identity_provenance") or {})
+    provenance["model"] = "rejected-hostname-like-model"
+    out["identity_provenance"] = provenance
+
+
+def _prefer_specific_serial_source(discovery, out):
+    """Keep the most specific authoritative source for the chosen serial."""
     selected = v7.identity.norm_serial(out.get("serial"))
     if not selected:
         return
@@ -67,7 +147,15 @@ def _prefer_specific_serial_source(discovery, out):
 
 
 def classify_device(discovery):
-    out = ORIG_CLASSIFY_DEVICE(discovery)
+    old_validate = v7._validate_serial
+    try:
+        v7._validate_serial = _validate_serial
+        out = ORIG_CLASSIFY_DEVICE(discovery)
+    finally:
+        v7._validate_serial = old_validate
+
+    _dedupe_serial_rejections(out)
+    _sanitize_printer_model(discovery, out)
     _prefer_specific_serial_source(discovery, out)
 
     if out.get("windows_family"):
@@ -82,11 +170,6 @@ def classify_device(discovery):
         out["classification_version"] = CLASSIFIER_VERSION
         return out
 
-    # The legacy classifier may leave a host UNKNOWN because its SMB text says
-    # "Windows Server" or "Windows 11" instead of the literal phrase
-    # "Microsoft Windows". Explicit high-authority SMB/CPE evidence is enough
-    # to enter the Windows refinement gate, but not enough to override a
-    # protected network/storage/industrial/OOB role.
     original_role = role
     out["role"] = "WINDOWS_HOST"
     v7._refine_windows(discovery, out)
@@ -107,11 +190,14 @@ def classify_device(discovery):
 def main(argv=None):
     old_classify = v7.classify_device
     old_version = v7.CLASSIFIER_VERSION
+    old_validate = v7._validate_serial
     try:
         v7.classify_device = classify_device
         v7.CLASSIFIER_VERSION = CLASSIFIER_VERSION
+        v7._validate_serial = _validate_serial
         return v7.main(argv)
     finally:
+        v7._validate_serial = old_validate
         v7.classify_device = old_classify
         v7.CLASSIFIER_VERSION = old_version
 

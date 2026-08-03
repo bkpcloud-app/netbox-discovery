@@ -15,8 +15,8 @@ from modules.product import updater
 def test_release_version():
     root_version = open(os.path.join(ROOT, "VERSION"), "r").read().strip()
     package_version = open(os.path.join(BASE, "VERSION"), "r").read().strip()
-    assert root_version == package_version == "1.11.5"
-    assert updater.version_key("1.11.5") > updater.version_key("1.11.4")
+    assert root_version == package_version == "1.11.6"
+    assert updater.version_key("1.11.6") > updater.version_key("1.11.5")
 
 
 def main():
