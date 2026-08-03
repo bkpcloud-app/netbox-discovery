@@ -20,6 +20,9 @@ from modules.inventory import pipeline_legacy as legacy
 
 PIPELINE_VERSION = "3.2-product"
 
+# Compatibilidade pública para testes e integrações que importam o diagnóstico.
+print_plan_diagnostics = legacy.print_plan_diagnostics
+
 
 def clean(value):
     return "" if value is None else str(value).strip()
@@ -70,8 +73,6 @@ def latest_discovery(output_dir, site=""):
     ]
     if not candidates:
         raise RuntimeError("Nenhum discovery JSON válido encontrado para o site {0}".format(site or "configurado"))
-    # A data gravada no nome do relatório é autoritativa. O mtime não pode
-    # promover um relatório antigo apenas porque ele foi lido ou recriado.
     return max(candidates, key=lambda path: (_timestamp_key(path), os.path.getmtime(path)))
 
 
@@ -144,7 +145,7 @@ def main(argv=None):
         },
     )
 
-    legacy.print_plan_diagnostics(plan, classification)
+    print_plan_diagnostics(plan, classification)
     print("===== INVENTORY PIPELINE =====")
     print("Pipeline version: {0}".format(PIPELINE_VERSION))
     print("DISCOVERY: {0}".format(discovery))
