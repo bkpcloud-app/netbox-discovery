@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import py_compile
+import re
 import subprocess
 import sys
 
@@ -15,26 +16,62 @@ DEFAULT_BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 def _check_release_docs(package_root, version, errors):
     if not package_root or not version:
         return
-    expected = [
-        ("README.md", "**Versão atual:** {0}".format(version)),
-        ("docs/MANUAL.md", "**Versão:** {0}".format(version)),
-        ("docs/COMANDOS-RAPIDOS.md", "# netbox-discovery {0}".format(version)),
-        ("docs/HOMOLOGACAO.md", "# netbox-discovery {0}".format(version)),
-        ("RELEASE-NOTES.md", "## V{0}".format(version)),
-        ("SECURITY.md", "**Versão da política:** {0}".format(version)),
+
+    expected_files = [
+        "README.md",
+        "docs/MANUAL.md",
+        "docs/COMANDOS-RAPIDOS.md",
+        "docs/HOMOLOGACAO.md",
+        "RELEASE-NOTES.md",
+        "SECURITY.md",
     ]
-    for rel, marker in expected:
+    texts = {}
+    for rel in expected_files:
         path = os.path.join(package_root, rel)
         if not os.path.isfile(path):
             errors.append("documentação obrigatória ausente: {0}".format(rel))
             continue
         try:
-            text = open(path, "r").read()
+            texts[rel] = open(path, "r").read()
         except Exception as exc:
             errors.append("documentação ilegível {0}: {1}".format(rel, exc))
+
+    parts = version.split(".")
+    patch_release = len(parts) == 3 and parts[2] != "0"
+    patch_path = os.path.join(package_root, "docs", "PATCH-{0}.md".format(version))
+
+    if patch_release and os.path.isfile(patch_path):
+        try:
+            patch_text = open(patch_path, "r").read()
+        except Exception as exc:
+            errors.append("nota de patch ilegível: {0}".format(exc))
+            return
+        marker = "# netbox-discovery {0}".format(version)
+        if marker not in patch_text:
+            errors.append("nota de patch fora da versão {0}".format(version))
+        # Patch releases may inherit the complete major/minor documentation, but
+        # every main document must still identify the same release family.
+        family = "{0}.{1}.".format(parts[0], parts[1])
+        for rel, text in texts.items():
+            if family not in text:
+                errors.append("documentação fora da família {0}: {1}".format(family, rel))
+        return
+
+    expected = [
+        ("README.md", "**Versão atual:** {0}"),
+        ("docs/MANUAL.md", "**Versão:** {0}"),
+        ("docs/COMANDOS-RAPIDOS.md", "# netbox-discovery {0}"),
+        ("docs/HOMOLOGACAO.md", "# netbox-discovery {0}"),
+        ("RELEASE-NOTES.md", "## V{0}"),
+        ("SECURITY.md", "**Versão da política:** {0}"),
+    ]
+    for rel, marker_template in expected:
+        text = texts.get(rel)
+        if text is None:
             continue
+        marker = marker_template.format(version)
         if marker not in text:
-            errors.append("documentação fora da versão {0}: {1} (esperado marcador: {2})".format(version, rel, marker))
+            errors.append("documentação fora da versão {0}: {1} (esperado: {2})".format(version, rel, marker))
 
 
 def check(base, package_root=""):
@@ -53,6 +90,7 @@ def check(base, package_root=""):
         "modules/inventory/planner_v4.py", "modules/inventory/planner_v5.py",
         "modules/inventory/planner_v6.py", "modules/inventory/planner_v7.py",
         "modules/inventory/planner_v8.py", "modules/inventory/planner_v9.py",
+        "modules/inventory/planner_v9_core.py",
         "modules/inventory/pipeline.py", "modules/importers/importer_v2.py",
         "modules/importers/importer_v3.py", "modules/importers/importer_v4.py", "modules/importers/importer_v5.py",
         "modules/importers/importer_v6.py", "modules/importers/importer_v7.py", "modules/importers/importer_v8.py",
@@ -114,6 +152,7 @@ def check(base, package_root=""):
             result = subprocess.call(["bash", "-n", path])
             if result != 0:
                 errors.append("bash -n falhou: " + path)
+
     return version, errors
 
 
@@ -123,6 +162,7 @@ def main(argv=None):
     parser.add_argument("--package-root", default="")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+
     version, errors = check(os.path.abspath(args.base), os.path.abspath(args.package_root) if args.package_root else "")
     result = {"status": "PASS" if not errors else "FAIL", "version": version, "errors": errors}
     if args.json:
