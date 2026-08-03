@@ -12,11 +12,11 @@ if BASE not in sys.path:
 
 from modules.inventory import planner_v9_core as core
 
-PLANNER_VERSION = "5.0.2-product"
+PLANNER_VERSION = "5.0.3-product"
+ORIG_WINDOWS_PLAN_POLICY = core._windows_plan_policy
 
 # Re-export the public and diagnostic surface of Planner V9 so existing imports,
-# tests and commands continue to work while this patch only changes prerequisite
-# container handling.
+# tests and commands continue to work while patches remain isolated here.
 for _name in dir(core):
     if not _name.startswith("__"):
         globals()[_name] = getattr(core, _name)
@@ -45,22 +45,47 @@ def _append_unique(rows, candidate, identity_key):
     rows.append(candidate)
 
 
-def _fix_windows_prerequisites(plan, prereq, state):
-    """Normalize prerequisite catalogs after the base planner serializes them.
+def _stable_physical_identity(row, class_row):
+    uid = clean(row.get("discovery_uid") or class_row.get("discovery_uid")).upper()
+    if uid.startswith("SERIAL:") or "MAC:" in uid:
+        return True
+    serial = clean(row.get("serial") or class_row.get("serial"))
+    serial_confidence = clean(row.get("serial_confidence") or class_row.get("serial_confidence")).upper()
+    return bool(serial and serial_confidence in ("HIGH", "MEDIUM"))
 
-    planner.py returns prerequisite categories as lists. Earlier V9 code assumed
-    dictionaries and crashed on real FBA data with ``roles: []``. This patch
-    accepts list, dict, missing and malformed values and always emits the list
-    shape consumed by PLAN JSON and the importer.
-    """
+
+def _windows_plan_policy(row, class_row, current):
+    """Keep OS separation but do not create a physical Device from weak identity."""
+    ORIG_WINDOWS_PLAN_POLICY(row, class_row, current)
+    if current:
+        return
+    if clean(row.get("role")) not in WINDOWS_ROLE_MAP:
+        return
+    if clean(row.get("decision")) != "READY" or clean(row.get("action")) != "CREATE":
+        return
+    if _stable_physical_identity(row, class_row):
+        return
+
+    row["decision"] = "REVIEW"
+    row["action"] = "NOOP"
+    reasons = list(row.get("reasons") or [])
+    marker = "WINDOWS_NEW_DEVICE_REQUIRES_STABLE_PHYSICAL_IDENTITY"
+    if marker not in reasons:
+        reasons.append(marker)
+    row["reasons"] = sorted(set(reasons))
+    row["identity_policy"] = "WINDOWS_EDITION_KNOWN_IDENTITY_NOT_STABLE"
+    row["interfaces"] = []
+    row["ip_intents"] = []
+
+
+def _fix_windows_prerequisites(plan, prereq, state):
+    """Normalize prerequisite catalogs after the base planner serializes them."""
     if not isinstance(prereq, dict):
         raise RuntimeError("PLAN prerequisites inválido: esperado objeto")
 
     roles = _catalog_rows(prereq.get("roles"))
     device_types = _catalog_rows(prereq.get("device_types"))
 
-    # Remove internal classifier roles and obsolete generic Windows types before
-    # adding the exact NetBox catalog objects.
     roles = [
         row for row in roles
         if clean(row.get("name")) not in WINDOWS_ROLE_MAP
@@ -85,6 +110,8 @@ def _fix_windows_prerequisites(plan, prereq, state):
 
     for row in plan or []:
         if not isinstance(row, dict):
+            continue
+        if clean(row.get("decision")) != "READY":
             continue
         role = clean(row.get("role"))
         if role not in WINDOWS_ROLE_MAP:
@@ -125,12 +152,13 @@ def _fix_windows_prerequisites(plan, prereq, state):
     )
 
 
-# Core build_plan resolves this symbol dynamically from its own module globals.
+core._windows_plan_policy = _windows_plan_policy
 core._fix_windows_prerequisites = _fix_windows_prerequisites
 core.PLANNER_VERSION = PLANNER_VERSION
 
 
 def main(argv=None):
+    core._windows_plan_policy = _windows_plan_policy
     core._fix_windows_prerequisites = _fix_windows_prerequisites
     core.PLANNER_VERSION = PLANNER_VERSION
     return core.main(argv)
