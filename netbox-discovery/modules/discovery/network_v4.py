@@ -86,7 +86,7 @@ def _first(patterns, text):
 
 def _printer_model(text, manufacturer):
     patterns = {
-        "Kyocera": [r"\b((?:ECOSYS|TASKalfa)\s*[A-Z0-9][A-Z0-9._-]*(?:\s+[A-Z0-9][A-Z0-9._-]*)?)\b"],
+        "Kyocera": [r"\b((?:ECOSYS|TASKalfa)\s*[A-Z0-9][A-Z0-9._-]*)\b"],
         "HP": [r"\b((?:HP\s+)?(?:LaserJet|OfficeJet|PageWide|DesignJet)\s+(?:Pro\s+|Enterprise\s+|Managed\s+)?[A-Z0-9][A-Z0-9 ._-]{1,45})"],
         "Brother": [r"\b((?:MFC|DCP|HL|QL|TD|RJ)-?[A-Z0-9][A-Z0-9-]{2,})\b"],
         "Epson": [
