@@ -6,19 +6,22 @@ import argparse
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
-from collections import Counter
 
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 HERE = os.path.dirname(os.path.abspath(__file__))
-PIPELINE_VERSION = "3.1-product"
+if BASE not in sys.path:
+    sys.path.insert(0, BASE)
 
+from modules.inventory import pipeline_legacy as legacy
 
-def latest(pattern):
-    files = glob.glob(pattern)
-    return max(files, key=os.path.getmtime) if files else ""
+PIPELINE_VERSION = "3.2-product"
+
+# Compatibilidade pública para testes e integrações que importam o diagnóstico.
+print_plan_diagnostics = legacy.print_plan_diagnostics
 
 
 def clean(value):
@@ -26,271 +29,129 @@ def clean(value):
 
 
 def _load_json(path):
-    with open(path, "r") as handle:
-        return json.load(handle)
+    try:
+        with open(path, "r") as handle:
+            return json.load(handle)
+    except Exception:
+        return {}
 
 
-def _classification_by_ip(classification):
-    out = {}
-    for row in classification.get("records") or []:
-        ip = clean(row.get("ip")).split("/", 1)[0]
-        if ip:
-            out[ip] = row
-    return out
+def _same_path(left, right):
+    if not clean(left) or not clean(right):
+        return False
+    return os.path.realpath(clean(left)) == os.path.realpath(clean(right))
 
 
-def _format_list(values):
-    return ", ".join(clean(x) for x in (values or []) if clean(x)) or "-"
+def _timestamp_key(path):
+    match = re.search(r"-(\d{8}-\d{6})\.json$", os.path.basename(path))
+    return match.group(1) if match else ""
 
 
-def _format_serial_candidates(values):
-    parts = []
-    for item in values or []:
-        if isinstance(item, dict):
-            serial = clean(item.get("serial") or item.get("value"))
-            source = clean(item.get("source"))
-            rank = clean(item.get("rank"))
-            if serial:
-                label = serial
-                if source:
-                    label += "@" + source
-                if rank:
-                    label += "#" + rank
-                parts.append(label)
-        elif clean(item):
-            parts.append(clean(item))
-    return ", ".join(parts) or "-"
+def _configured_site():
+    try:
+        from lib.config import load_config
+        cfg = load_config()
+        return clean((cfg.get("discovery") or {}).get("site"))
+    except Exception:
+        return ""
 
 
-def _print_identity(row, class_row):
-    print("  Nome efetivo/observado: {0} / {1}".format(
-        clean(row.get("effective_name") or row.get("desired_name")) or "-",
-        clean(row.get("observed_name") or class_row.get("observed_name")) or "-",
-    ))
-    print("  Autoridade do nome: {0} | origem observada={1}".format(
-        clean(row.get("name_authority")) or "-",
-        clean(row.get("observed_name_source") or class_row.get("observed_name_source")) or "-",
-    ))
-    print("  Natureza: {0} | origem={1}".format(
-        clean(row.get("asset_nature") or class_row.get("asset_nature")) or "-",
-        clean(row.get("asset_nature_source") or class_row.get("asset_nature_source")) or "-",
-    ))
-    print("  Discovery UID: {0}".format(clean(row.get("discovery_uid") or class_row.get("discovery_uid")) or "-"))
-    provenance = row.get("identity_provenance") or class_row.get("identity_provenance") or {}
-    if provenance:
-        parts = ["{0}={1}".format(key, clean(value)) for key, value in sorted(provenance.items()) if clean(value)]
-        if parts:
-            print("  Proveniência: {0}".format(", ".join(parts)))
+def _valid_discovery(path, site):
+    data = _load_json(path)
+    if not isinstance(data.get("devices"), list):
+        return False
+    if site and clean(data.get("site")).casefold() != site.casefold():
+        return False
+    return True
 
 
-def _print_windows_serial(row, class_row):
-    family = clean(row.get("windows_family") or class_row.get("windows_family"))
-    if family:
-        print("  Windows: família={0} produto={1} fonte={2}".format(
-            family,
-            clean(row.get("windows_product") or class_row.get("windows_product")) or "-",
-            clean(row.get("windows_evidence_source") or class_row.get("windows_evidence_source")) or "-",
-        ))
-    serial_confidence = clean(row.get("serial_confidence") or class_row.get("serial_confidence"))
-    serial_candidates = row.get("serial_candidates") or class_row.get("serial_candidates") or []
-    serial_rejections = row.get("serial_rejections") or class_row.get("serial_rejections") or []
-    serial_conflict = row.get("serial_conflict") or class_row.get("serial_conflict") or []
-    if serial_confidence or serial_candidates or serial_rejections or serial_conflict:
-        print("  Serial: valor={0} confiança={1} fonte={2}".format(
-            clean(row.get("serial") or class_row.get("serial")) or "-",
-            serial_confidence or "-",
-            clean(class_row.get("serial_source")) or "-",
-        ))
-        if serial_candidates:
-            print("  Serial candidatos: {0}".format(_format_serial_candidates(serial_candidates)))
-        if serial_rejections:
-            print("  Serial rejeitados: {0}".format(_format_serial_candidates(serial_rejections)))
-        if serial_conflict:
-            print("  Serial conflito: {0}".format(_format_serial_candidates(serial_conflict)))
+def latest_discovery(output_dir, site=""):
+    pattern = "{0}-discovery-*.json".format(site) if site else "*-discovery-*.json"
+    candidates = [
+        path for path in glob.glob(os.path.join(output_dir, pattern))
+        if _valid_discovery(path, site)
+    ]
+    if not candidates:
+        raise RuntimeError("Nenhum discovery JSON válido encontrado para o site {0}".format(site or "configurado"))
+    return max(candidates, key=lambda path: (_timestamp_key(path), os.path.getmtime(path)))
 
 
-def _print_class_evidence(row, class_row):
-    print("  Asset class: {0}".format(clean(row.get("asset_class")) or clean(class_row.get("asset_class")) or "-"))
-    print("  SNMP: name={0} object_id={1} mgmt_mac={2}".format(
-        clean(class_row.get("snmp_name")) or "-", clean(class_row.get("snmp_object_id")) or "-",
-        clean(class_row.get("management_mac")) or "-",
-    ))
-    if class_row.get("printer_mib_detected"):
-        print("  Printer-MIB: name={0} serial={1}".format(
-            clean(class_row.get("printer_mib_name")) or "-", clean(class_row.get("printer_mib_serial")) or "-",
-        ))
-    if clean(class_row.get("storage_unit_id")) or clean(class_row.get("storage_unit_product")):
-        print("  Storage FA-MIB: id={0} product={1} serial={2} type={3}".format(
-            clean(class_row.get("storage_unit_id")) or "-", clean(class_row.get("storage_unit_product")) or "-",
-            clean(class_row.get("serial")) or "-", clean(class_row.get("storage_unit_type")) or "-",
-        ))
-    if clean(class_row.get("identity_source")):
-        print("  Fonte principal de identidade: {0}".format(clean(class_row.get("identity_source"))))
-    facts = class_row.get("protocol_facts") or {}
-    if facts:
-        parts = ["{0}={1}".format(key, clean(value)) for key, value in sorted(facts.items()) if clean(value)]
-        if parts:
-            print("  Dados do protocolo: {0}".format(", ".join(parts)))
-    if clean(class_row.get("identity_history_source")):
-        print("  Anti-flap: identidade forte preservada de {0}".format(clean(class_row.get("identity_history_source"))))
-    print("  Evidência CLASSIFY: {0}".format(_format_list(class_row.get("evidence"))))
-    _print_windows_serial(row, class_row)
-    recommendations = row.get("review_recommendations") or class_row.get("review_recommendations") or []
-    if recommendations:
-        print("  Próxima evidência sugerida: {0}".format(_format_list(recommendations)))
-
-
-def _print_delegated(rows):
-    if not rows:
-        return
-    print("===== NETWORK VMS NO INVENTÁRIO CENTRALIZADO =====")
-    for pos, row in enumerate(rows, 1):
-        target = row.get("delegated_target") or {}
-        status = clean(row.get("delegation_status")) or "PASS"
-        print("[{0}/{1}] DELEGATED_VM/{2} | {3} | observado={4}".format(
-            pos, len(rows), status, clean(row.get("primary_ip")) or "-",
-            clean(row.get("observed_name") or row.get("desired_name")) or "-",
-        ))
-        if target:
-            print("  VM: {0} (ID {1})".format(clean(target.get("vm_name")) or "-", target.get("vm_id") or "-"))
-            print("  Interface: {0} (ID {1}) | MAC={2}".format(
-                clean(target.get("interface_name")) or "-", target.get("interface_id") or "-",
-                _format_list(target.get("interface_macs")),
-            ))
-            print("  Cluster/Host físico/Site: {0} / {1} / {2}".format(
-                clean(target.get("cluster")) or "-", clean(target.get("physical_host")) or "-",
-                clean(target.get("site")) or "-",
-            ))
-            print("  Origem autoritativa: vCenter central | correlação={0}".format(clean(target.get("source")) or "-"))
-        else:
-            print("  Detalhe da VM não resolvido; criação física continua suprimida.")
-
-
-def print_plan_diagnostics(plan_path, classification_path):
-    plan = _load_json(plan_path)
-    classification = _load_json(classification_path)
-    by_ip = _classification_by_ip(classification)
-    records = plan.get("records") or []
-    ready_create = [row for row in records if row.get("decision") == "READY" and row.get("action") == "CREATE"]
-    ready_update = [row for row in records if row.get("decision") == "READY" and row.get("action") == "UPDATE_SAFE"]
-    ready_repair = [row for row in records if row.get("decision") == "READY" and row.get("action") == "REPAIR_SAFE_VM_DUPLICATE"]
-    delegated = [row for row in records if row.get("decision") == "DELEGATED"]
-    pending = [row for row in records if row.get("decision") in ("REVIEW", "BLOCKED")]
-    guard = next((row.get("write_guard") for row in records if row.get("write_guard")), {}) or {}
-
-    print("===== NETWORK PLAN DIAGNÓSTICO =====")
-    print("Planner: {0}".format(clean(plan.get("planner_version")) or "-"))
-    print("READY/CREATE: {0}".format(len(ready_create)))
-    print("READY/UPDATE_SAFE: {0}".format(len(ready_update)))
-    print("READY/REPAIR_SAFE: {0}".format(len(ready_repair)))
-    print("DELEGATED/VM CENTRAL: {0}".format(len(delegated)))
-    print("REVIEW: {0}".format(sum(1 for row in pending if row.get("decision") == "REVIEW")))
-    print("BLOCKED: {0}".format(sum(1 for row in pending if row.get("decision") == "BLOCKED")))
-    if guard:
-        print("WRITE GUARD: {0} | mudanças={1} ({2}%) | violações={3}".format(
-            clean(guard.get("status")) or "-", guard.get("eligible_total", 0),
-            guard.get("change_percent", 0), _format_list(guard.get("violations")),
-        ))
-    print("NetBox write: NÃO")
-    _print_delegated(delegated)
-
-    for title, rows in (("NETWORK NOVOS OBJETOS READY", ready_create), ("NETWORK AJUSTES READY", ready_update)):
-        if not rows:
+def linked_report(output_dir, stage, expected):
+    pattern = os.path.join(output_dir, "*-{0}-*.json".format(stage))
+    matches = []
+    for path in glob.glob(pattern):
+        data = _load_json(path)
+        if not data:
             continue
-        print("===== {0} =====".format(title))
-        for pos, row in enumerate(rows, 1):
-            ip = clean(row.get("primary_ip")).split("/", 1)[0]
-            class_row = by_ip.get(ip) or {}
-            print("[{0}/{1}] READY | {2} | {3} | {4} | role={5} | confidence={6}".format(
-                pos, len(rows), ip or "-", clean(row.get("desired_name")) or "-",
-                clean(row.get("action")) or "-", clean(row.get("role")) or "-", clean(row.get("confidence")) or "-",
-            ))
-            print("  Fabricante/Modelo/Serial: {0} / {1} / {2}".format(
-                clean(row.get("manufacturer")) or "-", clean(row.get("model")) or "-", clean(row.get("serial")) or "-",
-            ))
-            if row.get("safe_diffs"):
-                print("  Ajustes: {0}".format(_format_list(row.get("safe_diffs"))))
-            if clean(row.get("identity_policy")):
-                print("  Política de identidade: {0}".format(clean(row.get("identity_policy"))))
-            _print_identity(row, class_row)
-            _print_class_evidence(row, class_row)
-
-    if ready_repair:
-        print("===== NETWORK REPAROS SEGUROS READY =====")
-        for pos, row in enumerate(ready_repair, 1):
-            repair = row.get("repair") or {}
-            print("[{0}/{1}] READY/REPAIR_SAFE | {2} | Device ID {3} -> VM ID {4}".format(
-                pos, len(ready_repair), clean(row.get("desired_name")) or "-",
-                repair.get("device_id") or "-", repair.get("vm_id") or "-",
-            ))
-
-    reason_counts = Counter()
-    for row in pending:
-        for reason in row.get("reasons") or []:
-            reason_counts[clean(reason)] += 1
-    print("===== NETWORK PENDÊNCIAS POR MOTIVO =====")
-    if not reason_counts:
-        print("Nenhuma pendência.")
-    else:
-        for reason, count in sorted(reason_counts.items(), key=lambda item: (-item[1], item[0])):
-            print("{0}: {1}".format(reason or "SEM_MOTIVO", count))
-
-    print("===== NETWORK PENDÊNCIAS DETALHADAS =====")
-    if not pending:
-        print("Nenhuma pendência REVIEW/BLOCKED.")
-        return
-    for pos, row in enumerate(pending, 1):
-        ip = clean(row.get("primary_ip")).split("/", 1)[0]
-        class_row = by_ip.get(ip) or {}
-        print("[{0}/{1}] {2} | {3} | {4} | role={5} | confidence={6} score={7}".format(
-            pos, len(pending), clean(row.get("decision")) or "-", ip or "-",
-            clean(row.get("desired_name")) or "-", clean(row.get("role")) or "-",
-            clean(row.get("confidence")) or "-", clean(row.get("classification_score")) or "-",
-        ))
-        print("  Motivos: {0}".format(_format_list(row.get("reasons"))))
-        print("  Match: {0} | {1}".format(clean(row.get("match_state")) or "-", clean(row.get("match_reason")) or "-"))
-        print("  Fabricante/Modelo/Serial: {0} / {1} / {2}".format(
-            clean(row.get("manufacturer")) or "-", clean(row.get("model")) or "-", clean(row.get("serial")) or "-",
-        ))
-        parent = row.get("oob_parent_candidate") or {}
-        if parent:
-            print("  Pai OOB provável: {0} (Device ID {1}) por service-tag {2}".format(
-                clean(parent.get("device_name")) or "-", parent.get("device_id") or "-", clean(parent.get("serial")) or "-",
-            ))
-        _print_identity(row, class_row)
-        _print_class_evidence(row, class_row)
+        ok = True
+        for key, source in expected.items():
+            if not _same_path(data.get(key), source):
+                ok = False
+                break
+        if ok:
+            matches.append(path)
+    if not matches:
+        details = ", ".join("{0}={1}".format(key, value) for key, value in sorted(expected.items()))
+        raise RuntimeError("{0} terminou sem gerar relatório vinculado: {1}".format(stage.upper(), details))
+    return max(matches, key=lambda path: (_timestamp_key(path), os.path.getmtime(path)))
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="netbox-discovery inventory pipeline")
-    ap.add_argument("--input", default="", help="Discovery JSON; default is latest report")
-    ap.add_argument("--output-dir", default=REPORTS)
-    args = ap.parse_args(argv)
+    parser = argparse.ArgumentParser(description="netbox-discovery inventory pipeline vinculado")
+    parser.add_argument("--input", default="", help="Discovery JSON; por padrão usa o último relatório válido do site")
+    parser.add_argument("--output-dir", default=REPORTS)
+    args = parser.parse_args(argv)
+
+    site = _configured_site()
+    discovery = clean(args.input) or latest_discovery(args.output_dir, site)
+    if not os.path.isfile(discovery) or not _valid_discovery(discovery, site):
+        raise RuntimeError("Discovery JSON inválido ou de outro site: {0}".format(discovery))
 
     classifier = os.path.join(HERE, "classifier_v8.py")
     reconciler = os.path.join(HERE, "reconciler_v5.py")
     planner = os.path.join(HERE, "planner_v9.py")
-    cmd = [sys.executable, classifier, "--output-dir", args.output_dir]
-    if args.input:
-        cmd.extend(["--input", args.input])
-    subprocess.check_call(cmd)
-    classification = latest(os.path.join(args.output_dir, "*-classification-*.json"))
-    if not classification:
-        raise RuntimeError("CLASSIFY terminou sem gerar JSON")
-    subprocess.check_call([sys.executable, reconciler, "--input", classification, "--output-dir", args.output_dir])
-    reconciliation = latest(os.path.join(args.output_dir, "*-reconciliation-*.json"))
-    if not reconciliation:
-        raise RuntimeError("RECONCILE terminou sem gerar JSON")
+
+    print("===== INVENTORY SOURCE =====")
+    print("Discovery selecionado: {0}".format(discovery))
+    print("Política: vínculo obrigatório entre DISCOVER, CLASSIFY, RECONCILE e PLAN")
+
+    subprocess.check_call([
+        sys.executable, classifier, "--input", discovery,
+        "--output-dir", args.output_dir,
+    ])
+    classification = linked_report(
+        args.output_dir, "classification", {"source_discovery": discovery}
+    )
+
+    subprocess.check_call([
+        sys.executable, reconciler, "--input", classification,
+        "--output-dir", args.output_dir,
+    ])
+    reconciliation = linked_report(
+        args.output_dir, "reconciliation", {"source_classification": classification}
+    )
+
     subprocess.check_call([
         sys.executable, planner, "--input", reconciliation,
-        "--classification", classification, "--output-dir", args.output_dir,
+        "--classification", classification,
+        "--output-dir", args.output_dir,
     ])
-    plan = latest(os.path.join(args.output_dir, "*-plan-*.json"))
-    if not plan:
-        raise RuntimeError("PLAN terminou sem gerar JSON")
+    plan = linked_report(
+        args.output_dir,
+        "plan",
+        {
+            "source_reconciliation": reconciliation,
+            "source_classification": classification,
+        },
+    )
+
     print_plan_diagnostics(plan, classification)
     print("===== INVENTORY PIPELINE =====")
     print("Pipeline version: {0}".format(PIPELINE_VERSION))
+    print("DISCOVERY: {0}".format(discovery))
+    print("CLASSIFICATION: {0}".format(classification))
+    print("RECONCILIATION: {0}".format(reconciliation))
+    print("PLAN: {0}".format(plan))
     print("CLASSIFY V8: OK")
     print("RECONCILE V5: OK")
     print("PLAN V9: OK")
@@ -299,4 +160,8 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as exc:
+        print("ERRO: {0}".format(exc), file=sys.stderr)
+        sys.exit(1)
