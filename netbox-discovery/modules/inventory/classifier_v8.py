@@ -14,13 +14,27 @@ if BASE not in sys.path:
 
 from modules.inventory import classifier_v7 as v7
 
-CLASSIFIER_VERSION = "5.5-product"
+CLASSIFIER_VERSION = "5.6-product"
 ORIG_CLASSIFY_DEVICE = v7.classify_device
 ORIG_VALIDATE_SERIAL = v7._validate_serial
 
 PROTECTED_NON_WINDOWS_ROLES = set(v7.PHYSICAL_ROLES) | {
     "HYPERVISOR", "OOB_MANAGEMENT", "VMWARE_APPLIANCE",
     "MANAGEMENT_APPLIANCE", "SECURITY_APPLIANCE", "POWER_MANAGEMENT",
+}
+
+EXTRA_SERIAL_PLACEHOLDERS = {
+    "123456789012", "012345678901", "000000000001", "999999999999",
+    "NOTAVAILABLE", "NOTAPPLICABLE", "UNAVAILABLE", "UNSPECIFIED",
+}
+
+PRINTER_HOSTNAME_PATTERNS = {
+    "Samsung": (r"^SEC[0-9A-F]{8,}$",),
+    "Brother": (r"^BRN[0-9A-F]{8,}$",),
+    "HP": (r"^NPI[0-9A-F]{6,}$",),
+    "Xerox": (r"^XRX[0-9A-F]{8,}$",),
+    "Epson": (r"^EPSON[0-9A-F]{6,}$",),
+    "Canon": (r"^CANON[0-9A-F]{6,}$",),
 }
 
 
@@ -41,11 +55,7 @@ def _has_explicit_windows_evidence(discovery):
 
 
 def _mac_shaped(value):
-    """Accept only values whose original syntax is actually MAC-like.
-
-    Arbitrary alphanumeric serials must not become MACs merely because removing
-    non-hexadecimal letters happens to leave twelve hexadecimal characters.
-    """
+    """Accept only values whose original syntax is actually MAC-like."""
     raw = clean(value)
     patterns = (
         r"^[0-9A-Fa-f]{12}$",
@@ -59,7 +69,7 @@ def _validate_serial(value, contexts):
     serial = v7.identity.norm_serial(value)
     if not serial:
         return "", "empty-or-generic"
-    if serial in v7.SERIAL_PLACEHOLDERS:
+    if serial in v7.SERIAL_PLACEHOLDERS or serial in EXTRA_SERIAL_PLACEHOLDERS:
         return "", "known-placeholder"
     if len(serial) < 5:
         return "", "too-short"
@@ -95,6 +105,21 @@ def _dedupe_serial_rejections(out):
     out["serial_rejections"] = unique[:12]
 
 
+def _printer_model_is_hostname(model, manufacturer, names):
+    model_norm = norm(model)
+    if not model_norm:
+        return False
+    name_norms = set(norm(value) for value in names if norm(value))
+    if model_norm not in name_norms:
+        return False
+    vendor = v7.identity.canonical_manufacturer(manufacturer)
+    compact = re.sub(r"[^A-Za-z0-9]", "", clean(model)).upper()
+    return any(
+        re.match(pattern, compact, re.I)
+        for pattern in PRINTER_HOSTNAME_PATTERNS.get(vendor, ())
+    )
+
+
 def _sanitize_printer_model(discovery, out):
     if clean(out.get("role")) != "PRINTER":
         return
@@ -105,15 +130,14 @@ def _sanitize_printer_model(discovery, out):
         out.get("observed_name"), out.get("hostname"),
         discovery.get("snmp_name"), discovery.get("reverse_dns"),
     ]
-    hostname_like = norm(model) in set(norm(value) for value in names if norm(value))
-    samsung_sec_name = bool(re.match(r"^SEC[0-9A-F]{8,}$", re.sub(r"[^A-Za-z0-9]", "", model), re.I))
-    if not hostname_like and not samsung_sec_name:
+    if not _printer_model_is_hostname(model, out.get("manufacturer"), names):
         return
     out["model_rejection"] = {
         "value": model,
-        "reason": "duplicates-printer-hostname",
+        "reason": "printer-hostname-not-model",
     }
-    out["model"] = "Printer-MIB managed printer"
+    out["model"] = ""
+    out["model_source"] = ""
     provenance = dict(out.get("identity_provenance") or {})
     provenance["model"] = "rejected-hostname-like-model"
     out["identity_provenance"] = provenance
