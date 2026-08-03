@@ -2,9 +2,17 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+BASE = os.path.abspath(os.path.join(HERE, "..", ".."))
+if BASE not in sys.path:
+    sys.path.insert(0, BASE)
+
 from modules.inventory import planner_v9_core as core
 
-PLANNER_VERSION = "5.0.1-product"
+PLANNER_VERSION = "5.0.2-product"
 
 # Re-export the public and diagnostic surface of Planner V9 so existing imports,
 # tests and commands continue to work while this patch only changes prerequisite

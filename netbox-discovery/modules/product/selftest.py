@@ -74,6 +74,27 @@ def _check_release_docs(package_root, version, errors):
             errors.append("documentação fora da versão {0}: {1} (esperado: {2})".format(version, rel, marker))
 
 
+def _check_direct_entrypoint(label, path, errors):
+    """Execute an installed Python entrypoint exactly as the product runner does."""
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    try:
+        process = subprocess.Popen(
+            [sys.executable, path, "--help"],
+            cwd="/",
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        stdout, stderr = process.communicate()
+    except Exception as exc:
+        errors.append("entrypoint {0} não executou: {1}".format(label, exc))
+        return
+    if process.returncode != 0:
+        detail = (stderr or stdout or b"").decode("utf-8", "replace").strip()
+        errors.append("entrypoint {0} falhou diretamente: {1}".format(label, detail[:500]))
+
+
 def check(base, package_root=""):
     errors = []
     required = [
@@ -152,6 +173,10 @@ def check(base, package_root=""):
             result = subprocess.call(["bash", "-n", path])
             if result != 0:
                 errors.append("bash -n falhou: " + path)
+
+    planner_entrypoint = os.path.join(base, "modules", "inventory", "planner_v9.py")
+    if os.path.isfile(planner_entrypoint):
+        _check_direct_entrypoint("planner_v9.py", planner_entrypoint, errors)
 
     return version, errors
 
