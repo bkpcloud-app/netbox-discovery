@@ -46,8 +46,8 @@ def test_samsung_hostname_is_not_a_device_model():
         "identity_provenance": {"model": "printer-mib"},
     }
     classifier._sanitize_printer_model(discovery, out)
-    assert out["model"] == "Printer-MIB managed printer"
-    assert out["model_rejection"]["reason"] == "duplicates-printer-hostname"
+    assert out["model"] == ""
+    assert out["model_rejection"]["reason"] == "printer-hostname-not-model"
 
 
 def test_printer_entity_rejects_model_equal_to_name():
