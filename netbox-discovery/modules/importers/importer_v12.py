@@ -74,10 +74,23 @@ def refresh_plan():
     return path
 
 
+def _all_global_ips(nb):
+    cache = getattr(nb, "_device_type_ip_cache", None)
+    if cache is None:
+        cache = [
+            row for row in package_base.query(nb, "ipam/ip-addresses/", limit=10000)
+            if not row.get("vrf")
+        ]
+        setattr(nb, "_device_type_ip_cache", cache)
+    return cache
+
+
 def _device_id_for_ip(nb, ip):
     ipn = package_base.norm_ip(ip)
-    rows = package_base.query(nb, "ipam/ip-addresses/", address=ipn, limit=100)
-    exact = [row for row in rows if package_base.norm_ip(row.get("address")) == ipn]
+    exact = [
+        row for row in _all_global_ips(nb)
+        if package_base.norm_ip(row.get("address")) == ipn
+    ]
     if len(exact) != 1:
         return None
     row = exact[0]
@@ -260,13 +273,21 @@ def _apply_requested(argv):
 
 
 def main(argv=None):
-    values = list(argv or [])
+    values = list(sys.argv[1:] if argv is None else argv)
     before_imports = set(glob.glob(os.path.join(REPORTS, "*-import-*.json")))
-    old_refresh = v11.refresh_plan
     old_version = v11.IMPORTER_VERSION
     old_top_safe = v2.base.safe_patch_for_existing
     old_package_safe = package_base.safe_patch_for_existing
     old_print = builtins.print
+    refresh_modules = (
+        v11, v11.v10, v11.v9, v11.v8, v11.v7,
+        v11.v6, v11.v5, v11.v4, v11.v3, v11.v2,
+        package_base, v2.base,
+    )
+    old_refresh = []
+    for module in refresh_modules:
+        if hasattr(module, "refresh_plan"):
+            old_refresh.append((module, module.refresh_plan))
 
     def release_print(*args, **kwargs):
         if args and str(args[0]) == "===== IMPORT FINALIZE 1.11.2 =====":
@@ -274,7 +295,8 @@ def main(argv=None):
         return old_print(*args, **kwargs)
 
     try:
-        v11.refresh_plan = refresh_plan
+        for module, unused in old_refresh:
+            module.refresh_plan = refresh_plan
         v11.IMPORTER_VERSION = IMPORTER_VERSION
         # The legacy chain imports importer.py twice: as
         # modules.importers.importer and as top-level importer. Patch both
@@ -288,7 +310,8 @@ def main(argv=None):
         v2.base.safe_patch_for_existing = old_top_safe
         package_base.safe_patch_for_existing = old_package_safe
         v11.IMPORTER_VERSION = old_version
-        v11.refresh_plan = old_refresh
+        for module, function in reversed(old_refresh):
+            module.refresh_plan = function
 
     if rc:
         return rc
