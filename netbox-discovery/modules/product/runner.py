@@ -15,11 +15,11 @@ import uuid
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 LOCK_FILE = "/var/lock/netbox-discovery-global.lock"
-RUNNER_VERSION = "3.1-product"
+RUNNER_VERSION = "3.2-product"
 COMPONENTS = {
     "discovery": "network_v5.py",
     "pipeline": "pipeline.py",
-    "planner": "planner_v10.py",
+    "planner": "planner_v11.py",
     "importer": "importer_v11.py",
     "auditor": "auditor_v10.py",
 }
