@@ -15,13 +15,13 @@ import uuid
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 LOCK_FILE = "/var/lock/netbox-discovery-global.lock"
-RUNNER_VERSION = "3.2-product"
+RUNNER_VERSION = "3.3-product"
 COMPONENTS = {
     "discovery": "network_v5.py",
     "pipeline": "pipeline.py",
     "planner": "planner_v11.py",
-    "importer": "importer_v11.py",
-    "auditor": "auditor_v10.py",
+    "importer": "importer_v12.py",
+    "auditor": "auditor_v11.py",
 }
 
 
@@ -86,8 +86,8 @@ def execute(apply_mode):
         run_step("DISCOVER", [py, os.path.join(BASE, "modules/discovery/network_v5.py")], stages, environment)
         run_step("CLASSIFY_RECONCILE_PLAN_FINAL", [py, os.path.join(BASE, "modules/inventory/pipeline.py")], stages, environment)
         if apply_mode:
-            run_step("IMPORT_FINALIZE", [py, os.path.join(BASE, "modules/importers/importer_v11.py"), "--apply"], stages, environment)
-            run_step("AUDIT_FINALIZE", [py, os.path.join(BASE, "modules/auditors/auditor_v10.py")], stages, environment)
+            run_step("IMPORT_FINALIZE", [py, os.path.join(BASE, "modules/importers/importer_v12.py"), "--apply"], stages, environment)
+            run_step("AUDIT_FINALIZE", [py, os.path.join(BASE, "modules/auditors/auditor_v11.py")], stages, environment)
             audit_files = glob.glob(os.path.join(REPORTS, "{0}-audit-*.json".format(site)))
             status = "PASS"
             if audit_files:
