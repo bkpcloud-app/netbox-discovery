@@ -18,9 +18,8 @@ if BASE not in sys.path:
 
 from modules.inventory import pipeline_legacy as legacy
 
-PIPELINE_VERSION = "3.2-product"
+PIPELINE_VERSION = "3.3-product"
 
-# Compatibilidade pública para testes e integrações que importam o diagnóstico.
 print_plan_diagnostics = legacy.print_plan_diagnostics
 
 
@@ -109,7 +108,7 @@ def main(argv=None):
 
     classifier = os.path.join(HERE, "classifier_v8.py")
     reconciler = os.path.join(HERE, "reconciler_v5.py")
-    planner = os.path.join(HERE, "planner_v9.py")
+    planner = os.path.join(HERE, "planner_v10.py")
 
     print("===== INVENTORY SOURCE =====")
     print("Discovery selecionado: {0}".format(discovery))
@@ -154,7 +153,7 @@ def main(argv=None):
     print("PLAN: {0}".format(plan))
     print("CLASSIFY V8: OK")
     print("RECONCILE V5: OK")
-    print("PLAN V9: OK")
+    print("PLAN V10: OK")
     print("NetBox write: NÃO")
     return 0
 
