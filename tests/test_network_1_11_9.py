@@ -105,9 +105,9 @@ def test_05_pipeline_uses_planner_v11():
 
 def test_06_runner_uses_current_components():
     assert runner.COMPONENTS["planner"] == "planner_v11.py"
-    assert runner.COMPONENTS["importer"] == "importer_v11.py"
-    assert runner.COMPONENTS["auditor"] == "auditor_v10.py"
-    assert runner.RUNNER_VERSION == "3.2-product"
+    assert runner.COMPONENTS["importer"] == "importer_v12.py"
+    assert runner.COMPONENTS["auditor"] == "auditor_v11.py"
+    assert runner.RUNNER_VERSION == "3.3-product"
 
 
 def test_07_cli_routes_and_labels_are_current():
@@ -115,12 +115,12 @@ def test_07_cli_routes_and_labels_are_current():
     required = (
         "CLASSIFY V8: OK",
         "PLAN V11: OK",
-        "IMPORT V11: OK",
-        "AUDIT V10: OK",
+        "IMPORT V12: OK",
+        "AUDIT V11: OK",
         'classifier_v8.py',
         'planner_v11.py',
-        'importer_v11.py',
-        'auditor_v10.py',
+        'importer_v12.py',
+        'auditor_v11.py',
     )
     for marker in required:
         assert marker in source, marker
