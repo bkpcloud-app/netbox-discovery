@@ -47,6 +47,15 @@ done
 # credentials/site configuration survive upgrades.
 \cp -af "$SRC/." "$TARGET/"
 
+# Migrate legacy preserved configurations before any scheduler command is used.
+# Missing automation fields are added with the safe defaults: scheduler off,
+# automatic APPLY off and daily schedule. Existing values are never overwritten.
+if [[ -f "$TARGET/config.yml" ]]; then
+  /usr/bin/python3 "$TARGET/modules/product/config_migrations.py" \
+    --config "$TARGET/config.yml" \
+    --ensure-network-automation
+fi
+
 chmod +x "$TARGET/bin/netbox-discovery"
 find "$TARGET/modules" -type f -name '*.py' -exec chmod 750 {} \;
 chmod 750 "$TARGET/bin/netbox-discovery"
