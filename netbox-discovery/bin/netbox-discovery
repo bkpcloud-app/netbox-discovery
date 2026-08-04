@@ -39,8 +39,8 @@ print('DISCOVER V5: OK')
 print('CLASSIFY V8: OK')
 print('RECONCILE V5: OK')
 print('PLAN V11: OK')
-print('IMPORT V11: OK')
-print('AUDIT V10: OK')
+print('IMPORT V12: OK')
+print('AUDIT V11: OK')
 PY
 }
 
@@ -393,8 +393,8 @@ EOF
   reconcile) exec "$PYTHON" "$BASE/modules/inventory/reconciler_v5.py" "$@" ;;
   plan) exec "$PYTHON" "$BASE/modules/inventory/planner_v11.py" "$@" ;;
   inventory|prepare) exec "$PYTHON" "$BASE/modules/inventory/pipeline.py" "$@" ;;
-  import) exec "$PYTHON" "$BASE/modules/importers/importer_v11.py" "$@" ;;
-  audit) exec "$PYTHON" "$BASE/modules/auditors/auditor_v10.py" "$@" ;;
+  import) exec "$PYTHON" "$BASE/modules/importers/importer_v12.py" "$@" ;;
+  audit) exec "$PYTHON" "$BASE/modules/auditors/auditor_v11.py" "$@" ;;
   run) exec "$PYTHON" "$BASE/modules/product/runner.py" "$@" ;;
   scheduled-run) exec "$PYTHON" "$BASE/modules/product/runner.py" --scheduled ;;
   status) exec "$PYTHON" "$BASE/modules/product/status.py" ;;
