@@ -49,8 +49,6 @@ def _check_release_docs(package_root, version, errors):
         marker = "# netbox-discovery {0}".format(version)
         if marker not in patch_text:
             errors.append("nota de patch fora da versão {0}".format(version))
-        # Patch releases may inherit the complete major/minor documentation, but
-        # every main document must still identify the same release family.
         family = "{0}.{1}.".format(parts[0], parts[1])
         for rel, text in texts.items():
             if family not in text:
@@ -75,7 +73,6 @@ def _check_release_docs(package_root, version, errors):
 
 
 def _check_direct_entrypoint(label, path, errors):
-    """Execute an installed Python entrypoint exactly as the product runner does."""
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)
     try:
@@ -95,6 +92,32 @@ def _check_direct_entrypoint(label, path, errors):
         errors.append("entrypoint {0} falhou diretamente: {1}".format(label, detail[:500]))
 
 
+def _check_effective_components(base, errors):
+    code = (
+        "import sys; sys.path.insert(0, {0}); "
+        "from modules.inventory import planner_v10 as p; "
+        "from modules.importers import importer_v11 as i; "
+        "from modules.auditors import auditor_v10 as a; "
+        "assert p.PLANNER_VERSION == '5.2-product'; "
+        "assert i.IMPORTER_VERSION == '6.0-product'; "
+        "assert a.AUDITOR_VERSION == '6.8-product'"
+    ).format(repr(base))
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+    try:
+        process = subprocess.Popen(
+            [sys.executable, "-c", code], cwd="/", env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        stdout, stderr = process.communicate()
+    except Exception as exc:
+        errors.append("contrato de componentes não executou: {0}".format(exc))
+        return
+    if process.returncode != 0:
+        detail = (stderr or stdout or b"").decode("utf-8", "replace").strip()
+        errors.append("contrato de componentes falhou: {0}".format(detail[:500]))
+
+
 def check(base, package_root=""):
     errors = []
     required = [
@@ -111,15 +134,15 @@ def check(base, package_root=""):
         "modules/inventory/planner_v4.py", "modules/inventory/planner_v5.py",
         "modules/inventory/planner_v6.py", "modules/inventory/planner_v7.py",
         "modules/inventory/planner_v8.py", "modules/inventory/planner_v9.py",
-        "modules/inventory/planner_v9_core.py",
+        "modules/inventory/planner_v9_core.py", "modules/inventory/planner_v10.py",
         "modules/inventory/pipeline.py", "modules/importers/importer_v2.py",
         "modules/importers/importer_v3.py", "modules/importers/importer_v4.py", "modules/importers/importer_v5.py",
         "modules/importers/importer_v6.py", "modules/importers/importer_v7.py", "modules/importers/importer_v8.py",
-        "modules/importers/importer_v9.py", "modules/importers/importer_v10.py",
+        "modules/importers/importer_v9.py", "modules/importers/importer_v10.py", "modules/importers/importer_v11.py",
         "modules/auditors/auditor_v2.py", "modules/auditors/auditor_v3.py",
         "modules/auditors/auditor_v4.py", "modules/auditors/auditor_v5.py",
         "modules/auditors/auditor_v6.py", "modules/auditors/auditor_v7.py", "modules/auditors/auditor_v8.py",
-        "modules/auditors/auditor_v9.py",
+        "modules/auditors/auditor_v9.py", "modules/auditors/auditor_v10.py",
         "modules/product/configurator_v2.py", "modules/product/runner.py", "modules/product/updater.py",
         "modules/product/health.py", "modules/product/selftest.py", "modules/product/identity.py",
         "modules/hypervisor/configurator_v2.py", "modules/hypervisor/deps_vmware.py",
@@ -174,9 +197,15 @@ def check(base, package_root=""):
             if result != 0:
                 errors.append("bash -n falhou: " + path)
 
-    planner_entrypoint = os.path.join(base, "modules", "inventory", "planner_v9.py")
-    if os.path.isfile(planner_entrypoint):
-        _check_direct_entrypoint("planner_v9.py", planner_entrypoint, errors)
+    entrypoints = (
+        ("planner_v10.py", os.path.join(base, "modules", "inventory", "planner_v10.py")),
+        ("importer_v11.py", os.path.join(base, "modules", "importers", "importer_v11.py")),
+        ("auditor_v10.py", os.path.join(base, "modules", "auditors", "auditor_v10.py")),
+    )
+    for label, path in entrypoints:
+        if os.path.isfile(path):
+            _check_direct_entrypoint(label, path, errors)
+    _check_effective_components(base, errors)
 
     return version, errors
 
