@@ -34,14 +34,23 @@ def generate_fresh_plan():
 
 
 def main(argv=None):
-    old_generate = v10.generate_fresh_plan
     old_version = v10.AUDITOR_VERSION
     old_package_idempotency = package_base.audit_idempotency
     old_package_compare = package_base.compare_expected_inventory
     old_top_idempotency = v2.base.audit_idempotency
     old_top_compare = v2.base.compare_expected_inventory
+    generate_modules = (
+        v10, v10.v9, v10.v8, v10.v7, v10.v6,
+        v10.v5, v10.v4, v10.v3, v10.v2,
+        package_base, v2.base,
+    )
+    old_generate = []
+    for module in generate_modules:
+        if hasattr(module, "generate_fresh_plan"):
+            old_generate.append((module, module.generate_fresh_plan))
     try:
-        v10.generate_fresh_plan = generate_fresh_plan
+        for module, unused in old_generate:
+            module.generate_fresh_plan = generate_fresh_plan
         v10.AUDITOR_VERSION = AUDITOR_VERSION
         # auditor_v2 imports inventory.py as a top-level module while newer
         # wrappers import modules.auditors.inventory. Patch both module objects
@@ -58,7 +67,8 @@ def main(argv=None):
         package_base.compare_expected_inventory = old_package_compare
         package_base.audit_idempotency = old_package_idempotency
         v10.AUDITOR_VERSION = old_version
-        v10.generate_fresh_plan = old_generate
+        for module, function in reversed(old_generate):
+            module.generate_fresh_plan = function
 
 
 if __name__ == "__main__":
