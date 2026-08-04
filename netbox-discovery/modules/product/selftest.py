@@ -95,12 +95,12 @@ def _check_direct_entrypoint(label, path, errors):
 def _check_effective_components(base, errors):
     code = (
         "import sys; sys.path.insert(0, {0}); "
-        "from modules.inventory import planner_v10 as p; "
-        "from modules.importers import importer_v11 as i; "
-        "from modules.auditors import auditor_v10 as a; "
-        "assert p.PLANNER_VERSION == '5.2-product'; "
-        "assert i.IMPORTER_VERSION == '6.0-product'; "
-        "assert a.AUDITOR_VERSION == '6.8-product'"
+        "from modules.inventory import planner_v11 as p; "
+        "from modules.importers import importer_v12 as i; "
+        "from modules.auditors import auditor_v11 as a; "
+        "assert p.PLANNER_VERSION == '5.3-product'; "
+        "assert i.IMPORTER_VERSION == '6.1-product'; "
+        "assert a.AUDITOR_VERSION == '6.9-product'"
     ).format(repr(base))
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)
@@ -135,14 +135,18 @@ def check(base, package_root=""):
         "modules/inventory/planner_v6.py", "modules/inventory/planner_v7.py",
         "modules/inventory/planner_v8.py", "modules/inventory/planner_v9.py",
         "modules/inventory/planner_v9_core.py", "modules/inventory/planner_v10.py",
-        "modules/inventory/pipeline.py", "modules/importers/importer_v2.py",
-        "modules/importers/importer_v3.py", "modules/importers/importer_v4.py", "modules/importers/importer_v5.py",
-        "modules/importers/importer_v6.py", "modules/importers/importer_v7.py", "modules/importers/importer_v8.py",
-        "modules/importers/importer_v9.py", "modules/importers/importer_v10.py", "modules/importers/importer_v11.py",
+        "modules/inventory/planner_v11.py", "modules/inventory/pipeline.py",
+        "modules/importers/importer_v2.py", "modules/importers/importer_v3.py",
+        "modules/importers/importer_v4.py", "modules/importers/importer_v5.py",
+        "modules/importers/importer_v6.py", "modules/importers/importer_v7.py",
+        "modules/importers/importer_v8.py", "modules/importers/importer_v9.py",
+        "modules/importers/importer_v10.py", "modules/importers/importer_v11.py",
+        "modules/importers/importer_v12.py",
         "modules/auditors/auditor_v2.py", "modules/auditors/auditor_v3.py",
         "modules/auditors/auditor_v4.py", "modules/auditors/auditor_v5.py",
-        "modules/auditors/auditor_v6.py", "modules/auditors/auditor_v7.py", "modules/auditors/auditor_v8.py",
-        "modules/auditors/auditor_v9.py", "modules/auditors/auditor_v10.py",
+        "modules/auditors/auditor_v6.py", "modules/auditors/auditor_v7.py",
+        "modules/auditors/auditor_v8.py", "modules/auditors/auditor_v9.py",
+        "modules/auditors/auditor_v10.py", "modules/auditors/auditor_v11.py",
         "modules/product/configurator_v2.py", "modules/product/runner.py", "modules/product/updater.py",
         "modules/product/health.py", "modules/product/selftest.py", "modules/product/identity.py",
         "modules/hypervisor/configurator_v2.py", "modules/hypervisor/deps_vmware.py",
@@ -198,9 +202,9 @@ def check(base, package_root=""):
                 errors.append("bash -n falhou: " + path)
 
     entrypoints = (
-        ("planner_v10.py", os.path.join(base, "modules", "inventory", "planner_v10.py")),
-        ("importer_v11.py", os.path.join(base, "modules", "importers", "importer_v11.py")),
-        ("auditor_v10.py", os.path.join(base, "modules", "auditors", "auditor_v10.py")),
+        ("planner_v11.py", os.path.join(base, "modules", "inventory", "planner_v11.py")),
+        ("importer_v12.py", os.path.join(base, "modules", "importers", "importer_v12.py")),
+        ("auditor_v11.py", os.path.join(base, "modules", "auditors", "auditor_v11.py")),
     )
     for label, path in entrypoints:
         if os.path.isfile(path):
