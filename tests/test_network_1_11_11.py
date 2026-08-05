@@ -115,7 +115,6 @@ def test_07_current_scheduler_command_can_toggle_migrated_config():
         config_migrations.ensure_network_automation(path)
         rows = open(path, "r").read().splitlines()
         assert any(row.strip() == "enabled: false" for row in rows)
-        # This is the exact shape consumed by set_network_automation_enabled.
         in_auto = False
         found = False
         for row in rows:
@@ -131,8 +130,8 @@ def test_07_current_scheduler_command_can_toggle_migrated_config():
 
 
 def test_08_release_version():
-    assert open(os.path.join(ROOT, "VERSION"), "r").read().strip() == "1.11.12"
-    assert open(os.path.join(BASE, "VERSION"), "r").read().strip() == "1.11.12"
+    assert open(os.path.join(ROOT, "VERSION"), "r").read().strip() == "1.11.13"
+    assert open(os.path.join(BASE, "VERSION"), "r").read().strip() == "1.11.13"
 
 
 def main():

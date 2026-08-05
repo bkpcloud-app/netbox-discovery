@@ -35,7 +35,7 @@ for name in ('networks_file', 'exclusions_file', 'communities_file'):
     path = (cfg.get('discovery') or {}).get(name, '')
     if path and not os.path.isfile(path):
         raise RuntimeError('{0} não encontrado: {1}'.format(name, path))
-print('DISCOVER V5: OK')
+print('DISCOVER V6: OK')
 print('CLASSIFY V8: OK')
 print('RECONCILE V5: OK')
 print('PLAN V11: OK')
@@ -304,7 +304,7 @@ update_dispatch() {
         enable) require_root; systemctl enable --now netbox-discovery-update.timer; echo "AUTO UPDATE: HABILITADO" ;;
         disable) require_root; systemctl disable --now netbox-discovery-update.timer; echo "AUTO UPDATE: DESABILITADO" ;;
         status) systemctl status netbox-discovery-update.timer --no-pager || true ;;
-        *) echo "Uso: netbox-discovery update scheduler {enable|disable|status}" >&2; exit 2 ;;
+        *) echo "Uso: netbox-discovery update {status|check|run|scheduled|scheduler}" >&2; exit 2 ;;
       esac
       ;;
     *) echo "Uso: netbox-discovery update {status|check|run|scheduled|scheduler}" >&2; exit 2 ;;
@@ -388,7 +388,7 @@ EOF
   check) check_product ;;
   self-test) exec "$PYTHON" "$BASE/modules/product/selftest.py" --base "$BASE" "$@" ;;
   health) exec "$PYTHON" "$BASE/modules/product/health.py" "$@" ;;
-  discover) exec "$PYTHON" "$BASE/modules/discovery/network_v5.py" "$@" ;;
+  discover) exec "$PYTHON" "$BASE/modules/discovery/network_v6.py" "$@" ;;
   classify) exec "$PYTHON" "$BASE/modules/inventory/classifier_v8.py" "$@" ;;
   reconcile) exec "$PYTHON" "$BASE/modules/inventory/reconciler_v5.py" "$@" ;;
   plan) exec "$PYTHON" "$BASE/modules/inventory/planner_v11.py" "$@" ;;

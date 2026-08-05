@@ -17,7 +17,7 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.11.12"
+          test "$(cat VERSION)" = "1.11.13"
 
       - name: Documentation sync
         run: |
@@ -127,6 +127,9 @@ jobs:
 
       - name: Network 1.11.12 large-CIDR discovery
         run: python3 tests/test_network_1_11_12.py
+
+      - name: Network 1.11.13 Discovery V6 entrypoints
+        run: python3 tests/test_network_1_11_13.py
 
       - name: Secret sanity check
         run: |
