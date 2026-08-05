@@ -6,6 +6,9 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=root
+# Keep the hypervisor collector on the same release contract as Network: update
+# first when possible, then continue with the installed version if GitHub is down.
+ExecStartPre=-/usr/local/bin/netbox-discovery update scheduled
 ExecStart=/usr/local/bin/netbox-discovery hypervisor scheduled-run
 TimeoutStartSec=0
 Nice=10
