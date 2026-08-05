@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.11.14
+**Versão da política:** 1.11.15
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
@@ -8,111 +8,87 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 
 - configuração real de cliente;
 - tokens, communities e senhas;
-- credenciais VMware, Proxmox, Hyper-V, ONVIF, NetBox ou iDRAC;
+- credenciais NetBox, VMware, Proxmox, Hyper-V, ONVIF ou iDRAC;
 - chaves privadas;
-- relatórios, journals, logs e backups reais.
+- relatórios, journals, logs e backups reais;
+- listas privadas de IPs e redes de clientes.
 
-## Política de atualização
+## Atualização automática
 
-O timer `netbox-discovery-update.timer` usa o canal `stable`, executa diariamente, é persistente e possui atraso aleatório.
+A atualização usa exclusivamente o canal `stable`.
 
-A instalação e os schedulers Network/Hypervisor garantem que esse timer esteja ativo. A atualização:
+Antes da instalação:
 
-- não habilita `automation.apply`;
-- não inicia APPLY;
-- preserva token e configuração do cliente;
-- valida a release antes e depois;
+- valida a versão remota;
+- clona o pacote candidato;
+- compara versões raiz e pacote;
+- executa self-test;
+- cria backup da versão instalada.
+
+Depois da instalação:
+
+- executa self-test;
+- executa `check` quando existe configuração;
+- grava estado do updater;
 - executa rollback em falha;
-- mantém backup da versão anterior.
+- coloca a versão defeituosa em quarentena.
 
-Os timers de coleta usam dependência `Wants`, não `Also=`. Portanto, desabilitar coleta não desabilita atualizações.
+## Preflight antes da coleta automática
+
+Na 1.11.15, Network e Hypervisor executam:
+
+```text
+ExecStartPre=-/usr/local/bin/netbox-discovery update scheduled
+```
+
+O prefixo de tolerância existe para impedir que uma indisponibilidade externa do GitHub interrompa o inventário. Isso não ignora falha silenciosamente: o erro permanece no journal e em `update-state.json`.
+
+A coleta só continua com:
+
+- a nova versão validada; ou
+- a versão anterior preservada/recuperada.
+
+## Separação entre update e APPLY
+
+O updater não pode:
+
+- alterar `automation.apply`;
+- habilitar escrita no NetBox;
+- executar `run --apply`;
+- alterar redes, exclusões ou communities;
+- substituir token ou configuração do cliente.
 
 ## Decisões Network
 
 ```text
-READY/CREATE                    → escreve somente com --apply
-READY/UPDATE_SAFE               → escreve somente com --apply
-READY/REPAIR_SAFE_VM_DUPLICATE  → escreve após write guard e preflight
-READY/NOOP                      → não altera
-DELEGATED                       → não escreve
-REVIEW                          → não escreve
-BLOCKED                         → não escreve
+READY/CREATE       → somente com --apply
+READY/UPDATE_SAFE  → somente com --apply
+READY/NOOP         → não altera
+DELEGATED          → não escreve
+REVIEW             → não escreve
+BLOCKED            → não escreve
 ```
 
-## Autoridade e nomes
+## Autoridade dos dados
 
 ```text
-Nome de Device existente → autoridade do NetBox
-Nome SNMP/ONVIF/DNS      → observação separada
-PATCH automático de name → proibido no importer
+Nome existente no NetBox → preservado
+PATCH automático de name → proibido
+Serial conflitante       → não gravado
+VM confirmada            → delegada à virtualização
+Device manual            → protegido
 ```
 
-## Serial
+## Lock global
 
-O serial só é gravado quando a evidência é suficiente e não existe conflito forte.
-
-São proibidos:
-
-- placeholders e sequências de teste;
-- IP ou MAC usados como serial;
-- serial igual a modelo ou hostname;
-- escrita com `serial_confidence` LOW/NONE/CONFLICT;
-- escolha automática quando fontes fortes equivalentes divergem.
-
-## Windows Server e Workstation
-
-Troca automática de role exige simultaneamente:
-
-1. Device criado pelo produto;
-2. match forte por serial, MAC ou IP;
-3. confiança HIGH;
-4. fonte SMB/CPE/fingerprint forte;
-5. role atual dentro da família Windows;
-6. PLAN explícito;
-7. revalidação imediatamente antes do PATCH.
-
-Device manual é preservado.
-
-## LARGE-CIDR
-
-O Discovery V6 divide prefixos grandes em lotes. Essa mudança altera apenas a estratégia de coleta:
-
-- não muda política de escrita;
-- não cria Device sem `--apply`;
-- não habilita scheduler;
-- não habilita APPLY;
-- falha com identificação dos lotes problemáticos.
-
-## Hypervisor
-
-Ações de reclassificação, mudança de site, cluster e reparo de VM exigem preflight. O inventário Network não cria Device físico quando a identidade pertence a VM centralizada.
-
-## Write guard
-
-Limites padrão:
+Network, Hypervisor e Updater compartilham:
 
 ```text
-CREATE: 25
-UPDATE_SAFE: 50
-REPAIR_SAFE: 20
-TOTAL: 75
-PERCENT: 20%
+/var/lock/netbox-discovery-global.lock
 ```
 
-Ultrapassar um limite bloqueia ações elegíveis antes da primeira escrita.
+Isso impede atualização e inventário concorrentes sobre a mesma instalação.
 
-## Documentação como controle de release
+## Documentação obrigatória
 
-A versão exata deve constar em:
-
-```text
-README.md
-docs/MANUAL.md
-docs/COMANDOS-RAPIDOS.md
-docs/HOMOLOGACAO.md
-RELEASE-NOTES.md
-SECURITY.md
-docs/PATCH-<VERSÃO>.md
-```
-
-O CI bloqueia publicação quando qualquer documento obrigatório permanece em versão anterior.
+O CI exige que README, Manual, Comandos Rápidos, Homologação, Release Notes, Security e nota de patch carreguem a versão exata do `VERSION`.

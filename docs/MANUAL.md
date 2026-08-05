@@ -1,13 +1,13 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.11.14 — PRODUCT V1  
+**Versão:** 1.11.15 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
 
-> `CI PASS` não equivale a `LIVE PASS`. Consulte `docs/HOMOLOGACAO.md` antes de liberar APPLY automático em um cliente.
+> `CI PASS` não equivale a `LIVE PASS`. Consulte `docs/HOMOLOGACAO.md` antes de liberar APPLY automático.
 
-## 1. Componentes atuais
+## 1. Componentes
 
 ```text
 Discovery V6:   4.6-product
@@ -20,11 +20,7 @@ Pipeline:        3.4-product
 Runner:          3.4-product
 ```
 
-## 2. Instalação e atualização
-
-O instalador preserva configuração, token, redes, exclusões e comunidades SNMP. Antes de substituir o produto, executa self-test e cria backup.
-
-Atualização manual:
+## 2. Atualização manual
 
 ```bash
 netbox-discovery update run
@@ -38,17 +34,17 @@ netbox-discovery check
 netbox-discovery status
 ```
 
-O updater trabalha no canal `stable`, valida o pacote antes e depois da instalação e executa rollback quando a nova versão não passa no self-test.
+O updater consulta o `stable`, valida o pacote candidato, cria backup, preserva configurações, instala, testa e executa rollback quando necessário.
 
-## 3. Auto-update
+## 3. Auto-update diário
 
-A instalação habilita por padrão:
+O instalador habilita:
 
 ```text
 netbox-discovery-update.timer
 ```
 
-Configuração padrão:
+Política padrão:
 
 ```text
 OnCalendar=daily
@@ -56,278 +52,220 @@ Persistent=true
 RandomizedDelaySec=30m
 ```
 
-Verificar:
+Comandos:
 
 ```bash
 netbox-discovery update scheduler status
-```
-
-Habilitar manualmente:
-
-```bash
 netbox-discovery update scheduler enable
-```
-
-Desabilitar manualmente:
-
-```bash
 netbox-discovery update scheduler disable
 ```
 
-### Garantia ao habilitar coleta automática
+## 4. Atualização antes de cada coleta automática
 
-Os timers Network e Hypervisor possuem dependência `Wants` do timer de atualização. Portanto, ao iniciar qualquer scheduler de coleta, o auto-update também é iniciado.
+Na 1.11.15, os serviços automáticos Network e Hypervisor executam o updater antes da coleta.
 
-Essa dependência não usa `Also=`. Assim, desabilitar um scheduler de coleta não desabilita o auto-update.
+Sequência efetiva:
 
-## 4. Configuração Network
+```text
+systemd inicia o serviço
+→ netbox-discovery update scheduled
+→ consulta a versão do canal stable
+→ se houver versão superior, valida o candidato
+→ cria backup
+→ instala preservando configuração
+→ executa self-test e check
+→ em falha, executa rollback e quarentena
+→ inicia a coleta com a instalação disponível
+```
+
+A etapa de update é um preflight tolerante a indisponibilidade externa:
+
+- atualização disponível e válida: instala e segue;
+- nenhuma atualização: segue imediatamente;
+- GitHub indisponível: registra o erro e segue com a versão instalada;
+- versão candidata inválida: rollback/quarentena e segue com a versão instalada válida;
+- outro processo usando o lock global: update é adiado e a coleta respeita o mesmo lock.
+
+Essa automação não habilita APPLY e não muda `automation.apply`.
+
+## 5. Scheduler Network
 
 ```bash
-netbox-discovery configure
+netbox-discovery scheduler enable
+netbox-discovery scheduler disable
+netbox-discovery scheduler status
 ```
 
-O assistente grava:
+Ao habilitar, o timer de coleta e o timer de update permanecem ativos. Ao desabilitar a coleta, o update continua independente.
+
+Fluxo sem escrita:
 
 ```text
-Tenant
-Tenant Group opcional
-Site
-URL e token do NetBox
-validação SSL
-redes CIDR
-exclusões
-comunidades SNMP
-automação
-```
-
-O assistente não inicia descoberta e não executa escrita.
-
-Arquivos por site:
-
-```text
-/opt/netbox-discovery/config/sites/<SITE>/networks.conf
-/opt/netbox-discovery/config/sites/<SITE>/exclusions.conf
-/opt/netbox-discovery/config/sites/<SITE>/snmp-communities.conf
-```
-
-## 5. Execução Network
-
-Dry-run completo:
-
-```bash
-netbox-discovery run
-```
-
-Fluxo:
-
-```text
-DISCOVER
+UPDATE PREFLIGHT
+→ DISCOVER
 → CLASSIFY
 → RECONCILE
 → PLAN
 ```
 
-Resultado esperado:
+Fluxo com escrita somente quando explicitamente configurado e homologado:
 
 ```text
-NetBox write: NÃO
+UPDATE PREFLIGHT
+→ DISCOVER
+→ CLASSIFY
+→ RECONCILE
+→ PLAN
+→ WRITE GUARD
+→ IMPORT READY
+→ AUDIT
 ```
 
-Execução com escrita:
+## 6. Scheduler Hypervisor
+
+```bash
+netbox-discovery hypervisor scheduler enable
+netbox-discovery hypervisor scheduler disable
+netbox-discovery hypervisor scheduler status
+```
+
+O Hypervisor usa a mesma regra de update preflight. Em proxies `network_proxy` com virtualização centralizada, o scheduler Hypervisor local deve permanecer desabilitado.
+
+## 7. Configuração
+
+```bash
+netbox-discovery configure
+```
+
+O assistente permite definir:
+
+- tenant e tenant group;
+- site;
+- token e validação SSL;
+- redes CIDR;
+- exclusões IP/CIDR;
+- comunidades SNMP;
+- automação Network.
+
+O assistente não inicia descoberta e não escreve no NetBox.
+
+## 8. Execução manual
+
+Dry-run:
+
+```bash
+netbox-discovery run
+```
+
+APPLY controlado:
 
 ```bash
 netbox-discovery run --apply
 ```
 
-Fluxo adicional:
+Nunca use `--apply` antes de revisar o PLAN e confirmar `BLOCKED=0`, write guard e identidade.
 
-```text
-preflight
-→ write guard
-→ IMPORT somente de registros READY elegíveis
-→ AUDIT
-```
-
-Nunca use `--apply` antes de revisar o PLAN.
-
-## 6. Discovery LARGE-CIDR
-
-Quando o conjunto passa de 4096 endereços candidatos, o Discovery V6 ativa o modo `LARGE-CIDR`.
-
-Comportamento:
-
-- consolida CIDRs sobrepostos;
-- divide prefixos grandes em lotes de até `/24`;
-- usa paralelismo controlado;
-- aplica timeout individual por lote;
-- repete somente lotes com falha;
-- mostra progresso;
-- inclui portas de infraestrutura, impressão, CFTV, virtualização e OT;
-- evita rescue TCP exaustivo sobre dezenas de milhares de endereços ausentes.
-
-Para execução longa fora da sessão SSH:
+## 9. Execução fora da sessão SSH
 
 ```bash
-systemd-run --unit=netbox-discovery-manual --collect /usr/local/bin/netbox-discovery run
+UNIT="netbox-discovery-manual-$(date +%Y%m%d-%H%M%S)"
+systemd-run --unit="$UNIT" --collect /usr/local/bin/netbox-discovery run
 ```
 
 Acompanhar:
 
 ```bash
-journalctl -fu netbox-discovery-manual.service
+journalctl -fu "$UNIT.service"
 ```
 
-## 7. Decisões do PLAN
+`CTRL+C` encerra somente a visualização. Para parar a coleta:
 
-| Decisão/Ação | Significado | Escrita |
-|---|---|---|
-| `READY/CREATE` | novo Device validado | somente com `--apply` |
-| `READY/UPDATE_SAFE` | enriquecimento protegido | somente com `--apply` |
-| `READY/REPAIR_SAFE_VM_DUPLICATE` | reparo protegido de duplicidade | após preflight |
-| `READY/NOOP` | convergente ou preservado | não |
-| `DELEGATED` | ownership de VM/Hypervisor | não |
-| `REVIEW` | evidência insuficiente | não |
-| `BLOCKED` | conflito ou write guard | não |
+```bash
+systemctl stop "$UNIT.service"
+```
 
-## 8. Autoridade dos dados
+## 10. Redes grandes
+
+Discovery V6:
+
+- divide prefixos maiores que `/24` em lotes `/24`;
+- elimina sobreposição duplicada;
+- usa paralelismo controlado;
+- registra progresso;
+- informa timeout e erro por lote;
+- mantém descoberta SNMP read-only;
+- não depende da sessão SSH.
+
+## 11. Decisões e escrita
 
 ```text
-Nome existente              → NetBox
-Nome observado              → DNS, SNMP, ONVIF ou protocolo
-VM/cluster/host             → inventário central Hypervisor
-Fabricante/modelo/serial    → protocolo específico ou MIB
-IP ativo                    → descoberta de rede
+READY/CREATE       → escreve somente com --apply
+READY/UPDATE_SAFE  → escreve somente com --apply
+READY/NOOP         → não altera
+DELEGATED          → não escreve
+REVIEW             → não escreve
+BLOCKED            → não escreve
 ```
 
-O importer não altera automaticamente o nome de um Device existente.
+## 12. Segurança de identidade
 
-## 9. Serial e identidade
+- nome existente no NetBox é autoridade;
+- PATCH automático de `name` é proibido;
+- serial placeholder ou conflitante não é gravado;
+- Device manual é preservado;
+- VM confirmada não vira Device físico duplicado;
+- primary IP existente pode ser preservado por política;
+- write guard bloqueia impacto anormal;
+- auditoria posterior deve ter `Assets FAIL=0` e `Checks FAIL=0` para LIVE PASS.
 
-Fontes de maior autoridade incluem:
+## 13. Status esperado
+
+```bash
+netbox-discovery status
+```
+
+Campos principais:
 
 ```text
-Hikvision ISAPI / ONVIF
-Printer-MIB
-FibreAlliance
-Dell iDRAC
-Siemens S7 / EtherNet-IP / BACnet / Modbus
-ENTITY-MIB
+Versão instalada
+Canal de update
+Auto-update timer
+Tenant/Site
+Network scheduler
+APPLY
+Último RUN
+PLAN
+WRITE GUARD
+IMPORT
+AUDIT
+Inventário de virtualização
 ```
-
-São rejeitados placeholders, IP, MAC, modelo, hostname e conflitos entre fontes fortes.
-
-Campos importantes no PLAN:
-
-```text
-serial
-serial_source
-serial_confidence
-serial_candidates
-serial_rejections
-serial_conflict
-```
-
-## 10. Virtualização
-
-Configuração:
-
-```bash
-netbox-discovery hypervisor configure
-```
-
-Dry-run:
-
-```bash
-netbox-discovery hypervisor run
-```
-
-Apply:
-
-```bash
-netbox-discovery hypervisor run --apply
-```
-
-Em filiais com inventário centralizado, VMs são tratadas como `DELEGATED`; o proxy Network não cria Devices físicos duplicados para elas.
-
-## 11. Scheduler Network
-
-Habilitar:
-
-```bash
-netbox-discovery scheduler enable
-```
-
-Status:
-
-```bash
-netbox-discovery scheduler status
-```
-
-Desabilitar:
-
-```bash
-netbox-discovery scheduler disable
-```
-
-A execução agendada usa `automation.enabled`, `automation.apply` e `automation.schedule` do `config.yml`.
-
-Padrão seguro em configuração antiga migrada:
-
-```yaml
-automation:
-  enabled: false
-  apply: false
-  schedule: daily
-```
-
-## 12. Scheduler Hypervisor
-
-```bash
-netbox-discovery hypervisor scheduler enable
-netbox-discovery hypervisor scheduler status
-netbox-discovery hypervisor scheduler disable
-```
-
-Ele também inicia o timer de auto-update como dependência.
-
-## 13. Auditoria
-
-Uma execução com APPLY só deve ser aceita como convergente quando apresentar:
-
-```text
-Runtime blocked: 0
-Erros: 0
-Assets FAIL: 0
-Checks FAIL: 0
-fresh PLAN sem mudança elegível inesperada
-```
-
-Warnings de preservação podem existir sem representar falha.
 
 ## 14. Caminhos
 
 ```text
-Aplicação:              /opt/netbox-discovery
-Configuração:           /opt/netbox-discovery/config.yml
-Relatórios:             /opt/netbox-discovery/reports
-Logs:                   /opt/netbox-discovery/logs
-Backups de update:      /var/lib/netbox-discovery/update-backups
-Lock global:            /var/lock/netbox-discovery-global.lock
-Units systemd:          /etc/systemd/system
+Aplicação:             /opt/netbox-discovery
+Configuração:          /opt/netbox-discovery/config.yml
+Configurações por site:/opt/netbox-discovery/config/sites
+Relatórios:            /opt/netbox-discovery/reports
+Estado de update:      /var/lib/netbox-discovery/update-state.json
+Backups de update:     /var/lib/netbox-discovery/update-backups
+Lock global:           /var/lock/netbox-discovery-global.lock
+Unidades systemd:      /etc/systemd/system
 ```
 
-## 15. Política de documentação
+## 15. Homologação operacional
 
-Toda release deve atualizar a versão exata nos documentos oficiais:
+Uma implantação só deve ser considerada concluída quando apresentar:
 
 ```text
-README.md
-docs/MANUAL.md
-docs/COMANDOS-RAPIDOS.md
-docs/HOMOLOGACAO.md
-RELEASE-NOTES.md
-SECURITY.md
-docs/PATCH-<VERSÃO>.md
+Self-test: PASS
+Check: PASS
+BLOCKED: 0
+WRITE GUARD: PASS
+Runtime blocked: 0
+Erros: 0
+Assets FAIL: 0
+Checks FAIL: 0
+novo PLAN sem mudança elegível inesperada
 ```
-
-O CI bloqueia publicação quando qualquer um desses documentos permanece em versão anterior.

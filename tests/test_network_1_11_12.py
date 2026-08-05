@@ -14,6 +14,10 @@ from modules.discovery import network_v6 as v6
 from modules.product import runner
 
 
+def _version_key(value):
+    return tuple(int(part) for part in value.strip().split("."))
+
+
 def test_01_large_prefix_is_split_and_overlap_is_not_scanned_twice():
     targets = v6._scan_targets([
         "10.19.0.0/16",
@@ -118,9 +122,11 @@ def test_06_runner_uses_v6_for_normal_and_scheduled_runs():
     assert '"modules/discovery/network_v5.py"' not in source
 
 
-def test_07_release_version():
-    assert open(os.path.join(ROOT, "VERSION"), "r").read().strip() == "1.11.14"
-    assert open(os.path.join(BASE, "VERSION"), "r").read().strip() == "1.11.14"
+def test_07_release_version_is_at_least_large_cidr_release():
+    root_version = open(os.path.join(ROOT, "VERSION"), "r").read().strip()
+    package_version = open(os.path.join(BASE, "VERSION"), "r").read().strip()
+    assert root_version == package_version
+    assert _version_key(root_version) >= _version_key("1.11.12")
 
 
 def main():

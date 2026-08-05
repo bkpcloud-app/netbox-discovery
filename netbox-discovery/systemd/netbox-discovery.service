@@ -6,6 +6,10 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=root
+# Every automatic collection first checks the stable channel and installs a
+# validated update when available. A temporary GitHub/update failure is logged
+# but does not suppress inventory collection with the current installed build.
+ExecStartPre=-/usr/local/bin/netbox-discovery update scheduled
 ExecStart=/usr/local/bin/netbox-discovery scheduled-run
 TimeoutStartSec=0
 Nice=10
