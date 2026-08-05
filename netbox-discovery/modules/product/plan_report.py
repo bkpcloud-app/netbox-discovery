@@ -162,6 +162,12 @@ def print_write_guard(guard):
         guard.get("live_devices", 0),
         guard.get("change_percent", 0),
     ))
+    if "percent_enforced" in guard:
+        print("WRITE GUARD POLÍTICA: {0} | percentual={1} | base mínima={2}".format(
+            guard.get("policy", "?"),
+            "ATIVO" if guard.get("percent_enforced") else "ADIADO",
+            guard.get("percent_min_base", (guard.get("limits") or {}).get("PERCENT_MIN_BASE", "?")),
+        ))
     violations = guard.get("violations") or []
     if violations:
         print("WRITE GUARD VIOLAÇÕES: {0}".format(" | ".join(str(value) for value in violations)))

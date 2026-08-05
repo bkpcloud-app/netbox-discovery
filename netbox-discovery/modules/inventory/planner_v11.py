@@ -4,6 +4,7 @@ from __future__ import print_function
 
 import os
 import sys
+from collections import Counter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -75,6 +76,83 @@ def _recover_existing_collision_devices(plan, state):
             intent["action"] = "NOOP"
 
 
+def _limit(name, default):
+    raw = v10.clean(os.environ.get(name))
+    if not raw:
+        return default
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return default
+
+
+def _apply_final_write_guard(plan, state):
+    """Apply absolute limits always and percentage only after a stable site baseline.
+
+    A site with few Devices is commonly being onboarded. Applying a percentage to
+    a base of 13 Devices, for example, makes 17 otherwise eligible additions look
+    like 131% growth and prevents any controlled bootstrap. For bases below the
+    configured minimum, absolute CREATE/UPDATE/REPAIR/TOTAL caps remain mandatory;
+    only the percentage rule is deferred until the site has enough live Devices.
+    """
+    limits = {
+        "CREATE": _limit("NETBOX_DISCOVERY_MAX_CREATE", 25),
+        "UPDATE_SAFE": _limit("NETBOX_DISCOVERY_MAX_UPDATE", 50),
+        "REPAIR_SAFE_VM_DUPLICATE": _limit("NETBOX_DISCOVERY_MAX_REPAIR", 20),
+        "TOTAL": _limit("NETBOX_DISCOVERY_MAX_TOTAL_CHANGES", 75),
+        "PERCENT": _limit("NETBOX_DISCOVERY_MAX_CHANGE_PERCENT", 20),
+        "PERCENT_MIN_BASE": _limit("NETBOX_DISCOVERY_PERCENT_MIN_BASE", 50),
+    }
+    eligible = [
+        row for row in plan
+        if v10.clean(row.get("decision")) == "READY"
+        and v10.clean(row.get("action")) in (
+            "CREATE", "UPDATE_SAFE", "REPAIR_SAFE_VM_DUPLICATE"
+        )
+    ]
+    counts = Counter(v10.clean(row.get("action")) for row in eligible)
+    live_count = len(state.get("devices") or [])
+    percent_denominator = max(1, live_count)
+    percent = int(round((100.0 * len(eligible)) / percent_denominator))
+    percent_enforced = live_count >= limits["PERCENT_MIN_BASE"]
+
+    violations = []
+    for action in ("CREATE", "UPDATE_SAFE", "REPAIR_SAFE_VM_DUPLICATE"):
+        if counts.get(action, 0) > limits[action]:
+            violations.append("{0}={1}>{2}".format(action, counts[action], limits[action]))
+    if len(eligible) > limits["TOTAL"]:
+        violations.append("TOTAL={0}>{1}".format(len(eligible), limits["TOTAL"]))
+    if percent_enforced and percent > limits["PERCENT"] and len(eligible) > 10:
+        violations.append("PERCENT={0}%>{1}%".format(percent, limits["PERCENT"]))
+
+    guard = {
+        "status": "BLOCK" if violations else "PASS",
+        "counts": dict(counts),
+        "eligible_total": len(eligible),
+        "live_devices": live_count,
+        "change_percent": percent,
+        "limits": limits,
+        "violations": violations,
+        "percent_enforced": bool(percent_enforced),
+        "percent_min_base": limits["PERCENT_MIN_BASE"],
+        "policy": "ABSOLUTE_AND_PERCENT" if percent_enforced else "SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY",
+    }
+    for row in plan:
+        row["write_guard"] = guard
+    if not violations:
+        return
+
+    reason = "WRITE_GUARD_LIMIT_EXCEEDED:{0}".format(",".join(violations))
+    for row in eligible:
+        row["decision"] = "BLOCKED"
+        row["action"] = "NOOP"
+        row["reasons"] = [reason]
+        row["interfaces"] = []
+        row["ip_intents"] = []
+        row.pop("repair", None)
+        row["identity_policy"] = "GLOBAL_WRITE_GUARD"
+
+
 def _defer_write_guard(plan, state):
     """Do not mutate intermediate decisions; Planner V11 applies the final guard."""
     return None
@@ -85,17 +163,17 @@ def build_plan(recon, classification, state):
     # Running it in an intermediate layer can turn candidates into BLOCKED before
     # later identity policies correctly downgrade them to REVIEW. Defer every
     # nested invocation and evaluate once, after the complete V11 decision set.
-    final_write_guard = core._apply_write_guard
+    original_write_guard = core._apply_write_guard
     core._apply_write_guard = _defer_write_guard
     try:
         plan, prereq = ORIG_BUILD_PLAN(recon, classification, state)
     finally:
-        core._apply_write_guard = final_write_guard
+        core._apply_write_guard = original_write_guard
 
     _recover_existing_collision_devices(plan, state)
     v10._attach_idempotency_identity(plan)
     v9._prune_prerequisites_to_ready_actions(plan, prereq)
-    final_write_guard(plan, state)
+    _apply_final_write_guard(plan, state)
     return plan, prereq
 
 
