@@ -14,8 +14,9 @@ if BASE not in sys.path:
 
 from modules.inventory import planner_v11
 from modules.product import plan_report
+from modules.product import updater
 
-VERSION = "1.11.18"
+MIN_VERSION = "1.11.18"
 ENV_NAMES = (
     "NETBOX_DISCOVERY_MAX_CREATE",
     "NETBOX_DISCOVERY_MAX_UPDATE",
@@ -53,9 +54,11 @@ def ready(action, total):
     ]
 
 
-def test_01_release_versions_are_synced():
-    assert read("VERSION").strip() == VERSION
-    assert read("netbox-discovery/VERSION").strip() == VERSION
+def test_01_release_versions_include_1_11_18_or_newer():
+    root_version = read("VERSION").strip()
+    package_version = read("netbox-discovery/VERSION").strip()
+    assert root_version == package_version
+    assert updater.version_key(root_version) >= updater.version_key(MIN_VERSION)
 
 
 def test_02_small_site_uses_absolute_limits_and_allows_dcm_bootstrap():
@@ -169,18 +172,9 @@ def test_08_planner_v11_keeps_single_final_guard_contract():
     assert "SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY" in source
 
 
-def test_09_documentation_is_current():
-    markers = {
-        "README.md": "**Versão atual:** 1.11.18",
-        "docs/MANUAL.md": "**Versão:** 1.11.18",
-        "docs/COMANDOS-RAPIDOS.md": "# netbox-discovery 1.11.18",
-        "docs/HOMOLOGACAO.md": "# netbox-discovery 1.11.18",
-        "RELEASE-NOTES.md": "## V1.11.18",
-        "SECURITY.md": "**Versão da política:** 1.11.18",
-        "docs/PATCH-1.11.18.md": "# netbox-discovery 1.11.18",
-    }
-    for relative, marker in markers.items():
-        assert marker in read(relative), relative
+def test_09_historical_documentation_remains_available():
+    assert "# netbox-discovery 1.11.18" in read("docs/PATCH-1.11.18.md")
+    assert "## V1.11.18" in read("RELEASE-NOTES.md")
 
 
 def main():
