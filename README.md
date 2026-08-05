@@ -2,125 +2,98 @@
 
 Produto BKPCLOUD para descoberta, classificação, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.11.14 — PRODUCT V1  
-**Distribuição:** repositório oficial `bkpcloud-app/netbox-discovery`  
-**Canal de produção:** `stable`  
-**NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
+**Versão atual:** 1.11.15 — PRODUCT V1  
+**Distribuição:** `bkpcloud-app/netbox-discovery`  
+**Canal de produção:** `stable`
 
-## Atualização automática
-
-A instalação e qualquer upgrade habilitam o timer de atualização do canal `stable`:
-
-```bash
-netbox-discovery update scheduler status
-```
-
-Política padrão:
-
-```text
-Frequência: diária
-Persistent: true
-Atraso aleatório: até 30 minutos
-Validação: self-test antes e depois
-Falha de instalação: rollback automático
-```
-
-Ao habilitar o scheduler Network ou Hypervisor, o timer correspondente também inicia o timer de atualização como dependência. Assim, instalações antigas continuam atualizadas mesmo quando o auto-update ainda não estava habilitado.
-
-Desabilitar um scheduler de coleta não desabilita o auto-update.
-
-## Primeira execução
-
-```bash
-netbox-discovery update run
-netbox-discovery version
-netbox-discovery check
-netbox-discovery run
-```
-
-`netbox-discovery run` executa descoberta e PLAN sem escrita. A escrita só ocorre com `netbox-discovery run --apply`.
-
-## Pipeline Network atual
+## Pipeline atual
 
 ```text
 DISCOVER V6 / 4.6-product
 → CLASSIFY V8 / 5.6-product
 → RECONCILE V5 / 3.3-product
 → PLAN V11 / 5.3-product
-→ WRITE GUARD + PREFLIGHT
 → IMPORT V12 / 6.1-product
 → AUDIT V11 / 6.9-product
 ```
 
-Pipeline e Runner:
+`netbox-discovery run` é read-only. Escrita no NetBox só ocorre com `netbox-discovery run --apply` e permanece protegida por PLAN, write guard, preflight, identidade e auditoria.
 
-```text
-Pipeline: 3.4-product
-Runner: 3.4-product
+## Instalação e atualização
+
+```bash
+netbox-discovery update run
+netbox-discovery version
+netbox-discovery check
+netbox-discovery status
 ```
 
-## Redes grandes
+O updater:
 
-Prefixos grandes, como `/16`, ativam automaticamente o modo `LARGE-CIDR`:
+- consulta o canal `stable`;
+- valida a versão remota;
+- executa self-test do pacote candidato;
+- cria backup da instalação atual;
+- instala preservando configuração e credenciais;
+- testa novamente;
+- executa rollback em caso de falha;
+- mantém versões com falha em quarentena.
 
-- divisão em lotes de até `/24`;
-- execução paralela controlada;
-- timeout e retry por lote;
-- progresso visível;
-- portas de infraestrutura, impressão, CFTV e OT no discovery primário;
-- nenhuma escrita sem `--apply`.
+## Auto-update
+
+O timer `netbox-discovery-update.timer` fica habilitado por padrão e verifica atualizações diariamente com atraso aleatório de até 30 minutos.
+
+A partir da 1.11.15, cada execução automática Network ou Hypervisor também segue obrigatoriamente:
+
+```text
+UPDATE PREFLIGHT
+→ instalar atualização validada, quando existir
+→ validar instalação
+→ executar coleta automática
+```
+
+Se o GitHub estiver temporariamente indisponível, o erro de update é registrado e a coleta continua usando a versão instalada. Isso evita perder inventário por indisponibilidade externa.
+
+O preflight automático não modifica `automation.apply` e não autoriza escrita no NetBox.
 
 ## Schedulers
 
-Network:
-
 ```bash
 netbox-discovery scheduler enable
-netbox-discovery scheduler status
 netbox-discovery scheduler disable
+netbox-discovery scheduler status
 ```
-
-Hypervisor:
 
 ```bash
 netbox-discovery hypervisor scheduler enable
-netbox-discovery hypervisor scheduler status
 netbox-discovery hypervisor scheduler disable
+netbox-discovery hypervisor scheduler status
 ```
 
-Atualização:
+Habilitar um scheduler também garante que o timer de update esteja ativo. Desabilitar a coleta não desabilita o auto-update.
 
-```bash
-netbox-discovery update scheduler enable
-netbox-discovery update scheduler status
-```
+## Redes grandes
 
-## Segurança de escrita
+O Discovery V6 divide prefixos grandes, como `/16`, em lotes `/24`, elimina sobreposição duplicada, aplica paralelismo controlado e apresenta erro explícito por lote. A execução automática e manual pode ser acompanhada pelo `journalctl` sem depender da sessão SSH.
 
-```text
-READY/CREATE                    → somente com --apply
-READY/UPDATE_SAFE               → somente com --apply
-READY/REPAIR_SAFE_VM_DUPLICATE  → somente após preflight e write guard
-READY/NOOP                      → não altera
-DELEGATED                       → não altera
-REVIEW                          → não altera
-BLOCKED                         → não altera
-```
+## Segurança
 
-O produto preserva nomes existentes e não executa PATCH automático de `name`.
+- nenhuma exclusão automática de Device;
+- nenhum PATCH automático de nome;
+- nome existente no NetBox é preservado;
+- VM confirmada permanece delegada ao inventário de virtualização;
+- serial conflitante não é gravado;
+- `REVIEW`, `DELEGATED` e `BLOCKED` nunca escrevem;
+- `READY/CREATE` e `READY/UPDATE_SAFE` escrevem somente com `--apply`;
+- atualização automática não altera a política de APPLY.
 
-## Documentação obrigatória
+## Documentação
 
-Cada release deve manter a versão exata em:
+- `docs/MANUAL.md`: operação completa;
+- `docs/COMANDOS-RAPIDOS.md`: comandos de campo;
+- `docs/HOMOLOGACAO.md`: estado CI/LIVE;
+- `RELEASE-NOTES.md`: histórico de releases;
+- `SECURITY.md`: política de segurança;
+- `docs/PATCH-1.11.15.md`: detalhes desta versão.
 
-```text
-README.md
-docs/MANUAL.md
-docs/COMANDOS-RAPIDOS.md
-docs/HOMOLOGACAO.md
-RELEASE-NOTES.md
-SECURITY.md
-docs/PATCH-<VERSÃO>.md
-```
-
-O CI bloqueia a publicação quando qualquer documento obrigatório fica em versão anterior.
+A release é bloqueada no CI quando os documentos obrigatórios não carregam a versão exata do `VERSION`.
