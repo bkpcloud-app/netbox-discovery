@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.11.16
+**Versão da política:** 1.11.17
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
@@ -34,6 +34,37 @@ O updater não pode:
 - executar `run --apply`;
 - alterar redes, exclusões ou communities;
 - substituir token ou configuração do cliente.
+
+## Write guard final
+
+O write guard é uma proteção contra impacto anormal e deve avaliar somente mudanças efetivas do PLAN final.
+
+A partir da 1.11.17:
+
+```text
+camadas intermediárias não bloqueiam candidatos
+→ políticas finais classificam cada registro
+→ Planner V11 calcula o guard uma única vez
+```
+
+Entram no cálculo:
+
+```text
+READY/CREATE
+READY/UPDATE_SAFE
+READY/REPAIR_SAFE_VM_DUPLICATE
+```
+
+Não entram:
+
+```text
+READY/NOOP
+REVIEW
+DELEGATED
+BLOCKED por política anterior
+```
+
+Essa correção não aumenta limites nem autoriza escrita. Se as mudanças finais excederem os limites, o guard converte todos os elegíveis para `BLOCKED/NOOP` e remove interfaces, intenções de IP e reparos daquele ciclo.
 
 ## Relatórios nativos do PLAN
 
