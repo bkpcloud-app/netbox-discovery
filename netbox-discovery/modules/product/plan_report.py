@@ -104,6 +104,13 @@ def flatten_reasons(row):
     return values or ["SEM_MOTIVO_INFORMADO"]
 
 
+def effective_write_guard(records):
+    guards = [row.get("write_guard") for row in records if isinstance(row.get("write_guard"), dict)]
+    if not guards:
+        return {}
+    return dict(guards[0])
+
+
 def build_payload(site, plan_path, plan, run_path, run):
     records = [row for row in (plan.get("records") or []) if isinstance(row, dict)]
     decisions = Counter(row_decision(row) for row in records)
@@ -131,6 +138,7 @@ def build_payload(site, plan_path, plan, run_path, run):
         "action_summary": dict(actions),
         "actions_by_decision": by_decision_action,
         "reasons_by_decision": reasons,
+        "write_guard": effective_write_guard(records),
         "records": records,
     }
 
@@ -144,6 +152,21 @@ def print_counter(title, values):
         print("  {0}: {1}".format(key, total))
 
 
+def print_write_guard(guard):
+    if not guard:
+        print("WRITE GUARD: NÃO INFORMADO")
+        return
+    print("WRITE GUARD: {0} | elegíveis={1} | base={2} | mudanças={3}%".format(
+        guard.get("status", "?"),
+        guard.get("eligible_total", 0),
+        guard.get("live_devices", 0),
+        guard.get("change_percent", 0),
+    ))
+    violations = guard.get("violations") or []
+    if violations:
+        print("WRITE GUARD VIOLAÇÕES: {0}".format(" | ".join(str(value) for value in violations)))
+
+
 def print_summary(payload):
     print("===== PLAN SUMMARY =====")
     print("Site: {0}".format(payload["site"]))
@@ -152,6 +175,7 @@ def print_summary(payload):
     print("NetBox write: {0}".format("SIM" if payload["netbox_write"] else "NÃO"))
     print("PLAN: {0}".format(payload["plan_path"]))
     print("Registros: {0}".format(payload["record_count"]))
+    print_write_guard(payload.get("write_guard") or {})
     print_counter("Decisões:", payload["decision_summary"])
     print_counter("Ações em todos os registros:", payload["action_summary"])
 
@@ -180,6 +204,7 @@ def print_details(payload, decision, limit):
     print("Site: {0}".format(payload["site"]))
     print("Run ID: {0}".format(payload["run_id"] or "NÃO VINCULADO"))
     print("NetBox write: {0}".format("SIM" if payload["netbox_write"] else "NÃO"))
+    print_write_guard(payload.get("write_guard") or {})
     shown = selected if limit <= 0 else selected[:limit]
     for index, row in enumerate(shown, 1):
         print("")
