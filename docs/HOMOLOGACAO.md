@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.17 — Matriz de Homologação
+# netbox-discovery 1.11.18 — Matriz de Homologação
 
 ## Estados
 
@@ -11,7 +11,7 @@ NOT LIVE      = ainda não validado em ambiente real
 
 CI PASS não substitui LIVE PASS.
 
-## Linha de base FBA
+## FBA
 
 **Estado:** LIVE PASS como referência funcional.
 
@@ -19,122 +19,97 @@ CI PASS não substitui LIVE PASS.
 BLOCKED: 0
 Assets FAIL: 0
 Checks FAIL: 0
-Audit: PASS_WITH_WARNINGS
 Scheduler Network: ENABLED
 APPLY: NÃO
-Auto-update preflight: configurado
 ```
 
 ## DCM
 
-**Estado atual:** LIVE PARTIAL.
+**Estado:** LIVE PARTIAL.
 
 Validado:
 
-- configuração e redes preservadas;
-- Discovery V6 concluído em redes grandes;
-- dry-run concluído sem escrita no NetBox;
-- 109 hosts descobertos e 100 assets reconciliados no ciclo observado;
-- relatório nativo do PLAN funcionando na 1.11.16;
-- scheduler Network desabilitado durante homologação;
-- auto-update ativo.
+- Discovery V6 em redes grandes;
+- 109 hosts e 100 assets no ciclo observado;
+- dry-run sem escrita;
+- relatório nativo do PLAN;
+- write guard calculado sobre decisões finais;
+- scheduler Network desabilitado durante homologação.
 
-PLAN observado:
+PLAN da 1.11.17:
 
 ```text
 READY: 12
 DELEGATED: 43
-REVIEW: 11
-BLOCKED: 34
-NetBox write: NÃO
+REVIEW: 26
+BLOCKED: 19
+WRITE GUARD: BLOCK
+eligible_total: 17
+live_devices: 13
+change_percent: 131%
+violação: PERCENT=131%>20%
 ```
 
-O relatório revelou:
+Dos 19 bloqueados:
 
 ```text
-WRITE_GUARD_LIMIT_EXCEEDED: CREATE=32>25, PERCENT=246%>20%
+17 = somente limite percentual
+2  = DUPLICATE_DESIRED_NAME / RECONCILE_REVIEW_CANDIDATE
 ```
 
-Mas o resumo final apresentava apenas 13 ações `CREATE`, todas fora de READY:
+Os dois conflitos reais são:
 
 ```text
-REVIEW/CREATE: 11
-BLOCKED/CREATE: 2
-READY/CREATE: 0
+10.28.1.20
+10.28.1.25
 ```
 
-Diagnóstico: o guard de uma camada intermediária foi aplicado antes das políticas finais transformarem candidatos fracos em `REVIEW`. Esse é o defeito corrigido na 1.11.17.
+## Estado da 1.11.18
+
+**Estado inicial:** CI PASS / NOT LIVE até novo PLAN do DCM.
+
+Contrato:
+
+```text
+base < 50 Devices
+→ SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY
+→ percentual adiado
+→ limites absolutos obrigatórios
+
+base >= 50 Devices
+→ ABSOLUTE_AND_PERCENT
+→ percentual ativo
+```
+
+Regressões obrigatórias:
+
+```text
+17 CREATE finais sobre base 13 → PASS pelo bootstrap
+26 CREATE finais sobre base 13 → BLOCK por CREATE=26>25
+21 UPDATE_SAFE sobre base 100 → BLOCK por PERCENT=21%>20%
+REVIEW/DELEGATED/BLOCKED/READY-NOOP → fora de eligible_total
+```
 
 Pendente no DCM:
 
-- atualizar para 1.11.17;
-- executar novo dry-run completo;
-- confirmar write guard calculado sobre decisões finais;
-- comparar novo PLAN com o ciclo anterior;
-- analisar BLOCKED e REVIEW restantes;
-- não executar APPLY enquanto houver inconsistência ou mudança não aprovada;
-- habilitar scheduler somente após convergência.
+- atualizar para 1.11.18;
+- gerar novo dry-run;
+- confirmar `WRITE GUARD: PASS` com política de bootstrap;
+- confirmar que apenas os dois conflitos Kubernetes permanecem BLOCKED;
+- revisar os 17 READY/CREATE antes de qualquer APPLY;
+- manter scheduler desabilitado até convergência.
 
-## Estado da 1.11.17
-
-**Estado inicial:** CI PASS / NOT LIVE até novo dry-run observado no DCM.
-
-### Contrato corrigido
-
-```text
-camadas intermediárias não aplicam guard mutável
-→ todas as políticas finais são executadas
-→ Planner V11 consolida decisões
-→ write guard é aplicado uma única vez
-```
-
-Critérios específicos:
-
-```text
-32 candidatos intermediários sobre 13 Devices
-→ reclassificados para REVIEW/NOOP
-→ WRITE GUARD PASS
-→ eligible_total=0
-→ nenhum falso WRITE_GUARD_LIMIT_EXCEEDED
-```
-
-Controle positivo:
-
-```text
-26 READY/CREATE finais
-→ limite CREATE=25 excedido
-→ WRITE GUARD BLOCK
-→ todos os 26 bloqueados
-```
-
-O relatório `netbox-discovery plan summary` deve mostrar o guard efetivo, incluindo elegíveis, base, percentual e violações.
-
-## Critérios gerais para liberar scheduler
+## Critérios para liberar APPLY
 
 ```text
 Self-test: PASS
 Check: PASS
-write guard calculado sobre decisões finais
-sem falso GLOBAL_WRITE_GUARD
 WRITE GUARD: PASS
+política exibida corretamente
+BLOCKED reais analisados
+READY/CREATE revisados
 Erros: 0
 Assets FAIL: 0
 Checks FAIL: 0
 PLAN posterior convergente
 ```
-
-## Segurança
-
-A 1.11.17 não reduz os limites de proteção:
-
-```text
-READY/CREATE      → somente com --apply
-READY/UPDATE_SAFE → somente com --apply
-READY/NOOP        → sem escrita
-DELEGATED         → sem escrita
-REVIEW            → sem escrita
-BLOCKED           → sem escrita
-PLAN reports      → somente leitura
-```
-
-A correção altera apenas o momento do cálculo: o guard protege as mudanças finais reais, não candidatos intermediários que não serão escritos.
