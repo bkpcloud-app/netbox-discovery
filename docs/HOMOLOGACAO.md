@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.15 — Matriz de Homologação
+# netbox-discovery 1.11.16 — Matriz de Homologação
 
 ## Estados
 
@@ -13,18 +13,16 @@ CI PASS não substitui LIVE PASS.
 
 ## Linha de base FBA
 
-**Estado:** LIVE PASS na 1.11.10/1.11.11, mantido como referência funcional.
+**Estado:** LIVE PASS como referência funcional.
 
 ```text
-READY: 188
-REVIEW: 64
 BLOCKED: 0
-READY/CREATE: 0
-READY/UPDATE_SAFE: 0
-READY/NOOP: 188
 Assets FAIL: 0
 Checks FAIL: 0
 Audit: PASS_WITH_WARNINGS
+Scheduler Network: ENABLED
+APPLY: NÃO
+Auto-update preflight: configurado
 ```
 
 ## DCM
@@ -33,51 +31,65 @@ Audit: PASS_WITH_WARNINGS
 
 Validado:
 
-- configuração preservada;
-- atualização até 1.11.14;
-- self-test e check PASS;
-- Discovery V6 carregado;
-- auto-update timer ativo;
-- scheduler Network mantido desabilitado durante homologação;
-- nenhum APPLY executado no ciclo de redes grandes.
+- configuração e redes preservadas;
+- Discovery V6 concluído em redes grandes;
+- dry-run concluído sem escrita no NetBox;
+- 109 hosts descobertos e 100 assets reconciliados no ciclo observado;
+- scheduler Network desabilitado durante homologação;
+- auto-update ativo.
+
+PLAN observado antes da 1.11.16:
+
+```text
+READY: 12
+DELEGATED: 43
+REVIEW: 11
+BLOCKED: 34
+NetBox write: NÃO
+```
 
 Pendente:
 
-- novo dry-run completo com a lista final de redes;
-- análise do PLAN;
-- APPLY controlado, se aprovado;
-- auditoria posterior;
-- ativação do scheduler Network.
+- atualizar para 1.11.16;
+- validar `netbox-discovery plan summary`;
+- analisar `plan blocked` e `plan review`;
+- reduzir BLOCKED a zero antes de APPLY;
+- APPLY controlado e auditoria posterior, se aprovados;
+- habilitar scheduler somente após convergência.
 
-## Estado da 1.11.15
+## Estado da 1.11.16
 
-**Estado:** CI PASS / NOT LIVE até atualização e primeira execução automática observada em cliente.
+**Estado inicial:** CI PASS / NOT LIVE.
 
 ### Contrato novo
 
-Cada serviço agendado executa:
-
 ```text
-UPDATE PREFLIGHT
-→ valida versão stable
-→ instala e testa quando necessário
-→ rollback/quarentena em falha de candidato
-→ coleta com a versão instalada válida
+netbox-discovery plan summary
+netbox-discovery plan blocked
+netbox-discovery plan review
+netbox-discovery plan ready
+netbox-discovery plan delegated
 ```
 
-Falha temporária de acesso ao GitHub não cancela a coleta. O evento deve permanecer visível no journal e no estado do updater.
+Os comandos devem:
 
-### Critérios de LIVE PASS da 1.11.15
+- selecionar o último PLAN do site configurado;
+- mostrar Run ID e `NetBox write`;
+- agrupar decisões, ações e motivos;
+- listar detalhes sem alterar o NetBox;
+- aceitar `--json`;
+- preservar o comportamento normal de `netbox-discovery plan` para geração do PLAN.
+
+### Correção de status
+
+Para último RUN dry-run, o status deve apresentar:
 
 ```text
-versão instalada 1.11.15 ou superior
-update scheduler ENABLED
-serviço automático mostra update preflight antes do RUN
-sem update disponível: coleta inicia normalmente
-com GitHub indisponível: coleta continua na versão atual
-com update válido: instala, self-test PASS e coleta inicia
-APPLY permanece conforme config, sem alteração pelo updater
+IMPORT: NÃO EXECUTADO NESTE RUN (dry-run)
+AUDIT: NÃO EXECUTADO NESTE RUN (dry-run)
 ```
+
+Não deve exibir IMPORT/AUDIT históricos como se pertencessem ao RUN atual.
 
 ## Critérios gerais para liberar scheduler
 
@@ -94,7 +106,7 @@ PLAN posterior convergente
 
 ## Segurança
 
-A 1.11.15 não muda regras de escrita:
+A 1.11.16 não muda regras de escrita:
 
 ```text
 READY/CREATE      → somente com --apply
@@ -103,4 +115,5 @@ READY/NOOP        → sem escrita
 DELEGATED         → sem escrita
 REVIEW            → sem escrita
 BLOCKED           → sem escrita
+PLAN reports      → somente leitura
 ```

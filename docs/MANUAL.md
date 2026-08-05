@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.11.15 — PRODUCT V1  
+**Versão:** 1.11.16 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
 
@@ -20,136 +20,42 @@ Pipeline:        3.4-product
 Runner:          3.4-product
 ```
 
-## 2. Atualização manual
+## 2. Atualização
 
 ```bash
 netbox-discovery update run
-```
-
-Validação:
-
-```bash
 netbox-discovery version
 netbox-discovery check
 netbox-discovery status
 ```
 
-O updater consulta o `stable`, valida o pacote candidato, cria backup, preserva configurações, instala, testa e executa rollback quando necessário.
+O updater consulta `stable`, valida o candidato, cria backup, preserva configurações, instala, testa e executa rollback quando necessário.
 
-## 3. Auto-update diário
+## 3. Auto-update
 
-O instalador habilita:
+O instalador habilita `netbox-discovery-update.timer` com execução diária, `Persistent=true` e atraso aleatório de até 30 minutos.
 
-```text
-netbox-discovery-update.timer
-```
-
-Política padrão:
+Antes de cada coleta automática Network ou Hypervisor:
 
 ```text
-OnCalendar=daily
-Persistent=true
-RandomizedDelaySec=30m
+netbox-discovery update scheduled
+→ valida e instala atualização disponível
+→ self-test/check
+→ rollback e quarentena em falha
+→ coleta com a versão instalada válida
 ```
 
-Comandos:
+Falha temporária do GitHub é registrada, mas não cancela a coleta. O updater não altera `automation.apply`.
 
-```bash
-netbox-discovery update scheduler status
-netbox-discovery update scheduler enable
-netbox-discovery update scheduler disable
-```
-
-## 4. Atualização antes de cada coleta automática
-
-Na 1.11.15, os serviços automáticos Network e Hypervisor executam o updater antes da coleta.
-
-Sequência efetiva:
-
-```text
-systemd inicia o serviço
-→ netbox-discovery update scheduled
-→ consulta a versão do canal stable
-→ se houver versão superior, valida o candidato
-→ cria backup
-→ instala preservando configuração
-→ executa self-test e check
-→ em falha, executa rollback e quarentena
-→ inicia a coleta com a instalação disponível
-```
-
-A etapa de update é um preflight tolerante a indisponibilidade externa:
-
-- atualização disponível e válida: instala e segue;
-- nenhuma atualização: segue imediatamente;
-- GitHub indisponível: registra o erro e segue com a versão instalada;
-- versão candidata inválida: rollback/quarentena e segue com a versão instalada válida;
-- outro processo usando o lock global: update é adiado e a coleta respeita o mesmo lock.
-
-Essa automação não habilita APPLY e não muda `automation.apply`.
-
-## 5. Scheduler Network
-
-```bash
-netbox-discovery scheduler enable
-netbox-discovery scheduler disable
-netbox-discovery scheduler status
-```
-
-Ao habilitar, o timer de coleta e o timer de update permanecem ativos. Ao desabilitar a coleta, o update continua independente.
-
-Fluxo sem escrita:
-
-```text
-UPDATE PREFLIGHT
-→ DISCOVER
-→ CLASSIFY
-→ RECONCILE
-→ PLAN
-```
-
-Fluxo com escrita somente quando explicitamente configurado e homologado:
-
-```text
-UPDATE PREFLIGHT
-→ DISCOVER
-→ CLASSIFY
-→ RECONCILE
-→ PLAN
-→ WRITE GUARD
-→ IMPORT READY
-→ AUDIT
-```
-
-## 6. Scheduler Hypervisor
-
-```bash
-netbox-discovery hypervisor scheduler enable
-netbox-discovery hypervisor scheduler disable
-netbox-discovery hypervisor scheduler status
-```
-
-O Hypervisor usa a mesma regra de update preflight. Em proxies `network_proxy` com virtualização centralizada, o scheduler Hypervisor local deve permanecer desabilitado.
-
-## 7. Configuração
+## 4. Configuração
 
 ```bash
 netbox-discovery configure
 ```
 
-O assistente permite definir:
+O assistente define tenant, tenant group, site, token, SSL, redes, exclusões, communities e automação. Ele não inicia descoberta nem escreve no NetBox.
 
-- tenant e tenant group;
-- site;
-- token e validação SSL;
-- redes CIDR;
-- exclusões IP/CIDR;
-- comunidades SNMP;
-- automação Network.
-
-O assistente não inicia descoberta e não escreve no NetBox.
-
-## 8. Execução manual
+## 5. Execução manual
 
 Dry-run:
 
@@ -163,9 +69,68 @@ APPLY controlado:
 netbox-discovery run --apply
 ```
 
-Nunca use `--apply` antes de revisar o PLAN e confirmar `BLOCKED=0`, write guard e identidade.
+Nunca use `--apply` antes de revisar o PLAN.
 
-## 9. Execução fora da sessão SSH
+## 6. Relatório nativo do PLAN
+
+A partir da 1.11.16, não é necessário montar comandos Python para ler JSON.
+
+Resumo do último PLAN do site configurado:
+
+```bash
+netbox-discovery plan summary
+```
+
+Listagens detalhadas:
+
+```bash
+netbox-discovery plan blocked
+netbox-discovery plan review
+netbox-discovery plan ready
+netbox-discovery plan delegated
+netbox-discovery plan all
+```
+
+Opções:
+
+```bash
+netbox-discovery plan blocked --limit 20
+netbox-discovery plan summary --json
+netbox-discovery plan blocked --json
+```
+
+O relatório mostra:
+
+```text
+Site
+Run ID
+Run status
+NetBox write
+arquivo PLAN
+quantidade de registros
+decisões e ações
+motivos agrupados de BLOCKED e REVIEW
+IP, nome, role, decisão, ação, motivos e diffs por registro
+```
+
+Todos esses comandos são somente leitura.
+
+## 7. Status sem mistura histórica
+
+```bash
+netbox-discovery status
+```
+
+Na 1.11.16, quando o último RUN é dry-run, a saída informa:
+
+```text
+IMPORT: NÃO EXECUTADO NESTE RUN (dry-run)
+AUDIT: NÃO EXECUTADO NESTE RUN (dry-run)
+```
+
+O status não apresenta mais IMPORT/AUDIT antigos como se pertencessem ao dry-run atual.
+
+## 8. Execução fora da sessão SSH
 
 ```bash
 UNIT="netbox-discovery-manual-$(date +%Y%m%d-%H%M%S)"
@@ -178,25 +143,39 @@ Acompanhar:
 journalctl -fu "$UNIT.service"
 ```
 
-`CTRL+C` encerra somente a visualização. Para parar a coleta:
+Parar a coleta:
 
 ```bash
 systemctl stop "$UNIT.service"
 ```
 
+`CTRL+C` encerra somente a visualização do journal.
+
+## 9. Schedulers
+
+Network:
+
+```bash
+netbox-discovery scheduler enable
+netbox-discovery scheduler disable
+netbox-discovery scheduler status
+```
+
+Hypervisor:
+
+```bash
+netbox-discovery hypervisor scheduler enable
+netbox-discovery hypervisor scheduler disable
+netbox-discovery hypervisor scheduler status
+```
+
+Em proxies `network_proxy` com virtualização centralizada, o scheduler Hypervisor local permanece desabilitado.
+
 ## 10. Redes grandes
 
-Discovery V6:
+Discovery V6 divide prefixos maiores que `/24` em lotes `/24`, remove sobreposição, usa paralelismo controlado, registra progresso e informa erro por lote.
 
-- divide prefixos maiores que `/24` em lotes `/24`;
-- elimina sobreposição duplicada;
-- usa paralelismo controlado;
-- registra progresso;
-- informa timeout e erro por lote;
-- mantém descoberta SNMP read-only;
-- não depende da sessão SSH.
-
-## 11. Decisões e escrita
+## 11. Decisões
 
 ```text
 READY/CREATE       → escreve somente com --apply
@@ -210,53 +189,26 @@ BLOCKED            → não escreve
 ## 12. Segurança de identidade
 
 - nome existente no NetBox é autoridade;
-- PATCH automático de `name` é proibido;
+- PATCH automático de nome é proibido;
 - serial placeholder ou conflitante não é gravado;
 - Device manual é preservado;
 - VM confirmada não vira Device físico duplicado;
-- primary IP existente pode ser preservado por política;
 - write guard bloqueia impacto anormal;
-- auditoria posterior deve ter `Assets FAIL=0` e `Checks FAIL=0` para LIVE PASS.
+- relatório do PLAN nunca altera o NetBox.
 
-## 13. Status esperado
-
-```bash
-netbox-discovery status
-```
-
-Campos principais:
+## 13. Caminhos
 
 ```text
-Versão instalada
-Canal de update
-Auto-update timer
-Tenant/Site
-Network scheduler
-APPLY
-Último RUN
-PLAN
-WRITE GUARD
-IMPORT
-AUDIT
-Inventário de virtualização
+Aplicação:              /opt/netbox-discovery
+Configuração:           /opt/netbox-discovery/config.yml
+Configurações por site: /opt/netbox-discovery/config/sites
+Relatórios:             /opt/netbox-discovery/reports
+Estado de update:       /var/lib/netbox-discovery/update-state.json
+Backups de update:      /var/lib/netbox-discovery/update-backups
+Lock global:            /var/lock/netbox-discovery-global.lock
 ```
 
-## 14. Caminhos
-
-```text
-Aplicação:             /opt/netbox-discovery
-Configuração:          /opt/netbox-discovery/config.yml
-Configurações por site:/opt/netbox-discovery/config/sites
-Relatórios:            /opt/netbox-discovery/reports
-Estado de update:      /var/lib/netbox-discovery/update-state.json
-Backups de update:     /var/lib/netbox-discovery/update-backups
-Lock global:           /var/lock/netbox-discovery-global.lock
-Unidades systemd:      /etc/systemd/system
-```
-
-## 15. Homologação operacional
-
-Uma implantação só deve ser considerada concluída quando apresentar:
+## 14. Critérios de homologação
 
 ```text
 Self-test: PASS
@@ -267,5 +219,5 @@ Runtime blocked: 0
 Erros: 0
 Assets FAIL: 0
 Checks FAIL: 0
-novo PLAN sem mudança elegível inesperada
+PLAN posterior convergente
 ```

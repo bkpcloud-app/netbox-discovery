@@ -95,8 +95,6 @@ def main():
     disc = load(latest("{0}-discovery-*.json".format(site)))
     recon = load(latest("{0}-reconciliation-*.json".format(site)))
     plan = load(latest("{0}-plan-*.json".format(site)))
-    imp = load(latest("{0}-import-*.json".format(site)))
-    audit = load(latest("{0}-audit-*.json".format(site)))
     run = load(latest("{0}-run-*.json".format(site)))
 
     print("Último Network RUN: {0}".format(run.get("status", "SEM EXECUÇÃO")))
@@ -118,18 +116,28 @@ def main():
                 guard.get("status", "?"), guard.get("eligible_total", 0), guard.get("change_percent", 0)))
     else:
         print("PLAN: sem relatório")
-    if imp:
-        summary = imp.get("summary") or {}
-        print("IMPORT: mode={0} processados={1} blocked={2} erros={3}".format(
-            imp.get("mode", ""), val(summary, "assets_processed"), val(summary, "runtime_blocked"), val(summary, "errors")))
+
+    if run and not bool(run.get("apply_requested", False)):
+        print("IMPORT: NÃO EXECUTADO NESTE RUN (dry-run)")
+        print("AUDIT: NÃO EXECUTADO NESTE RUN (dry-run)")
+    elif run:
+        imp = load(latest("{0}-import-*.json".format(site)))
+        audit = load(latest("{0}-audit-*.json".format(site)))
+        if imp:
+            summary = imp.get("summary") or {}
+            print("IMPORT: mode={0} processados={1} blocked={2} erros={3}".format(
+                imp.get("mode", ""), val(summary, "assets_processed"), val(summary, "runtime_blocked"), val(summary, "errors")))
+        else:
+            print("IMPORT: relatório não encontrado para o último APPLY")
+        if audit:
+            assets = audit.get("asset_summary") or {}
+            print("AUDIT: {0} | PASS={1} WARN={2} FAIL={3}".format(
+                audit.get("status", ""), val(assets, "PASS"), val(assets, "WARN"), val(assets, "FAIL")))
+        else:
+            print("AUDIT: relatório não encontrado para o último APPLY")
     else:
-        print("IMPORT: sem relatório")
-    if audit:
-        assets = audit.get("asset_summary") or {}
-        print("AUDIT: {0} | PASS={1} WARN={2} FAIL={3}".format(
-            audit.get("status", ""), val(assets, "PASS"), val(assets, "WARN"), val(assets, "FAIL")))
-    else:
-        print("AUDIT: sem relatório")
+        print("IMPORT: sem RUN")
+        print("AUDIT: sem RUN")
 
     try:
         from modules.hypervisor.config import load_hypervisor_config

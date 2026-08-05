@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, classificação, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.11.15 — PRODUCT V1  
+**Versão atual:** 1.11.16 — PRODUCT V1  
 **Distribuição:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
 
@@ -18,6 +18,22 @@ DISCOVER V6 / 4.6-product
 ```
 
 `netbox-discovery run` é read-only. Escrita no NetBox só ocorre com `netbox-discovery run --apply` e permanece protegida por PLAN, write guard, preflight, identidade e auditoria.
+
+## Relatório nativo do PLAN
+
+A 1.11.16 elimina comandos Python improvisados para analisar relatórios. O último PLAN do site configurado pode ser consultado diretamente:
+
+```bash
+netbox-discovery plan summary
+netbox-discovery plan blocked
+netbox-discovery plan review
+netbox-discovery plan ready
+netbox-discovery plan delegated
+```
+
+Esses comandos são somente leitura e mostram Run ID, status, escrita no NetBox, decisões, ações, motivos, IP, nome e role. `--json` fornece saída estruturada.
+
+O `status` também deixa de misturar IMPORT/AUDIT históricos com um dry-run atual. Quando o último RUN não solicitou APPLY, informa explicitamente que IMPORT e AUDIT não foram executados naquele RUN.
 
 ## Instalação e atualização
 
@@ -43,7 +59,7 @@ O updater:
 
 O timer `netbox-discovery-update.timer` fica habilitado por padrão e verifica atualizações diariamente com atraso aleatório de até 30 minutos.
 
-A partir da 1.11.15, cada execução automática Network ou Hypervisor também segue obrigatoriamente:
+Cada execução automática Network ou Hypervisor segue:
 
 ```text
 UPDATE PREFLIGHT
@@ -52,9 +68,7 @@ UPDATE PREFLIGHT
 → executar coleta automática
 ```
 
-Se o GitHub estiver temporariamente indisponível, o erro de update é registrado e a coleta continua usando a versão instalada. Isso evita perder inventário por indisponibilidade externa.
-
-O preflight automático não modifica `automation.apply` e não autoriza escrita no NetBox.
+Se o GitHub estiver temporariamente indisponível, o erro de update é registrado e a coleta continua usando a versão instalada. O preflight automático não modifica `automation.apply` e não autoriza escrita no NetBox.
 
 ## Schedulers
 
@@ -85,7 +99,8 @@ O Discovery V6 divide prefixos grandes, como `/16`, em lotes `/24`, elimina sobr
 - serial conflitante não é gravado;
 - `REVIEW`, `DELEGATED` e `BLOCKED` nunca escrevem;
 - `READY/CREATE` e `READY/UPDATE_SAFE` escrevem somente com `--apply`;
-- atualização automática não altera a política de APPLY.
+- atualização automática não altera a política de APPLY;
+- comandos de relatório do PLAN são somente leitura.
 
 ## Documentação
 
@@ -94,6 +109,6 @@ O Discovery V6 divide prefixos grandes, como `/16`, em lotes `/24`, elimina sobr
 - `docs/HOMOLOGACAO.md`: estado CI/LIVE;
 - `RELEASE-NOTES.md`: histórico de releases;
 - `SECURITY.md`: política de segurança;
-- `docs/PATCH-1.11.15.md`: detalhes desta versão.
+- `docs/PATCH-1.11.16.md`: detalhes desta versão.
 
 A release é bloqueada no CI quando os documentos obrigatórios não carregam a versão exata do `VERSION`.
