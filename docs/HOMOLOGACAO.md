@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.16 — Matriz de Homologação
+# netbox-discovery 1.11.17 — Matriz de Homologação
 
 ## Estados
 
@@ -35,10 +35,11 @@ Validado:
 - Discovery V6 concluído em redes grandes;
 - dry-run concluído sem escrita no NetBox;
 - 109 hosts descobertos e 100 assets reconciliados no ciclo observado;
+- relatório nativo do PLAN funcionando na 1.11.16;
 - scheduler Network desabilitado durante homologação;
 - auto-update ativo.
 
-PLAN observado antes da 1.11.16:
+PLAN observado:
 
 ```text
 READY: 12
@@ -48,55 +49,73 @@ BLOCKED: 34
 NetBox write: NÃO
 ```
 
-Pendente:
+O relatório revelou:
 
-- atualizar para 1.11.16;
-- validar `netbox-discovery plan summary`;
-- analisar `plan blocked` e `plan review`;
-- reduzir BLOCKED a zero antes de APPLY;
-- APPLY controlado e auditoria posterior, se aprovados;
+```text
+WRITE_GUARD_LIMIT_EXCEEDED: CREATE=32>25, PERCENT=246%>20%
+```
+
+Mas o resumo final apresentava apenas 13 ações `CREATE`, todas fora de READY:
+
+```text
+REVIEW/CREATE: 11
+BLOCKED/CREATE: 2
+READY/CREATE: 0
+```
+
+Diagnóstico: o guard de uma camada intermediária foi aplicado antes das políticas finais transformarem candidatos fracos em `REVIEW`. Esse é o defeito corrigido na 1.11.17.
+
+Pendente no DCM:
+
+- atualizar para 1.11.17;
+- executar novo dry-run completo;
+- confirmar write guard calculado sobre decisões finais;
+- comparar novo PLAN com o ciclo anterior;
+- analisar BLOCKED e REVIEW restantes;
+- não executar APPLY enquanto houver inconsistência ou mudança não aprovada;
 - habilitar scheduler somente após convergência.
 
-## Estado da 1.11.16
+## Estado da 1.11.17
 
-**Estado inicial:** CI PASS / NOT LIVE.
+**Estado inicial:** CI PASS / NOT LIVE até novo dry-run observado no DCM.
 
-### Contrato novo
-
-```text
-netbox-discovery plan summary
-netbox-discovery plan blocked
-netbox-discovery plan review
-netbox-discovery plan ready
-netbox-discovery plan delegated
-```
-
-Os comandos devem:
-
-- selecionar o último PLAN do site configurado;
-- mostrar Run ID e `NetBox write`;
-- agrupar decisões, ações e motivos;
-- listar detalhes sem alterar o NetBox;
-- aceitar `--json`;
-- preservar o comportamento normal de `netbox-discovery plan` para geração do PLAN.
-
-### Correção de status
-
-Para último RUN dry-run, o status deve apresentar:
+### Contrato corrigido
 
 ```text
-IMPORT: NÃO EXECUTADO NESTE RUN (dry-run)
-AUDIT: NÃO EXECUTADO NESTE RUN (dry-run)
+camadas intermediárias não aplicam guard mutável
+→ todas as políticas finais são executadas
+→ Planner V11 consolida decisões
+→ write guard é aplicado uma única vez
 ```
 
-Não deve exibir IMPORT/AUDIT históricos como se pertencessem ao RUN atual.
+Critérios específicos:
+
+```text
+32 candidatos intermediários sobre 13 Devices
+→ reclassificados para REVIEW/NOOP
+→ WRITE GUARD PASS
+→ eligible_total=0
+→ nenhum falso WRITE_GUARD_LIMIT_EXCEEDED
+```
+
+Controle positivo:
+
+```text
+26 READY/CREATE finais
+→ limite CREATE=25 excedido
+→ WRITE GUARD BLOCK
+→ todos os 26 bloqueados
+```
+
+O relatório `netbox-discovery plan summary` deve mostrar o guard efetivo, incluindo elegíveis, base, percentual e violações.
 
 ## Critérios gerais para liberar scheduler
 
 ```text
 Self-test: PASS
 Check: PASS
-BLOCKED: 0
+write guard calculado sobre decisões finais
+sem falso GLOBAL_WRITE_GUARD
 WRITE GUARD: PASS
 Erros: 0
 Assets FAIL: 0
@@ -106,7 +125,7 @@ PLAN posterior convergente
 
 ## Segurança
 
-A 1.11.16 não muda regras de escrita:
+A 1.11.17 não reduz os limites de proteção:
 
 ```text
 READY/CREATE      → somente com --apply
@@ -117,3 +136,5 @@ REVIEW            → sem escrita
 BLOCKED           → sem escrita
 PLAN reports      → somente leitura
 ```
+
+A correção altera apenas o momento do cálculo: o guard protege as mudanças finais reais, não candidatos intermediários que não serão escritos.
