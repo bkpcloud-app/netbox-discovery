@@ -17,6 +17,10 @@ from modules.product import config_migrations
 from modules.product import configurator
 
 
+def _version_key(value):
+    return tuple(int(part) for part in value.strip().split("."))
+
+
 def _tmp_config(text):
     root = tempfile.mkdtemp(prefix="network-1-11-11-")
     path = os.path.join(root, "config.yml")
@@ -129,9 +133,11 @@ def test_07_current_scheduler_command_can_toggle_migrated_config():
         shutil.rmtree(root)
 
 
-def test_08_release_version():
-    assert open(os.path.join(ROOT, "VERSION"), "r").read().strip() == "1.11.14"
-    assert open(os.path.join(BASE, "VERSION"), "r").read().strip() == "1.11.14"
+def test_08_release_version_is_at_least_scheduler_migration():
+    root_version = open(os.path.join(ROOT, "VERSION"), "r").read().strip()
+    package_version = open(os.path.join(BASE, "VERSION"), "r").read().strip()
+    assert root_version == package_version
+    assert _version_key(root_version) >= _version_key("1.11.11")
 
 
 def main():
