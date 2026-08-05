@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.11.15
+**Versão da política:** 1.11.16
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
@@ -15,38 +15,15 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 
 ## Atualização automática
 
-A atualização usa exclusivamente o canal `stable`.
+A atualização usa o canal `stable`, valida o candidato, cria backup, preserva configuração, executa self-test/check e faz rollback/quarentena quando necessário.
 
-Antes da instalação:
-
-- valida a versão remota;
-- clona o pacote candidato;
-- compara versões raiz e pacote;
-- executa self-test;
-- cria backup da versão instalada.
-
-Depois da instalação:
-
-- executa self-test;
-- executa `check` quando existe configuração;
-- grava estado do updater;
-- executa rollback em falha;
-- coloca a versão defeituosa em quarentena.
-
-## Preflight antes da coleta automática
-
-Na 1.11.15, Network e Hypervisor executam:
+Antes da coleta automática:
 
 ```text
 ExecStartPre=-/usr/local/bin/netbox-discovery update scheduled
 ```
 
-O prefixo de tolerância existe para impedir que uma indisponibilidade externa do GitHub interrompa o inventário. Isso não ignora falha silenciosamente: o erro permanece no journal e em `update-state.json`.
-
-A coleta só continua com:
-
-- a nova versão validada; ou
-- a versão anterior preservada/recuperada.
+Indisponibilidade temporária do GitHub fica registrada e não cancela a coleta com a versão instalada válida.
 
 ## Separação entre update e APPLY
 
@@ -57,6 +34,27 @@ O updater não pode:
 - executar `run --apply`;
 - alterar redes, exclusões ou communities;
 - substituir token ou configuração do cliente.
+
+## Relatórios nativos do PLAN
+
+Os comandos abaixo são estritamente somente leitura:
+
+```text
+netbox-discovery plan summary
+netbox-discovery plan blocked
+netbox-discovery plan review
+netbox-discovery plan ready
+netbox-discovery plan delegated
+netbox-discovery plan all
+```
+
+Eles apenas leem JSON já existente em `/opt/netbox-discovery/reports`. Não chamam Importer, não usam `--apply`, não fazem PATCH/POST/DELETE e não modificam o NetBox.
+
+A saída pode conter informações operacionais do cliente. Não deve ser versionada no repositório público.
+
+## Status vinculado ao último RUN
+
+Quando o último RUN é dry-run, `status` deve declarar IMPORT/AUDIT como não executados naquele RUN. É proibido apresentar relatório histórico de APPLY como se pertencesse ao dry-run atual.
 
 ## Decisões Network
 
@@ -86,8 +84,6 @@ Network, Hypervisor e Updater compartilham:
 ```text
 /var/lock/netbox-discovery-global.lock
 ```
-
-Isso impede atualização e inventário concorrentes sobre a mesma instalação.
 
 ## Documentação obrigatória
 
