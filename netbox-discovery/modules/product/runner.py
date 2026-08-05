@@ -15,9 +15,9 @@ import uuid
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 LOCK_FILE = "/var/lock/netbox-discovery-global.lock"
-RUNNER_VERSION = "3.3-product"
+RUNNER_VERSION = "3.4-product"
 COMPONENTS = {
-    "discovery": "network_v5.py",
+    "discovery": "network_v6.py",
     "pipeline": "pipeline.py",
     "planner": "planner_v11.py",
     "importer": "importer_v12.py",
@@ -37,7 +37,7 @@ def load_cfg():
 
 def run_step(name, cmd, stages, environment):
     started = datetime.datetime.utcnow().isoformat() + "Z"
-    print("===== {0} =====".format(name))
+    print("===== {0} =====".format(name), flush=True)
     try:
         subprocess.check_call(cmd, env=environment)
         stages.append({"stage": name, "status": "OK", "started": started,
@@ -83,7 +83,7 @@ def execute(apply_mode):
     stages = []
     try:
         print("RUN ID: {0}".format(run_id))
-        run_step("DISCOVER", [py, os.path.join(BASE, "modules/discovery/network_v5.py")], stages, environment)
+        run_step("DISCOVER", [py, os.path.join(BASE, "modules/discovery/network_v6.py")], stages, environment)
         run_step("CLASSIFY_RECONCILE_PLAN_FINAL", [py, os.path.join(BASE, "modules/inventory/pipeline.py")], stages, environment)
         if apply_mode:
             run_step("IMPORT_FINALIZE", [py, os.path.join(BASE, "modules/importers/importer_v12.py"), "--apply"], stages, environment)
