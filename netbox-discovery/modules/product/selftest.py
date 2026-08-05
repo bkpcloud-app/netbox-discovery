@@ -95,9 +95,11 @@ def _check_direct_entrypoint(label, path, errors):
 def _check_effective_components(base, errors):
     code = (
         "import sys; sys.path.insert(0, {0}); "
+        "from modules.discovery import network_v6 as d; "
         "from modules.inventory import planner_v11 as p; "
         "from modules.importers import importer_v12 as i; "
         "from modules.auditors import auditor_v11 as a; "
+        "assert d.DISCOVERY_WRAPPER_VERSION == '4.6-product'; "
         "assert p.PLANNER_VERSION == '5.3-product'; "
         "assert i.IMPORTER_VERSION == '6.1-product'; "
         "assert a.AUDITOR_VERSION == '6.9-product'"
@@ -123,7 +125,7 @@ def check(base, package_root=""):
     required = [
         "VERSION", "bin/netbox-discovery", "lib/config.py", "lib/netbox.py",
         "modules/discovery/network.py", "modules/discovery/network_v2.py", "modules/discovery/network_v3.py",
-        "modules/discovery/network_v4.py", "modules/discovery/network_v5.py",
+        "modules/discovery/network_v4.py", "modules/discovery/network_v5.py", "modules/discovery/network_v6.py",
         "modules/inventory/classifier.py", "modules/inventory/classifier_v2.py",
         "modules/inventory/classifier_v3.py", "modules/inventory/classifier_v4.py",
         "modules/inventory/classifier_v5.py", "modules/inventory/classifier_v6.py",
