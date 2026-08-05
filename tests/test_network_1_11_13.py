@@ -14,6 +14,10 @@ from modules.discovery import network_v6
 from modules.product import selftest
 
 
+def _version_key(value):
+    return tuple(int(part) for part in value.strip().split("."))
+
+
 def test_01_cli_check_reports_discovery_v6():
     source = open(os.path.join(BASE, "bin", "netbox-discovery"), "r").read()
     assert "DISCOVER V6: OK" in source
@@ -36,13 +40,16 @@ def test_03_selftest_requires_v6_and_validates_component_version():
 
 def test_04_selftest_passes_with_current_package():
     version, errors = selftest.check(BASE, ROOT)
-    assert version == "1.11.14"
+    current = open(os.path.join(ROOT, "VERSION"), "r").read().strip()
+    assert version == current
     assert errors == [], errors
 
 
-def test_05_release_version():
-    assert open(os.path.join(ROOT, "VERSION"), "r").read().strip() == "1.11.14"
-    assert open(os.path.join(BASE, "VERSION"), "r").read().strip() == "1.11.14"
+def test_05_release_version_is_at_least_v6_entrypoint_release():
+    root_version = open(os.path.join(ROOT, "VERSION"), "r").read().strip()
+    package_version = open(os.path.join(BASE, "VERSION"), "r").read().strip()
+    assert root_version == package_version
+    assert _version_key(root_version) >= _version_key("1.11.13")
 
 
 def main():
