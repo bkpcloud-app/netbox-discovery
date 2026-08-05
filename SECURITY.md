@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.11.18
+**Versão da política:** 1.11.19
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
@@ -18,6 +18,31 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 O updater usa o canal `stable`, valida o candidato, cria backup, preserva configuração, executa self-test/check e faz rollback/quarentena em falha.
 
 O updater não pode alterar `automation.apply`, executar `run --apply` ou modificar redes, exclusões, communities e credenciais.
+
+## Identidade estável para novos Devices
+
+Nenhum novo Device pode permanecer `READY/CREATE` quando sua identidade final é fraca.
+
+```text
+existing_device_id ausente
++ READY/CREATE
++ discovery_uid WEAK
+→ REVIEW/NOOP
+```
+
+A regra é aplicada na camada final do Planner, independentemente de role ou `asset_class`, antes do write guard.
+
+Ao rebaixar o candidato, o Planner deve:
+
+- remover interfaces;
+- remover intenções de IP;
+- remover diffs e reparos;
+- registrar `NEW_DEVICE_REQUIRES_STABLE_IDENTITY`;
+- impedir que o candidato entre em `eligible_total`.
+
+Identidades estáveis esperadas para novos Devices incluem serial validado ou management MAC. Nomes DNS, certificados TLS, serviços, fingerprints genéricos e hashes `WEAK` não bastam para criação automática.
+
+Devices existentes não são rebaixados por essa regra; continuam protegidos pela reconciliação, autoridade dos dados existentes e políticas de atualização segura.
 
 ## Write guard final
 
@@ -40,7 +65,7 @@ BLOCKED por identidade ou política
 
 ## Bootstrap de site pequeno
 
-Na 1.11.18, bases com menos de 50 Devices usam:
+Bases com menos de 50 Devices usam:
 
 ```text
 SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY
@@ -62,10 +87,9 @@ ABSOLUTE_AND_PERCENT
 PERCENT <= 20%
 ```
 
-A base mínima padrão pode ser alterada com `NETBOX_DISCOVERY_PERCENT_MIN_BASE`, mas qualquer alteração operacional deve ser registrada e homologada.
+O bootstrap não reduz exigências de identidade e não libera:
 
-O bootstrap não libera:
-
+- `discovery_uid WEAK` para novo Device;
 - `DUPLICATE_DESIRED_NAME`;
 - conflitos de serial ou identidade;
 - `REVIEW`;

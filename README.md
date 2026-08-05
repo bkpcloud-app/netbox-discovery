@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, classificação, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.11.18 — PRODUCT V1  
+**Versão atual:** 1.11.19 — PRODUCT V1  
 **Distribuição:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
 
@@ -19,11 +19,30 @@ DISCOVER V6 / 4.6-product
 
 `netbox-discovery run` é read-only. Escrita no NetBox só ocorre com `netbox-discovery run --apply` e permanece protegida por PLAN, write guard, preflight, identidade e auditoria.
 
+## Identidade estável obrigatória para novos Devices
+
+A 1.11.19 adiciona uma proteção final independente de role ou classe:
+
+```text
+novo READY/CREATE + discovery_uid WEAK
+→ REVIEW/NOOP
+→ nenhuma interface ou intenção de IP é escrita
+```
+
+Isso impede que equipamentos identificados apenas por nome, certificado, serviço ou hash fraco sejam criados automaticamente. Novos Devices precisam chegar ao PLAN com identidade estável, normalmente:
+
+```text
+SERIAL:<fabricante>:<serial>
+MGMT-MAC:<mac>
+```
+
+A regra protege inclusive roles genéricas como `WINDOWS_HOST`, `HOST_OR_APPLIANCE` e `SMS_GATEWAY`. Devices existentes não são rebaixados por essa regra; continuam sujeitos às políticas de reconciliação e atualização segura.
+
 ## Write guard final e bootstrap de sites pequenos
 
-O write guard é calculado uma única vez, depois de todas as políticas finais do Planner.
+O write guard é calculado uma única vez, depois de todas as políticas finais do Planner, incluindo a validação de identidade estável.
 
-Na 1.11.18, sites com menos de 50 Devices entram automaticamente na política:
+Sites com menos de 50 Devices usam:
 
 ```text
 SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY
@@ -35,22 +54,7 @@ Nesse estágio:
 - somente a regra percentual fica adiada;
 - o percentual volta a ser obrigatório quando a base alcançar 50 Devices;
 - o padrão pode ser ajustado com `NETBOX_DISCOVERY_PERCENT_MIN_BASE`;
-- conflitos de identidade, nomes duplicados, REVIEW e DELEGATED continuam bloqueados normalmente.
-
-Isso evita que uma base inicial pequena torne impossível o primeiro inventário. Exemplo: 17 mudanças sobre 13 Devices equivalem a 131%, mas ainda ficam abaixo do limite absoluto padrão de 25 criações.
-
-O relatório nativo apresenta:
-
-```text
-WRITE GUARD: PASS|BLOCK
-WRITE GUARD POLÍTICA: SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY|ABSOLUTE_AND_PERCENT
-percentual: ADIADO|ATIVO
-base mínima
-eligible_total
-live_devices
-change_percent
-violations
-```
+- conflitos de identidade, nomes duplicados, REVIEW e DELEGATED continuam protegidos.
 
 ## Relatório nativo do PLAN
 
@@ -96,6 +100,7 @@ O Discovery V6 divide prefixos grandes, como `/16`, em lotes `/24`, elimina sobr
 - nome existente no NetBox é preservado;
 - VM confirmada permanece delegada;
 - serial conflitante não é gravado;
+- identidade `WEAK` nunca cria novo Device;
 - `REVIEW`, `DELEGATED` e `BLOCKED` nunca escrevem;
 - `READY/CREATE` e `READY/UPDATE_SAFE` escrevem somente com `--apply`;
 - limites absolutos permanecem ativos durante bootstrap;
@@ -109,4 +114,4 @@ O Discovery V6 divide prefixos grandes, como `/16`, em lotes `/24`, elimina sobr
 - `docs/HOMOLOGACAO.md`;
 - `RELEASE-NOTES.md`;
 - `SECURITY.md`;
-- `docs/PATCH-1.11.18.md`.
+- `docs/PATCH-1.11.19.md`.

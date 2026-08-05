@@ -1,3 +1,27 @@
+## V1.11.19 — Final stable identity guard
+
+A revisão ao vivo do PLAN 1.11.18 no DCM encontrou três novos candidatos indevidamente liberados como `READY/CREATE` apesar de possuírem `Discovery UID: WEAK`:
+
+```text
+10.28.1.22 | SRV-DCAR03 | WINDOWS_HOST
+10.28.1.23 | SRV-DCAR02 | WINDOWS_HOST
+10.225.1.61 | SMS Agente SNMP | SMS_GATEWAY
+```
+
+As proteções anteriores eram específicas para classes físicas e roles Windows conhecidas. A 1.11.19 adiciona uma validação final independente de role e classe:
+
+```text
+novo READY/CREATE + discovery_uid WEAK
+→ REVIEW/NOOP
+→ interfaces e intenções de IP removidas
+```
+
+A regra roda antes do write guard. Assim, candidatos fracos não entram em `eligible_total`, enquanto identidades estáveis por serial ou management MAC continuam elegíveis.
+
+No cenário DCM, o resultado esperado passa de 17 para 14 `READY/CREATE`, mantendo os dois conflitos Kubernetes em `BLOCKED` e o write guard em `PASS`.
+
+---
+
 ## V1.11.18 — Small-site bootstrap write guard
 
 Sites em fase inicial não usam mais a regra percentual enquanto a base tiver menos de 50 Devices.

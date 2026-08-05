@@ -76,6 +76,40 @@ def _recover_existing_collision_devices(plan, state):
             intent["action"] = "NOOP"
 
 
+def _enforce_stable_identity_for_new_creates(plan):
+    """Fail closed for every new Device candidate whose final identity is weak.
+
+    Earlier role-specific guards covered physical Devices and known Windows roles,
+    but a generic WINDOWS_HOST or HOST_OR_APPLIANCE row could still finish as
+    READY/CREATE with a WEAK discovery UID. The final Planner layer is the last
+    authority before the write guard, so it must reject every new weak identity
+    regardless of role or asset class.
+    """
+    for row in plan or []:
+        if row.get("existing_device_id"):
+            continue
+        if v10.clean(row.get("decision")) != "READY":
+            continue
+        if v10.clean(row.get("action")) != "CREATE":
+            continue
+        uid = v10.clean(row.get("discovery_uid")).upper()
+        if not uid.startswith("WEAK:"):
+            continue
+
+        row["decision"] = "REVIEW"
+        row["action"] = "NOOP"
+        row["interfaces"] = []
+        row["ip_intents"] = []
+        row["safe_diffs"] = []
+        row.pop("repair", None)
+        reasons = list(row.get("reasons") or [])
+        marker = "NEW_DEVICE_REQUIRES_STABLE_IDENTITY"
+        if marker not in reasons:
+            reasons.append(marker)
+        row["reasons"] = sorted(set(reasons))
+        row["identity_policy"] = "FINAL_NEW_CREATE_IDENTITY_NOT_STABLE"
+
+
 def _limit(name, default):
     raw = v10.clean(os.environ.get(name))
     if not raw:
@@ -171,6 +205,7 @@ def build_plan(recon, classification, state):
         core._apply_write_guard = original_write_guard
 
     _recover_existing_collision_devices(plan, state)
+    _enforce_stable_identity_for_new_creates(plan)
     v10._attach_idempotency_identity(plan)
     v9._prune_prerequisites_to_ready_actions(plan, prereq)
     _apply_final_write_guard(plan, state)

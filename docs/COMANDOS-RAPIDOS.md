@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.18 — Comandos rápidos
+# netbox-discovery 1.11.19 — Comandos rápidos
 
 ## Atualizar e validar
 
@@ -20,6 +20,25 @@ netbox-discovery plan delegated
 ```
 
 Todos são somente leitura.
+
+## Identidade para novos Devices
+
+```text
+Discovery UID SERIAL ou MGMT-MAC
+→ pode permanecer READY após as demais políticas
+
+Discovery UID WEAK
+→ REVIEW/NOOP
+→ não cria Device, interface ou IP
+```
+
+Para conferir os candidatos liberados:
+
+```bash
+netbox-discovery plan ready --limit 0
+```
+
+Nenhum novo `READY/CREATE` deve apresentar `Discovery UID: WEAK`.
 
 ## Write guard
 
@@ -73,11 +92,12 @@ netbox-discovery scheduler status
 ## Segurança
 
 ```text
-run              = sem escrita
-run --apply      = escrita READY após proteções
-REVIEW           = não escreve
-DELEGATED        = não escreve
-BLOCKED          = não escreve
-bootstrap        = adia só o percentual
-limites absolutos= sempre ativos
+run               = sem escrita
+run --apply       = escrita READY após proteções
+WEAK new Device   = REVIEW/NOOP
+REVIEW            = não escreve
+DELEGATED         = não escreve
+BLOCKED           = não escreve
+bootstrap         = adia só o percentual
+limites absolutos = sempre ativos
 ```
