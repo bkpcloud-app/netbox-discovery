@@ -85,12 +85,17 @@ def build_plan(recon, classification, state):
 
 
 def main(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0].lower() in ("summary", "blocked", "review", "ready", "delegated", "all"):
+        from modules.product import plan_report
+        return plan_report.main(args)
+
     old_build = v10.build_plan
     old_version = v10.PLANNER_VERSION
     try:
         v10.build_plan = build_plan
         v10.PLANNER_VERSION = PLANNER_VERSION
-        return v10.main(argv)
+        return v10.main(args)
     finally:
         v10.build_plan = old_build
         v10.PLANNER_VERSION = old_version
