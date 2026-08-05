@@ -1,3 +1,27 @@
+## V1.11.18 — Small-site bootstrap write guard
+
+Sites em fase inicial não usam mais a regra percentual enquanto a base tiver menos de 50 Devices.
+
+```text
+base < 50  → SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY
+base >= 50 → ABSOLUTE_AND_PERCENT
+```
+
+Durante o bootstrap, apenas o percentual é adiado. Os limites absolutos continuam obrigatórios:
+
+```text
+CREATE=25
+UPDATE_SAFE=50
+REPAIR_SAFE_VM_DUPLICATE=20
+TOTAL=75
+```
+
+O relatório nativo do PLAN mostra política, percentual ativo/adiado e base mínima. A regressão cobre o cenário DCM de 17 mudanças sobre 13 Devices, o bloqueio absoluto de 26 criações e o bloqueio percentual em base madura.
+
+Conflitos de identidade, nomes duplicados, REVIEW, DELEGATED e BLOCKED continuam sem escrita.
+
+---
+
 ## V1.11.17 — Final write guard ordering
 
 O ciclo DCM revelou um falso bloqueio: uma camada intermediária calculou `CREATE=32` antes de políticas posteriores reclassificarem candidatos fracos para `REVIEW`.
