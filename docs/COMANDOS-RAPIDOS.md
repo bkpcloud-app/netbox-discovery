@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.16 — Comandos rápidos
+# netbox-discovery 1.11.17 — Comandos rápidos
 
 ## Atualizar e validar
 
@@ -9,12 +9,22 @@ netbox-discovery check
 netbox-discovery status
 ```
 
-## Analisar o último PLAN sem comando manual
+## Analisar o último PLAN
 
 Resumo:
 
 ```bash
 netbox-discovery plan summary
+```
+
+A saída inclui o write guard calculado sobre as decisões finais:
+
+```text
+WRITE GUARD: PASS|BLOCK
+eligible_total
+live_devices
+change_percent
+violations
 ```
 
 Bloqueados:
@@ -49,6 +59,16 @@ netbox-discovery plan summary --json
 ```
 
 Todos são somente leitura.
+
+## Regra do write guard
+
+```text
+políticas finais primeiro
+→ write guard uma única vez
+→ somente READY com mudança efetiva entra no cálculo
+```
+
+`REVIEW`, `DELEGATED`, `BLOCKED` e `READY/NOOP` não contam como mudanças elegíveis.
 
 ## Auto-update
 
@@ -121,6 +141,7 @@ plan blocked     = somente leitura
 REVIEW           = não escreve
 DELEGATED        = não escreve
 BLOCKED          = não escreve
+WRITE GUARD      = avaliado apenas no PLAN final
 UPDATE PREFLIGHT = não altera automation.apply
 ```
 
