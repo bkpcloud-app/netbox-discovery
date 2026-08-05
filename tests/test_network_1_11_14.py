@@ -6,16 +6,22 @@ import os
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 BASE = os.path.join(ROOT, "netbox-discovery")
-VERSION = "1.11.14"
 
 
 def read(path):
     return open(path, "r").read()
 
 
-def test_01_release_versions_are_synced():
-    assert read(os.path.join(ROOT, "VERSION")).strip() == VERSION
+def version_key(value):
+    return tuple(int(part) for part in value.strip().split("."))
+
+
+VERSION = read(os.path.join(ROOT, "VERSION")).strip()
+
+
+def test_01_release_versions_are_synced_and_not_older_than_1_11_14():
     assert read(os.path.join(BASE, "VERSION")).strip() == VERSION
+    assert version_key(VERSION) >= version_key("1.11.14")
 
 
 def test_02_network_scheduler_starts_update_timer_without_disable_coupling():
@@ -45,7 +51,7 @@ def test_05_installer_enables_update_but_not_collection_schedulers():
     assert "Schedulers network/hypervisor: NÃO HABILITADOS" in installer
 
 
-def test_06_every_required_document_has_exact_release_version():
+def test_06_every_required_document_has_exact_current_release_version():
     markers = {
         "README.md": "**Versão atual:** {0}".format(VERSION),
         "docs/MANUAL.md": "**Versão:** {0}".format(VERSION),
