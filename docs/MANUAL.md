@@ -1,133 +1,222 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.11.2 — PRODUCT V1  
+**Versão:** 1.11.14 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
-**Canal de produção:** `stable`  
-**NetBox BKPCLOUD:** `https://inventory.bkpcloud.app.br:8080`
+**Canal de produção:** `stable`
 
-> `CI PASS` não equivale a `LIVE PASS`. Estado real em `docs/HOMOLOGACAO.md`.
+> `CI PASS` não equivale a `LIVE PASS`. Consulte `docs/HOMOLOGACAO.md` antes de liberar APPLY automático em um cliente.
 
-## 1. Atualização
+## 1. Componentes atuais
 
-A atualização oficial não exige download ou instalação manual:
+```text
+Discovery V6:   4.6-product
+Classifier V8:  5.6-product
+Reconciler V5:  3.3-product
+Planner V11:    5.3-product
+Importer V12:   6.1-product
+Auditor V11:    6.9-product
+Pipeline:        3.4-product
+Runner:          3.4-product
+```
+
+## 2. Instalação e atualização
+
+O instalador preserva configuração, token, redes, exclusões e comunidades SNMP. Antes de substituir o produto, executa self-test e cria backup.
+
+Atualização manual:
 
 ```bash
 netbox-discovery update run
 ```
 
-O updater consulta o canal `stable`, valida as versões, clona a release em área temporária, executa self-test, cria backup, instala, testa novamente e faz rollback automático se necessário.
-
-Verificação:
+Validação:
 
 ```bash
 netbox-discovery version
-netbox-discovery self-test
+netbox-discovery check
 netbox-discovery status
 ```
 
-## 2. Execução Network
+O updater trabalha no canal `stable`, valida o pacote antes e depois da instalação e executa rollback quando a nova versão não passa no self-test.
+
+## 3. Auto-update
+
+A instalação habilita por padrão:
+
+```text
+netbox-discovery-update.timer
+```
+
+Configuração padrão:
+
+```text
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30m
+```
+
+Verificar:
+
+```bash
+netbox-discovery update scheduler status
+```
+
+Habilitar manualmente:
+
+```bash
+netbox-discovery update scheduler enable
+```
+
+Desabilitar manualmente:
+
+```bash
+netbox-discovery update scheduler disable
+```
+
+### Garantia ao habilitar coleta automática
+
+Os timers Network e Hypervisor possuem dependência `Wants` do timer de atualização. Portanto, ao iniciar qualquer scheduler de coleta, o auto-update também é iniciado.
+
+Essa dependência não usa `Also=`. Assim, desabilitar um scheduler de coleta não desabilita o auto-update.
+
+## 4. Configuração Network
+
+```bash
+netbox-discovery configure
+```
+
+O assistente grava:
+
+```text
+Tenant
+Tenant Group opcional
+Site
+URL e token do NetBox
+validação SSL
+redes CIDR
+exclusões
+comunidades SNMP
+automação
+```
+
+O assistente não inicia descoberta e não executa escrita.
+
+Arquivos por site:
+
+```text
+/opt/netbox-discovery/config/sites/<SITE>/networks.conf
+/opt/netbox-discovery/config/sites/<SITE>/exclusions.conf
+/opt/netbox-discovery/config/sites/<SITE>/snmp-communities.conf
+```
+
+## 5. Execução Network
+
+Dry-run completo:
 
 ```bash
 netbox-discovery run
+```
+
+Fluxo:
+
+```text
+DISCOVER
+→ CLASSIFY
+→ RECONCILE
+→ PLAN
+```
+
+Resultado esperado:
+
+```text
+NetBox write: NÃO
+```
+
+Execução com escrita:
+
+```bash
 netbox-discovery run --apply
 ```
 
-Fluxo 1.11.2:
+Fluxo adicional:
 
 ```text
-DISCOVER V5 / 4.5-product
-→ CLASSIFY V7 / 5.3-product
-→ RECONCILE V5
-→ PLAN V9 / 5.0-product
-→ WRITE GUARD + PREFLIGHT GLOBAL FINALIZE
-→ IMPORT V10 / 5.9-product
-→ MAC RECONCILE
-→ REPAIR_SAFE
-→ AUDIT FINALIZE V9
+preflight
+→ write guard
+→ IMPORT somente de registros READY elegíveis
+→ AUDIT
 ```
 
-`run` é read-only. `run --apply` recalcula o PLAN imediatamente antes da escrita.
+Nunca use `--apply` antes de revisar o PLAN.
 
-## 3. Decisões
+## 6. Discovery LARGE-CIDR
+
+Quando o conjunto passa de 4096 endereços candidatos, o Discovery V6 ativa o modo `LARGE-CIDR`.
+
+Comportamento:
+
+- consolida CIDRs sobrepostos;
+- divide prefixos grandes em lotes de até `/24`;
+- usa paralelismo controlado;
+- aplica timeout individual por lote;
+- repete somente lotes com falha;
+- mostra progresso;
+- inclui portas de infraestrutura, impressão, CFTV, virtualização e OT;
+- evita rescue TCP exaustivo sobre dezenas de milhares de endereços ausentes.
+
+Para execução longa fora da sessão SSH:
+
+```bash
+systemd-run --unit=netbox-discovery-manual --collect /usr/local/bin/netbox-discovery run
+```
+
+Acompanhar:
+
+```bash
+journalctl -fu netbox-discovery-manual.service
+```
+
+## 7. Decisões do PLAN
 
 | Decisão/Ação | Significado | Escrita |
 |---|---|---|
 | `READY/CREATE` | novo Device validado | somente com `--apply` |
-| `READY/UPDATE_SAFE` | enriquecimento ou correção protegida | somente com `--apply` |
-| `READY/REPAIR_SAFE_VM_DUPLICATE` | corrige Device duplicado criado pelo produto | após preflight global |
-| `READY/NOOP` | convergente ou preservado | não altera |
-| `DELEGATED` | ownership da VM no inventário central | não |
-| `REVIEW` | evidência insuficiente ou associação humana | não |
-| `BLOCKED` | conflito forte ou write guard | não |
+| `READY/UPDATE_SAFE` | enriquecimento protegido | somente com `--apply` |
+| `READY/REPAIR_SAFE_VM_DUPLICATE` | reparo protegido de duplicidade | após preflight |
+| `READY/NOOP` | convergente ou preservado | não |
+| `DELEGATED` | ownership de VM/Hypervisor | não |
+| `REVIEW` | evidência insuficiente | não |
+| `BLOCKED` | conflito ou write guard | não |
 
-## 4. Windows Server e Workstation
-
-A classificação interna e o destino no NetBox são:
+## 8. Autoridade dos dados
 
 ```text
-WINDOWS_SERVER      → SERVER-WINDOWS
-WINDOWS_WORKSTATION → WORKSTATION-WINDOWS
-DOMAIN_CONTROLLER   → SERVER-WINDOWS
+Nome existente              → NetBox
+Nome observado              → DNS, SNMP, ONVIF ou protocolo
+VM/cluster/host             → inventário central Hypervisor
+Fabricante/modelo/serial    → protocolo específico ou MIB
+IP ativo                    → descoberta de rede
 ```
 
-A edição é aceita somente quando aparece em fonte forte:
+O importer não altera automaticamente o nome de um Device existente.
+
+## 9. Serial e identidade
+
+Fontes de maior autoridade incluem:
 
 ```text
-smb-os-discovery
-smb-system-info
-CPE Windows do serviço
-OS CPE/fingerprint/classe com alta precisão
-```
-
-Exemplos reconhecidos:
-
-```text
-Windows Server 2025/2022/2019/2016/2012 R2/2012/2008 R2/2008
-Windows 11/10/8.1/8/7/Vista/XP
-```
-
-Não são provas suficientes:
-
-```text
-porta 445 aberta
-porta RDP aberta
-Product_Version 10.0.x isolado
-hostname ou padrão de nome
-```
-
-Sem prova, permanece `WINDOWS_HOST` e vai para REVIEW. Evidência forte conflitante gera `windows_family: CONFLICT` e não altera role.
-
-### Correção segura de role existente
-
-Uma troca `SERVER-WINDOWS ↔ WORKSTATION-WINDOWS` só pode ocorrer quando:
-
-1. o Device foi criado pelo produto;
-2. SERIAL, MAC ou IP apontam para esse mesmo Device;
-3. a classificação é HIGH;
-4. SMB/CPE/fingerprint forte comprova a edição;
-5. o role atual já pertence à família Windows;
-6. o PLAN marca `WINDOWS_ROLE_CORRECTION_EXPLICIT_OS`;
-7. o importer revalida tudo antes do PATCH.
-
-Device manual ou role de outra categoria nunca é alterado automaticamente.
-
-## 5. Política de serial
-
-O produto monta uma lista ordenada de candidatos com fonte e peso. Ordem geral:
-
-```text
-ONVIF/Hikvision ISAPI
+Hikvision ISAPI / ONVIF
 Printer-MIB
-FibreAlliance/storage
-Dell iDRAC/service tag
-S7/EtherNet-IP/BACnet/Modbus
-ENTITY-MIB primário
-ENTITY-MIB secundário
-SNMP/descrição explícita
+FibreAlliance
+Dell iDRAC
+Siemens S7 / EtherNet-IP / BACnet / Modbus
+ENTITY-MIB
 ```
 
-Campos disponíveis:
+São rejeitados placeholders, IP, MAC, modelo, hostname e conflitos entre fontes fortes.
+
+Campos importantes no PLAN:
 
 ```text
 serial
@@ -136,228 +225,109 @@ serial_confidence
 serial_candidates
 serial_rejections
 serial_conflict
-serial_evidence_count
 ```
 
-São rejeitados:
+## 10. Virtualização
 
-- `03000000` e outros valores conhecidos de fábrica/teste;
-- sequências simples e caracteres repetidos;
-- serial com menos de 5 ou mais de 64 caracteres;
-- IP, MAC, modelo ou hostname usados como serial;
-- marcadores como UNKNOWN, DEFAULT, SVCTAG e TO BE FILLED BY OEM.
+Configuração:
 
-Quando duas fontes fortes do mesmo nível retornam seriais diferentes:
-
-```text
-serial_confidence: CONFLICT
-serial: vazio
-escrita: bloqueada
+```bash
+netbox-discovery hypervisor configure
 ```
 
-O importer só preenche serial vazio com evidência HIGH ou MEDIUM e sem conflito.
+Dry-run:
 
-## 6. Impressoras
-
-Coleta read-only:
-
-```text
-prtGeneralPrinterName
-prtGeneralSerialNumber
-hrDeviceDescr
+```bash
+netbox-discovery hypervisor run
 ```
 
-A versão 1.11.2:
+Apply:
 
-- avalia todas as instâncias de serial retornadas;
-- extrai somente rótulos explícitos de serial das descrições;
-- rejeita placeholder;
-- normaliza fabricante e modelo;
-- mantém nome manual protegido;
-- melhora Device Type genérico apenas em Device criado pelo produto e com identidade HIGH.
-
-## 7. Hikvision e CFTV
-
-CFTV só é classificado com evidência específica: ONVIF, modelo conhecido, UI/portas coerentes ou fingerprint explícito. OUI ou web genérica não bastam.
-
-Para candidatos fortes, a coleta tenta de forma anônima e somente leitura:
-
-```text
-GET  /ISAPI/System/deviceInfo
-POST /onvif/device_service → GetDeviceInformation
+```bash
+netbox-discovery hypervisor run --apply
 ```
 
-Dados possíveis:
+Em filiais com inventário centralizado, VMs são tratadas como `DELEGATED`; o proxy Network não cria Devices físicos duplicados para elas.
 
-```text
-manufacturer
-model
-firmware
-serial
-hardware_id
-device_name
+## 11. Scheduler Network
+
+Habilitar:
+
+```bash
+netbox-discovery scheduler enable
 ```
 
-Se o equipamento exigir autenticação, a coleta não força acesso, não inventa valores e mantém o ativo em REVIEW quando necessário.
+Status:
 
-## 8. Autoridade dos dados
-
-```text
-Nome de Device existente     → NetBox
-Nome observado               → SNMP, ONVIF, DNS ou protocolo
-Role Windows                 → edição comprovada por SMB/CPE/fingerprint
-VM, cluster e VM interface   → vCenter central / NetBox virtualization
-Fabricante/modelo/serial     → protocolo específico ou ENTITY-MIB
-IP ativo                     → descoberta de rede
+```bash
+netbox-discovery scheduler status
 ```
 
-O importer proíbe PATCH automático de `name`.
+Desabilitar:
 
-## 9. Identidade consolidada
-
-O motor mantém:
-
-```text
-observed_name
-observed_name_source
-discovery_uid
-asset_nature
-asset_nature_source
-identity_provenance
-review_recommendations
+```bash
+netbox-discovery scheduler disable
 ```
 
-`discovery_uid` prefere serial, chassis MAC e MAC de gerenciamento. IP e nome só entram em identidade fraca quando nenhuma fonte melhor existe.
+A execução agendada usa `automation.enabled`, `automation.apply` e `automation.schedule` do `config.yml`.
 
-## 10. Industrial
-
-A coleta é somente leitura e interpreta Siemens S7, EtherNet/IP/CIP, BACnet, Modbus Device Identification, SNMP sysObjectID e ENTITY-MIB.
-
-Papéis possíveis:
-
-```text
-INDUSTRIAL_PLC
-INDUSTRIAL_IO
-INDUSTRIAL_SWITCH
-INDUSTRIAL_COMMUNICATION
-INDUSTRIAL_POWER_METER
-INDUSTRIAL_DRIVE
-INDUSTRIAL_MOTOR_PROTECTION
-INDUSTRIAL_CONTROLLER
-INDUSTRIAL_DEVICE
-```
-
-Sem modelo/função estruturados, permanece genérico e em REVIEW.
-
-## 11. Físico e virtual
-
-Ordem de autoridade:
-
-1. IP ou MAC pertencente a `virtualization.vminterface`: VM confirmada.
-2. Inventário central do vCenter: VM confirmada.
-3. Hardware com modelo e serial fortes: físico confirmado.
-4. OUI VMware/Hyper-V/KVM/Xen/VirtualBox: apenas candidato.
-5. Evidência insuficiente: UNKNOWN/REVIEW.
-
-OUI virtual isolado nunca autoriza criar Device físico duplicado.
-
-## 12. Virtualização centralizada
-
-Em filiais:
+Padrão seguro em configuração antiga migrada:
 
 ```yaml
-product:
-  execution_role: network_proxy
-virtualization:
-  mode: centralized
+automation:
+  enabled: false
+  apply: false
+  schedule: daily
 ```
 
-Status esperado:
+## 12. Scheduler Hypervisor
 
-```text
-Inventário de virtualização: CENTRALIZED
-Hypervisor local: NÃO REQUERIDO
+```bash
+netbox-discovery hypervisor scheduler enable
+netbox-discovery hypervisor scheduler status
+netbox-discovery hypervisor scheduler disable
 ```
 
-`DELEGATED_VM` apresenta VM, interface, MAC, cluster, host físico, site e forma de correlação.
+Ele também inicia o timer de auto-update como dependência.
 
-## 13. Colisão de nomes SNMP
+## 13. Auditoria
 
-Dois equipamentos físicos podem publicar o mesmo `sysName`. A resolução automática exige confiança HIGH, serial ou MAC único e ausência de conflito de IP.
-
-Exemplo:
+Uma execução com APPLY só deve ser aceita como convergente quando apresentar:
 
 ```text
-SW-BA17-LB43JZ
-SW-BA17-KPC2C1
-```
-
-O nome observado permanece `SW-BA17`.
-
-## 14. Gerenciamento OOB
-
-Um iDRAC com service tag correspondente a servidor físico recebe `oob_parent_candidate`. Criação independente permanece em REVIEW até associação segura.
-
-## 15. Write guard
-
-Limites padrão:
-
-```text
-CREATE: 25
-UPDATE_SAFE: 50
-REPAIR_SAFE: 20
-TOTAL: 75
-PERCENT: 20%
-```
-
-Variáveis opcionais:
-
-```text
-NETBOX_DISCOVERY_MAX_CREATE
-NETBOX_DISCOVERY_MAX_UPDATE
-NETBOX_DISCOVERY_MAX_REPAIR
-NETBOX_DISCOVERY_MAX_TOTAL_CHANGES
-NETBOX_DISCOVERY_MAX_CHANGE_PERCENT
-```
-
-Se um limite for excedido, ações elegíveis viram BLOCKED antes da primeira escrita.
-
-## 16. REPAIR_SAFE de VM duplicada
-
-Ordem protegida:
-
-```text
-revalidar ownership
-→ limpar primary/oob do Device
-→ mover IP para virtualization.vminterface
-→ definir primary IPv4 da VM
-→ remover somente o Device duplicado criado pelo produto
-→ auditar convergência
-```
-
-A VM nunca é removida.
-
-## 17. Auditoria
-
-LIVE PASS exige:
-
-```text
-PREFLIGHT GLOBAL FINALIZE: OK
-WRITE GUARD: PASS
 Runtime blocked: 0
 Erros: 0
 Assets FAIL: 0
 Checks FAIL: 0
-preview posterior sem mudança elegível inesperada
+fresh PLAN sem mudança elegível inesperada
 ```
 
-## 18. Caminhos
+Warnings de preservação podem existir sem representar falha.
+
+## 14. Caminhos
 
 ```text
 Aplicação:              /opt/netbox-discovery
 Configuração:           /opt/netbox-discovery/config.yml
-Config Hypervisor:      /etc/netbox-discovery/hypervisors.json
 Relatórios:             /opt/netbox-discovery/reports
+Logs:                   /opt/netbox-discovery/logs
 Backups de update:      /var/lib/netbox-discovery/update-backups
 Lock global:            /var/lock/netbox-discovery-global.lock
+Units systemd:          /etc/systemd/system
 ```
+
+## 15. Política de documentação
+
+Toda release deve atualizar a versão exata nos documentos oficiais:
+
+```text
+README.md
+docs/MANUAL.md
+docs/COMANDOS-RAPIDOS.md
+docs/HOMOLOGACAO.md
+RELEASE-NOTES.md
+SECURITY.md
+docs/PATCH-<VERSÃO>.md
+```
+
+O CI bloqueia publicação quando qualquer um desses documentos permanece em versão anterior.
