@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.11.2
+**Versão da política:** 1.11.14
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
@@ -11,6 +11,21 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 - credenciais VMware, Proxmox, Hyper-V, ONVIF, NetBox ou iDRAC;
 - chaves privadas;
 - relatórios, journals, logs e backups reais.
+
+## Política de atualização
+
+O timer `netbox-discovery-update.timer` usa o canal `stable`, executa diariamente, é persistente e possui atraso aleatório.
+
+A instalação e os schedulers Network/Hypervisor garantem que esse timer esteja ativo. A atualização:
+
+- não habilita `automation.apply`;
+- não inicia APPLY;
+- preserva token e configuração do cliente;
+- valida a release antes e depois;
+- executa rollback em falha;
+- mantém backup da versão anterior.
+
+Os timers de coleta usam dependência `Wants`, não `Also=`. Portanto, desabilitar coleta não desabilita atualizações.
 
 ## Decisões Network
 
@@ -32,82 +47,49 @@ Nome SNMP/ONVIF/DNS      → observação separada
 PATCH automático de name → proibido no importer
 ```
 
-## Windows Server x Workstation
+## Serial
 
-Role de Windows só pode ser separado por fonte forte:
+O serial só é gravado quando a evidência é suficiente e não existe conflito forte.
 
-```text
-SMB OS explícito
-CPE Windows
-fingerprint/classe de SO com alta precisão
-```
+São proibidos:
 
-RDP, porta aberta ou hostname isolado não autorizam troca.
+- placeholders e sequências de teste;
+- IP ou MAC usados como serial;
+- serial igual a modelo ou hostname;
+- escrita com `serial_confidence` LOW/NONE/CONFLICT;
+- escolha automática quando fontes fortes equivalentes divergem.
 
-Correção automática `SERVER-WINDOWS ↔ WORKSTATION-WINDOWS` exige:
+## Windows Server e Workstation
+
+Troca automática de role exige simultaneamente:
 
 1. Device criado pelo produto;
 2. match forte por serial, MAC ou IP;
 3. confiança HIGH;
 4. fonte SMB/CPE/fingerprint forte;
 5. role atual dentro da família Windows;
-6. PLAN com `WINDOWS_ROLE_CORRECTION_EXPLICIT_OS`;
-7. revalidação no importer.
+6. PLAN explícito;
+7. revalidação imediatamente antes do PATCH.
 
-Device manual ou role fora dessa família é bloqueado.
+Device manual é preservado.
 
-## Serial
+## LARGE-CIDR
 
-O serial é tratado como identidade forte e recebe validação específica.
+O Discovery V6 divide prefixos grandes em lotes. Essa mudança altera apenas a estratégia de coleta:
 
-São proibidos:
+- não muda política de escrita;
+- não cria Device sem `--apply`;
+- não habilita scheduler;
+- não habilita APPLY;
+- falha com identificação dos lotes problemáticos.
 
-- placeholders, sequências de teste e caracteres repetidos;
-- IP ou MAC usados como serial;
-- serial igual a modelo ou hostname;
-- escrita com `serial_confidence` LOW/NONE/CONFLICT;
-- escolha automática quando fontes fortes equivalentes divergem.
+## Hypervisor
 
-O PLAN deve manter fonte, candidatos, rejeições e conflito. O importer só preenche serial vazio quando a evidência é HIGH ou MEDIUM e não há conflito.
-
-## Printer-MIB
-
-A coleta é read-only e limitada a identidade:
-
-```text
-prtGeneralPrinterName
-prtGeneralSerialNumber
-hrDeviceDescr
-```
-
-Nenhum SNMP SET é executado. Valores padrão não são gravados.
-
-## Hikvision e ONVIF
-
-A coleta adicional é anônima e somente leitura:
-
-```text
-GET /ISAPI/System/deviceInfo
-ONVIF GetDeviceInformation
-```
-
-Ela só é tentada em candidatos fortes de CFTV. Não força autenticação, não tenta senha e não executa controle de câmera. Falha ou HTTP 401/403 significa apenas ausência de enriquecimento.
-
-## Coleta industrial
-
-São permitidas somente consultas de identificação read-only por SNMP, Siemens S7 information, EtherNet/IP CIP Identity, BACnet information e Modbus device identification. Não há SNMP SET nem comando de controle de processo.
-
-## Físico versus virtual
-
-Correspondência com `virtualization.vminterface` e inventário central é autoritativa. OUI VMware/Hyper-V/KVM/Xen/VirtualBox sozinho é apenas candidato e nunca autoriza criar Device físico duplicado.
-
-## Virtualização centralizada
-
-Filiais operam como `network_proxy`. Ausência de vCenter local não é falha. A VM nunca é removida pelo pipeline Network.
+Ações de reclassificação, mudança de site, cluster e reparo de VM exigem preflight. O inventário Network não cria Device físico quando a identidade pertence a VM centralizada.
 
 ## Write guard
 
-Antes da primeira escrita, o PLAN mede CREATE, UPDATE_SAFE, REPAIR_SAFE, total e percentual. Limites padrão:
+Limites padrão:
 
 ```text
 CREATE: 25
@@ -117,40 +99,20 @@ TOTAL: 75
 PERCENT: 20%
 ```
 
-Impacto acima do limite converte ações elegíveis em BLOCKED/NOOP.
+Ultrapassar um limite bloqueia ações elegíveis antes da primeira escrita.
 
-## Preflight global
+## Documentação como controle de release
 
-Antes da escrita:
-
-1. recalcular PLAN V9;
-2. validar write guard;
-3. reler Device, VM, interfaces, IPs, MACs e relações;
-4. bloquear drift ou consulta incompleta;
-5. criar journal;
-6. somente então permitir POST/PATCH/DELETE protegido.
-
-## REPAIR_SAFE e DELETE
-
-Não existe DELETE genérico no Network. A VM nunca é removida. O único DELETE automático permitido é Device duplicado de VM integralmente criado pelo produto e sem vínculo manual.
-
-## Concorrência e rastreabilidade
-
-Network, Hypervisor, Compare e Update compartilham lock global.
-
-- cada runner recebe `run_id`;
-- POST/PATCH/DELETE não recebem retry cego;
-- falha parcial fica registrada;
-- não usar correções manuais em massa para contornar o produto.
-
-## Credenciais Hypervisor
+A versão exata deve constar em:
 
 ```text
-/etc/netbox-discovery/hypervisors.json
+README.md
+docs/MANUAL.md
+docs/COMANDOS-RAPIDOS.md
+docs/HOMOLOGACAO.md
+RELEASE-NOTES.md
+SECURITY.md
+docs/PATCH-<VERSÃO>.md
 ```
 
-Permissão esperada: `0600`.
-
-## Homologação
-
-`CI PASS` não significa `LIVE PASS`. A primeira execução de uma release no site deve ser dry-run.
+O CI bloqueia publicação quando qualquer documento obrigatório permanece em versão anterior.
