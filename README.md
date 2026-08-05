@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, classificação, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.11.16 — PRODUCT V1  
+**Versão atual:** 1.11.17 — PRODUCT V1  
 **Distribuição:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
 
@@ -19,9 +19,32 @@ DISCOVER V6 / 4.6-product
 
 `netbox-discovery run` é read-only. Escrita no NetBox só ocorre com `netbox-discovery run --apply` e permanece protegida por PLAN, write guard, preflight, identidade e auditoria.
 
-## Relatório nativo do PLAN
+## Write guard avaliado no PLAN final
 
-A 1.11.16 elimina comandos Python improvisados para analisar relatórios. O último PLAN do site configurado pode ser consultado diretamente:
+A 1.11.17 corrige a ordem do write guard. As camadas intermediárias do Planner podem identificar candidatos iniciais que ainda serão reclassificados pelas políticas de identidade. O guard não pode bloquear esses candidatos antes dessa reclassificação.
+
+A sequência efetiva passa a ser:
+
+```text
+montar candidatos intermediários
+→ aplicar identidade, virtualização, Windows, impressoras, OOB e colisões
+→ consolidar decisões finais READY / REVIEW / DELEGATED / BLOCKED
+→ calcular uma única vez o write guard sobre mudanças READY efetivas
+```
+
+Assim, candidatos fracos que terminam em `REVIEW/NOOP` não contam como mudanças elegíveis. Mudanças finais realmente excessivas continuam sendo bloqueadas normalmente.
+
+O relatório nativo apresenta o guard efetivo:
+
+```text
+WRITE GUARD: PASS|BLOCK
+eligible_total
+live_devices
+change_percent
+violations
+```
+
+## Relatório nativo do PLAN
 
 ```bash
 netbox-discovery plan summary
@@ -31,9 +54,9 @@ netbox-discovery plan ready
 netbox-discovery plan delegated
 ```
 
-Esses comandos são somente leitura e mostram Run ID, status, escrita no NetBox, decisões, ações, motivos, IP, nome e role. `--json` fornece saída estruturada.
+Esses comandos são somente leitura e mostram Run ID, status, escrita no NetBox, write guard, decisões, ações, motivos, IP, nome e role. `--json` fornece saída estruturada.
 
-O `status` também deixa de misturar IMPORT/AUDIT históricos com um dry-run atual. Quando o último RUN não solicitou APPLY, informa explicitamente que IMPORT e AUDIT não foram executados naquele RUN.
+O `status` não mistura IMPORT/AUDIT históricos com um dry-run atual. Quando o último RUN não solicitou APPLY, informa explicitamente que IMPORT e AUDIT não foram executados naquele RUN.
 
 ## Instalação e atualização
 
@@ -99,6 +122,7 @@ O Discovery V6 divide prefixos grandes, como `/16`, em lotes `/24`, elimina sobr
 - serial conflitante não é gravado;
 - `REVIEW`, `DELEGATED` e `BLOCKED` nunca escrevem;
 - `READY/CREATE` e `READY/UPDATE_SAFE` escrevem somente com `--apply`;
+- write guard final continua bloqueando impacto anormal;
 - atualização automática não altera a política de APPLY;
 - comandos de relatório do PLAN são somente leitura.
 
@@ -109,6 +133,6 @@ O Discovery V6 divide prefixos grandes, como `/16`, em lotes `/24`, elimina sobr
 - `docs/HOMOLOGACAO.md`: estado CI/LIVE;
 - `RELEASE-NOTES.md`: histórico de releases;
 - `SECURITY.md`: política de segurança;
-- `docs/PATCH-1.11.16.md`: detalhes desta versão.
+- `docs/PATCH-1.11.17.md`: detalhes desta versão.
 
 A release é bloqueada no CI quando os documentos obrigatórios não carregam a versão exata do `VERSION`.
