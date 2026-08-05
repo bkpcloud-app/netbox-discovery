@@ -75,12 +75,27 @@ def _recover_existing_collision_devices(plan, state):
             intent["action"] = "NOOP"
 
 
+def _defer_write_guard(plan, state):
+    """Do not mutate intermediate decisions; Planner V11 applies the final guard."""
+    return None
+
+
 def build_plan(recon, classification, state):
-    plan, prereq = ORIG_BUILD_PLAN(recon, classification, state)
+    # Planner V9 Core, V9 and V10 all call the same guard while layering policies.
+    # Running it in an intermediate layer can turn candidates into BLOCKED before
+    # later identity policies correctly downgrade them to REVIEW. Defer every
+    # nested invocation and evaluate once, after the complete V11 decision set.
+    final_write_guard = core._apply_write_guard
+    core._apply_write_guard = _defer_write_guard
+    try:
+        plan, prereq = ORIG_BUILD_PLAN(recon, classification, state)
+    finally:
+        core._apply_write_guard = final_write_guard
+
     _recover_existing_collision_devices(plan, state)
     v10._attach_idempotency_identity(plan)
     v9._prune_prerequisites_to_ready_actions(plan, prereq)
-    core._apply_write_guard(plan, state)
+    final_write_guard(plan, state)
     return plan, prereq
 
 

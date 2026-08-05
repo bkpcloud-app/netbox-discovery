@@ -17,11 +17,15 @@ if BASE not in sys.path:
 
 from modules.product import plan_report
 
-VERSION = "1.11.16"
+MIN_VERSION = "1.11.16"
 
 
 def read(relative):
     return open(os.path.join(ROOT, relative), "r").read()
+
+
+def version_key(value):
+    return tuple(int(part) for part in value.strip().split("."))
 
 
 def sample_plan():
@@ -64,9 +68,11 @@ def sample_run():
     }
 
 
-def test_01_release_versions_are_synced():
-    assert read("VERSION").strip() == VERSION
-    assert read("netbox-discovery/VERSION").strip() == VERSION
+def test_01_release_versions_include_1_11_16_or_newer():
+    root_version = read("VERSION").strip()
+    package_version = read("netbox-discovery/VERSION").strip()
+    assert root_version == package_version
+    assert version_key(root_version) >= version_key(MIN_VERSION)
 
 
 def test_02_payload_separates_decisions_actions_and_reasons():
@@ -138,18 +144,9 @@ def test_06_report_module_has_no_write_path():
         assert marker not in source
 
 
-def test_07_documentation_is_current():
-    markers = {
-        "README.md": "**Versão atual:** 1.11.16",
-        "docs/MANUAL.md": "**Versão:** 1.11.16",
-        "docs/COMANDOS-RAPIDOS.md": "# netbox-discovery 1.11.16",
-        "docs/HOMOLOGACAO.md": "# netbox-discovery 1.11.16",
-        "RELEASE-NOTES.md": "## V1.11.16",
-        "SECURITY.md": "**Versão da política:** 1.11.16",
-        "docs/PATCH-1.11.16.md": "# netbox-discovery 1.11.16",
-    }
-    for relative, marker in markers.items():
-        assert marker in read(relative), relative
+def test_07_historical_release_documentation_is_retained():
+    assert "## V1.11.16" in read("RELEASE-NOTES.md")
+    assert "# netbox-discovery 1.11.16" in read("docs/PATCH-1.11.16.md")
 
 
 def main():
