@@ -1,8 +1,26 @@
+## V1.11.17 — Final write guard ordering
+
+O ciclo DCM revelou um falso bloqueio: uma camada intermediária calculou `CREATE=32` antes de políticas posteriores reclassificarem candidatos fracos para `REVIEW`.
+
+Planner V11 agora executa a sequência:
+
+```text
+políticas finais de identidade e inventário
+→ decisões finais
+→ write guard uma única vez
+```
+
+Somente mudanças finais `READY/CREATE`, `READY/UPDATE_SAFE` e `READY/REPAIR_SAFE_VM_DUPLICATE` entram no cálculo. Os limites existentes continuam inalterados e mudanças finais excessivas continuam bloqueadas.
+
+`netbox-discovery plan summary` passa a mostrar status, elegíveis, base de Devices, percentual e violações do guard efetivo.
+
+A regressão reproduz 32 candidatos intermediários sobre 13 Devices, exigindo guard final PASS depois da conversão para `REVIEW/NOOP`, e valida também que 26 `READY/CREATE` finais continuam bloqueados pelo limite 25.
+
+---
+
 ## V1.11.16 — Native PLAN reports and run-scoped status
 
-### Relatório nativo do PLAN
-
-A análise do PLAN passa a ser feita por comandos oficiais do produto, sem Python colado no terminal:
+Foram adicionados relatórios nativos somente leitura:
 
 ```text
 netbox-discovery plan summary
@@ -13,15 +31,7 @@ netbox-discovery plan delegated
 netbox-discovery plan all
 ```
 
-Os relatórios mostram Run ID, status, escrita no NetBox, decisões, ações, motivos, IP, nome, role e diffs. Todos são somente leitura e aceitam `--json`.
-
-### Status vinculado ao modo do último RUN
-
-Quando o último RUN é dry-run, `status` não mistura mais IMPORT/AUDIT de execuções antigas. A saída informa explicitamente que essas etapas não foram executadas naquele RUN.
-
-### Compatibilidade
-
-`netbox-discovery plan` sem subcomando continua executando o Planner V11 normalmente. Os novos subcomandos apenas leem o último relatório existente.
+O status deixou de apresentar IMPORT/AUDIT históricos como se pertencessem a um dry-run atual.
 
 ---
 
