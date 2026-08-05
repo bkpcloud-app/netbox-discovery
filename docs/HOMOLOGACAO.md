@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.18 — Matriz de Homologação
+# netbox-discovery 1.11.19 — Matriz de Homologação
 
 ## Estados
 
@@ -27,77 +27,107 @@ APPLY: NÃO
 
 **Estado:** LIVE PARTIAL.
 
-Validado:
+Validado ao vivo até a 1.11.18:
 
-- Discovery V6 em redes grandes;
-- 109 hosts e 100 assets no ciclo observado;
-- dry-run sem escrita;
-- relatório nativo do PLAN;
-- write guard calculado sobre decisões finais;
+- Discovery V6 em seis redes `/24`;
+- 110 hosts ativos e 101 assets reconciliados;
+- dry-run concluído sem escrita;
+- 43 VMs delegadas ao inventário central do vCenter;
+- write guard final em política de bootstrap;
 - scheduler Network desabilitado durante homologação.
 
-PLAN da 1.11.17:
+PLAN observado na 1.11.18:
 
 ```text
-READY: 12
+READY: 30
+  READY/CREATE: 17
+  READY/NOOP: 13
 DELEGATED: 43
 REVIEW: 26
-BLOCKED: 19
-WRITE GUARD: BLOCK
+BLOCKED: 2
+WRITE GUARD: PASS
 eligible_total: 17
 live_devices: 13
 change_percent: 131%
-violação: PERCENT=131%>20%
+policy: SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY
 ```
 
-Dos 19 bloqueados:
+Os dois bloqueios reais permaneceram corretamente:
 
 ```text
-17 = somente limite percentual
-2  = DUPLICATE_DESIRED_NAME / RECONCILE_REVIEW_CANDIDATE
+10.28.1.20 | Kubernetes Ingress Controller Fake Certificate
+10.28.1.25 | Kubernetes Ingress Controller Fake Certificate
+motivo: DUPLICATE_DESIRED_NAME / RECONCILE_REVIEW_CANDIDATE
 ```
 
-Os dois conflitos reais são:
+### Defeito revelado pela revisão dos 17 READY/CREATE
+
+Quatorze candidatos possuíam identidade estável:
 
 ```text
-10.28.1.20
-10.28.1.25
+5 switches com serial
+8 access points com management MAC
+1 UPS com serial
 ```
 
-## Estado da 1.11.18
+Três candidatos estavam incorretamente liberados com `Discovery UID: WEAK`:
+
+```text
+10.28.1.22 | SRV-DCAR03 | WINDOWS_HOST
+10.28.1.23 | SRV-DCAR02 | WINDOWS_HOST
+10.225.1.61 | SMS Agente SNMP | SMS_GATEWAY
+```
+
+As regras anteriores eram específicas para `PHYSICAL_DEVICE` e roles Windows conhecidas. `WINDOWS_HOST` e `HOST_OR_APPLIANCE` podiam escapar da proteção.
+
+## Estado da 1.11.19
 
 **Estado inicial:** CI PASS / NOT LIVE até novo PLAN do DCM.
 
-Contrato:
+Contrato corrigido:
 
 ```text
-base < 50 Devices
-→ SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY
-→ percentual adiado
-→ limites absolutos obrigatórios
-
-base >= 50 Devices
-→ ABSOLUTE_AND_PERCENT
-→ percentual ativo
+novo READY/CREATE
++ sem existing_device_id
++ discovery_uid WEAK
+→ REVIEW/NOOP
+→ remover interfaces e intenções de IP
 ```
 
-Regressões obrigatórias:
+A regra é final, independente de role e classe, e é executada antes do write guard.
+
+Resultado esperado no DCM:
 
 ```text
-17 CREATE finais sobre base 13 → PASS pelo bootstrap
-26 CREATE finais sobre base 13 → BLOCK por CREATE=26>25
-21 UPDATE_SAFE sobre base 100 → BLOCK por PERCENT=21%>20%
-REVIEW/DELEGATED/BLOCKED/READY-NOOP → fora de eligible_total
+READY/CREATE: 14
+REVIEW: 29
+BLOCKED: 2
+DELEGATED: 43
+WRITE GUARD: PASS
+eligible_total: 14
+nenhum novo READY/CREATE com discovery_uid WEAK
 ```
 
-Pendente no DCM:
+## Regressões obrigatórias
 
-- atualizar para 1.11.18;
+```text
+WINDOWS_HOST com WEAK UID → REVIEW/NOOP
+SMS_GATEWAY com WEAK UID → REVIEW/NOOP
+qualquer role/classe nova com WEAK UID → REVIEW/NOOP
+SERIAL ou MGMT-MAC estável → permanece READY
+Device existente → não é rebaixado por esta regra
+14 estáveis + 3 fracos sobre base 13 → eligible_total=14 e PASS
+```
+
+## Pendente no DCM
+
+- atualizar para 1.11.19;
 - gerar novo dry-run;
-- confirmar `WRITE GUARD: PASS` com política de bootstrap;
-- confirmar que apenas os dois conflitos Kubernetes permanecem BLOCKED;
-- revisar os 17 READY/CREATE antes de qualquer APPLY;
-- manter scheduler desabilitado até convergência.
+- confirmar os três candidatos em REVIEW;
+- confirmar `READY/CREATE=14` e `WRITE GUARD: PASS`;
+- revisar os 14 candidatos estáveis;
+- manter scheduler desabilitado até convergência;
+- não executar APPLY antes da validação final.
 
 ## Critérios para liberar APPLY
 
@@ -105,7 +135,7 @@ Pendente no DCM:
 Self-test: PASS
 Check: PASS
 WRITE GUARD: PASS
-política exibida corretamente
+nenhum novo Device com discovery_uid WEAK em READY
 BLOCKED reais analisados
 READY/CREATE revisados
 Erros: 0
