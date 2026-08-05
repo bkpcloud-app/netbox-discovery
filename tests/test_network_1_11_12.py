@@ -119,8 +119,8 @@ def test_06_runner_uses_v6_for_normal_and_scheduled_runs():
 
 
 def test_07_release_version():
-    assert open(os.path.join(ROOT, "VERSION"), "r").read().strip() == "1.11.13"
-    assert open(os.path.join(BASE, "VERSION"), "r").read().strip() == "1.11.13"
+    assert open(os.path.join(ROOT, "VERSION"), "r").read().strip() == "1.11.14"
+    assert open(os.path.join(BASE, "VERSION"), "r").read().strip() == "1.11.14"
 
 
 def main():
