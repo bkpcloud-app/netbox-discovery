@@ -50,19 +50,19 @@ Isso cobre, entre outros, equipamentos industriais, impressoras, virtualização
 
 ## Execução recomendada para redes grandes
 
-Como a coleta pode ser longa, execute pelo `systemd`, para que continue mesmo se a sessão SSH cair:
+Como a coleta pode ser longa, execute em uma unidade transitória do `systemd`, para que continue mesmo se a sessão SSH cair:
 
 ```bash
-systemctl start netbox-discovery.service
+systemd-run --unit=netbox-discovery-dcm-manual --collect /usr/local/bin/netbox-discovery run
 ```
 
 Acompanhe por:
 
 ```bash
-journalctl -fu netbox-discovery.service
+journalctl -fu netbox-discovery-dcm-manual.service
 ```
 
-O serviço continua em modo somente leitura quando `automation.apply` está `false` e o comando iniciado é o `scheduled-run` padrão.
+Esse comando executa o pipeline normal sem `--apply`: DISCOVER, CLASSIFY, RECONCILE e PLAN. Não habilita o timer diário e não executa IMPORT.
 
 ## Regressões
 
