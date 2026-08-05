@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.14 — Matriz de Homologação
+# netbox-discovery 1.11.15 — Matriz de Homologação
 
 ## Estados
 
@@ -6,124 +6,101 @@
 LIVE PASS     = validado ao vivo com evidência
 LIVE PARTIAL  = parte relevante validada
 CI PASS       = regressões automatizadas passaram
-NOT LIVE      = ainda não validado ao vivo
+NOT LIVE      = ainda não validado em ambiente real
 ```
 
-CI PASS não equivale a LIVE PASS.
+CI PASS não substitui LIVE PASS.
 
-## Componentes da release
+## Linha de base FBA
 
-```text
-Discovery V6:   4.6-product
-Classifier V8:  5.6-product
-Reconciler V5:  3.3-product
-Planner V11:    5.3-product
-Importer V12:   6.1-product
-Auditor V11:    6.9-product
-Pipeline:        3.4-product
-Runner:          3.4-product
-```
-
-## Hypervisor central
-
-**Estado histórico:** LIVE PASS.
+**Estado:** LIVE PASS na 1.11.10/1.11.11, mantido como referência funcional.
 
 ```text
-Objetos comparados: 282
-OK: 282
-MISMATCH: 0
-MISSING: 0
-AMBIGUOUS: 0
-COMPARE STATUS: OK
-```
-
-O coletor central permanece responsável por vCenters. Filiais configuradas como `network_proxy` não executam Hypervisor local.
-
-## FBA — linha de base
-
-**Ciclo 1.10.18 em 29/07/2026:** LIVE PASS.
-
-```text
-Hosts ativos: 288
-Assets reconciliados: 283
-Devices após APPLY: 179
-DELEGATED/HYPERVISOR: 37
+READY: 188
+REVIEW: 64
+BLOCKED: 0
+READY/CREATE: 0
+READY/UPDATE_SAFE: 0
+READY/NOOP: 188
 Assets FAIL: 0
 Checks FAIL: 0
+Audit: PASS_WITH_WARNINGS
 ```
 
-As versões 1.11.x adicionaram proteção de nome, qualidade de serial, Windows Server/Workstation, correções idempotentes de Device Type, recuperação de switches e Planner V11.
+## DCM
 
-## DCM — redes grandes
+**Estado atual:** LIVE PARTIAL.
 
-Redes configuradas:
+Validado:
+
+- configuração preservada;
+- atualização até 1.11.14;
+- self-test e check PASS;
+- Discovery V6 carregado;
+- auto-update timer ativo;
+- scheduler Network mantido desabilitado durante homologação;
+- nenhum APPLY executado no ciclo de redes grandes.
+
+Pendente:
+
+- novo dry-run completo com a lista final de redes;
+- análise do PLAN;
+- APPLY controlado, se aprovado;
+- auditoria posterior;
+- ativação do scheduler Network.
+
+## Estado da 1.11.15
+
+**Estado:** CI PASS / NOT LIVE até atualização e primeira execução automática observada em cliente.
+
+### Contrato novo
+
+Cada serviço agendado executa:
 
 ```text
-10.1.1.0/24
-10.19.0.0/16
-10.28.1.0/24
-10.225.1.0/24
+UPDATE PREFLIGHT
+→ valida versão stable
+→ instala e testa quando necessário
+→ rollback/quarentena em falha de candidato
+→ coleta com a versão instalada válida
 ```
 
-### Execução 1.11.11
+Falha temporária de acesso ao GitHub não cancela a coleta. O evento deve permanecer visível no journal e no estado do updater.
 
-**Estado:** FAIL conhecido.
-
-O discovery V5 atingiu o timeout fixo de 900 segundos ao processar o `/16`. Nenhuma escrita foi executada no NetBox.
-
-### Correção 1.11.12/1.11.13
-
-**Estado:** CI PASS / NOT LIVE no DCM até nova execução completa.
-
-Cobertura automatizada:
-
-- divisão do `/16` em lotes `/24`;
-- eliminação de sobreposição;
-- paralelismo controlado;
-- timeout e retry por lote;
-- portas de infraestrutura, CFTV e OT;
-- entrada direta e Runner apontando para Discovery V6;
-- execução sem escrita quando não existe `--apply`.
-
-## Auto-update e schedulers — 1.11.14
-
-**Estado:** CI PASS / NOT LIVE até validação em cliente.
-
-Contrato validado por regressão:
-
-- instalador habilita `netbox-discovery-update.timer`;
-- update timer é diário, persistente e possui atraso aleatório;
-- scheduler Network inicia o update timer como dependência;
-- scheduler Hypervisor inicia o update timer como dependência;
-- não utiliza `Also=`, evitando que a desativação da coleta desligue atualizações;
-- `automation.apply` continua preservado e não é ativado pela atualização.
-
-## Documentação — 1.11.14
-
-**Estado:** CI PASS.
-
-A release só pode ser publicada quando a versão exata estiver presente em:
+### Critérios de LIVE PASS da 1.11.15
 
 ```text
-README.md
-docs/MANUAL.md
-docs/COMANDOS-RAPIDOS.md
-docs/HOMOLOGACAO.md
-RELEASE-NOTES.md
-SECURITY.md
-docs/PATCH-1.11.14.md
+versão instalada 1.11.15 ou superior
+update scheduler ENABLED
+serviço automático mostra update preflight antes do RUN
+sem update disponível: coleta inicia normalmente
+com GitHub indisponível: coleta continua na versão atual
+com update válido: instala, self-test PASS e coleta inicia
+APPLY permanece conforme config, sem alteração pelo updater
 ```
 
-## Critério para LIVE PASS da 1.11.14
-
-No DCM:
+## Critérios gerais para liberar scheduler
 
 ```text
-Discovery LARGE-CIDR concluído
-PLAN gerado
-NetBox write: NÃO
-nenhum lote com falha definitiva
-sem scheduler APPLY habilitado
+Self-test: PASS
+Check: PASS
+BLOCKED: 0
+WRITE GUARD: PASS
+Erros: 0
+Assets FAIL: 0
+Checks FAIL: 0
+PLAN posterior convergente
 ```
 
-Depois disso, o PLAN deve ser revisado antes de qualquer `--apply`.
+## Segurança
+
+A 1.11.15 não muda regras de escrita:
+
+```text
+READY/CREATE      → somente com --apply
+READY/UPDATE_SAFE → somente com --apply
+READY/NOOP        → sem escrita
+DELEGATED         → sem escrita
+REVIEW            → sem escrita
+BLOCKED           → sem escrita
+```
