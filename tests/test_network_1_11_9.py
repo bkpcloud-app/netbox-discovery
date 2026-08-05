@@ -107,7 +107,8 @@ def test_06_runner_uses_current_components():
     assert runner.COMPONENTS["planner"] == "planner_v11.py"
     assert runner.COMPONENTS["importer"] == "importer_v12.py"
     assert runner.COMPONENTS["auditor"] == "auditor_v11.py"
-    assert runner.RUNNER_VERSION == "3.3-product"
+    assert runner.COMPONENTS["discovery"] == "network_v6.py"
+    assert runner.RUNNER_VERSION == "3.4-product"
 
 
 def test_07_cli_routes_and_labels_are_current():
