@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.11.18 — PRODUCT V1  
+**Versão:** 1.11.19 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
 
@@ -41,9 +41,44 @@ netbox-discovery plan ready
 
 Todos os comandos de relatório são somente leitura.
 
-## 4. Write guard final
+## 4. Identidade estável obrigatória para novos Devices
 
-O write guard é calculado uma única vez depois das políticas finais de identidade, Windows, impressoras, virtualização, OOB e colisões.
+A última camada do Planner valida todo registro que terminou como novo `READY/CREATE`.
+
+```text
+existing_device_id ausente
++ decision=READY
++ action=CREATE
++ discovery_uid iniciado por WEAK:
+→ REVIEW/NOOP
+```
+
+A proteção é independente de role e classe. Portanto, também cobre roles genéricas que não passam pelos validadores específicos, como:
+
+```text
+WINDOWS_HOST
+HOST_OR_APPLIANCE
+SMS_GATEWAY
+```
+
+Ao rebaixar o candidato, o Planner remove interfaces, intenções de IP, diffs e reparos do ciclo. O motivo registrado é:
+
+```text
+NEW_DEVICE_REQUIRES_STABLE_IDENTITY
+```
+
+Identidades normalmente aceitas para novos Devices:
+
+```text
+SERIAL:<fabricante>:<serial>
+MGMT-MAC:<mac>
+```
+
+A regra não rebaixa Devices já existentes. Atualizações continuam submetidas à reconciliação, autoridade do NetBox e políticas de atualização segura.
+
+## 5. Write guard final
+
+O write guard é calculado uma única vez depois das políticas finais de identidade, Windows, impressoras, virtualização, OOB, colisões e identidade estável global.
 
 Entram no cálculo:
 
@@ -62,9 +97,9 @@ DELEGATED
 BLOCKED por política de identidade
 ```
 
-## 5. Bootstrap de site pequeno
+## 6. Bootstrap de site pequeno
 
-Na 1.11.18, quando a base possui menos de 50 Devices:
+Quando a base possui menos de 50 Devices:
 
 ```text
 policy = SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY
@@ -88,28 +123,22 @@ percent_enforced = true
 PERCENT: 20%
 ```
 
-A base mínima pode ser ajustada por:
+A base mínima pode ser ajustada por `NETBOX_DISCOVERY_PERCENT_MIN_BASE`. O padrão é 50.
 
-```text
-NETBOX_DISCOVERY_PERCENT_MIN_BASE
-```
-
-Não altere essa variável durante uma homologação sem registrar a decisão. O padrão é 50.
-
-## 6. Interpretação do relatório
+## 7. Interpretação do relatório
 
 Exemplo de site pequeno:
 
 ```text
-WRITE GUARD: PASS | elegíveis=17 | base=13 | mudanças=131%
+WRITE GUARD: PASS | elegíveis=14 | base=13 | mudanças=108%
 WRITE GUARD POLÍTICA: SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY | percentual=ADIADO | base mínima=50
 ```
 
-Isso não significa APPLY automático. Significa apenas que 17 mudanças finais ficaram abaixo dos limites absolutos.
+Isso não significa APPLY automático. Significa apenas que as mudanças finais ficaram abaixo dos limites absolutos e passaram pelas políticas de identidade.
 
 Conflitos como `DUPLICATE_DESIRED_NAME`, identidade fraca, REVIEW, DELEGATED e outros BLOCKED continuam sem escrita.
 
-## 7. APPLY
+## 8. APPLY
 
 ```bash
 netbox-discovery run --apply
@@ -119,13 +148,14 @@ Somente após confirmar:
 
 ```text
 WRITE GUARD: PASS
+nenhum READY/CREATE com discovery_uid WEAK
 BLOCKED analisados
 READY/CREATE e READY/UPDATE_SAFE revisados
 NetBox write anterior: NÃO
 scheduler homologado
 ```
 
-## 8. Auto-update e scheduler
+## 9. Auto-update e scheduler
 
 Antes de cada execução automática:
 
@@ -141,7 +171,7 @@ netbox-discovery scheduler disable
 netbox-discovery scheduler status
 ```
 
-## 9. Execução fora da sessão SSH
+## 10. Execução fora da sessão SSH
 
 ```bash
 UNIT="netbox-discovery-manual-$(date +%Y%m%d-%H%M%S)"
@@ -151,11 +181,12 @@ journalctl -fu "$UNIT.service"
 
 `CTRL+C` encerra somente a visualização.
 
-## 10. Critérios de homologação
+## 11. Critérios de homologação
 
 ```text
 Self-test: PASS
 Check: PASS
+nenhum novo Device com identidade WEAK em READY
 WRITE GUARD calculado sobre decisões finais
 limites absolutos preservados no bootstrap
 percentual ativo em base madura
