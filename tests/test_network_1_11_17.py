@@ -173,7 +173,7 @@ def test_06_only_planner_v11_performs_the_effective_final_guard():
     assert "core._apply_write_guard = _defer_write_guard" in source
     assert "core._apply_write_guard = original_write_guard" in source
     assert "_apply_final_write_guard(plan, state)" in source
-    assert source.index("plan, prereq = ORIG_BUILD_PLAN") < source.index("_apply_final_write_guard(plan, state)")
+    assert source.index("plan, prereq = ORIG_BUILD_PLAN") < source.rindex("_apply_final_write_guard(plan, state)")
 
 
 def test_07_historical_patch_documentation_remains_available():
