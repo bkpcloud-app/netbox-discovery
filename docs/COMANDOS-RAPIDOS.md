@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.14 — Comandos rápidos
+# netbox-discovery 1.11.15 — Comandos rápidos
 
 ## Atualizar e validar
 
@@ -18,67 +18,6 @@ netbox-discovery check
 netbox-discovery status
 ```
 
-## Versões esperadas
-
-```text
-Versão: 1.11.14
-DISCOVER V6: OK
-CLASSIFY V8: OK
-RECONCILE V5: OK
-PLAN V11: OK
-IMPORT V12: OK
-AUDIT V11: OK
-```
-
-Componentes:
-
-```text
-Discovery: 4.6-product
-Classifier: 5.6-product
-Reconciler: 3.3-product
-Planner: 5.3-product
-Importer: 6.1-product
-Auditor: 6.9-product
-Pipeline: 3.4-product
-Runner: 3.4-product
-```
-
-## Executar Network sem escrita
-
-```bash
-netbox-discovery run
-```
-
-Resultado esperado:
-
-```text
-NetBox write: NÃO
-```
-
-## Executar Network com escrita
-
-Somente após revisão do PLAN:
-
-```bash
-netbox-discovery run --apply
-```
-
-## Scheduler Network
-
-```bash
-netbox-discovery scheduler enable
-```
-
-```bash
-netbox-discovery scheduler status
-```
-
-```bash
-netbox-discovery scheduler disable
-```
-
-Ao habilitar, o timer de auto-update também é iniciado como dependência. Desabilitar a coleta não desabilita o auto-update.
-
 ## Auto-update
 
 ```bash
@@ -89,31 +28,13 @@ netbox-discovery update scheduler status
 netbox-discovery update scheduler enable
 ```
 
-Política padrão:
+A partir da 1.11.15, cada execução automática faz:
 
 ```text
-diário
-Persistent=true
-RandomizedDelaySec=30m
-canal stable
-rollback automático
+UPDATE PREFLIGHT → COLETA
 ```
 
-## Hypervisor
-
-```bash
-netbox-discovery hypervisor configure
-```
-
-```bash
-netbox-discovery hypervisor run
-```
-
-```bash
-netbox-discovery hypervisor scheduler enable
-```
-
-O scheduler Hypervisor também inicia o timer de auto-update como dependência.
+Se houver versão nova, ela é validada, instalada e testada antes da coleta. Se o GitHub estiver indisponível, a coleta segue com a versão instalada.
 
 ## Configurar redes
 
@@ -127,24 +48,87 @@ Conferir:
 cat /opt/netbox-discovery/config/sites/$(awk '/^[[:space:]]*site:/{print $2; exit}' /opt/netbox-discovery/config.yml)/networks.conf
 ```
 
-## Redes grandes
-
-Para `/16` ou coleta longa sem depender da sessão SSH:
+## Dry-run manual
 
 ```bash
-systemd-run --unit=netbox-discovery-manual --collect /usr/local/bin/netbox-discovery run
+netbox-discovery run
+```
+
+Não grava no NetBox.
+
+## Executar em segundo plano
+
+```bash
+UNIT="netbox-discovery-manual-$(date +%Y%m%d-%H%M%S)"; echo "$UNIT" >/root/netbox-discovery-manual-unit; systemd-run --unit="$UNIT" --collect /usr/local/bin/netbox-discovery run
+```
+
+Acompanhar:
+
+```bash
+journalctl -fu "$(cat /root/netbox-discovery-manual-unit).service"
+```
+
+Parar:
+
+```bash
+systemctl stop "$(cat /root/netbox-discovery-manual-unit).service"
+```
+
+## Scheduler Network
+
+```bash
+netbox-discovery scheduler enable
 ```
 
 ```bash
-journalctl -fu netbox-discovery-manual.service
+netbox-discovery scheduler disable
+```
+
+```bash
+netbox-discovery scheduler status
+```
+
+## Scheduler Hypervisor
+
+```bash
+netbox-discovery hypervisor scheduler enable
+```
+
+```bash
+netbox-discovery hypervisor scheduler disable
+```
+
+```bash
+netbox-discovery hypervisor scheduler status
 ```
 
 ## Segurança
 
 ```text
 run              = sem escrita
-run --apply      = IMPORT de READY + AUDIT
-REVIEW/BLOCKED   = nunca escritos
-nome existente   = preservado
-scheduler padrão = apply false
+run --apply      = escrita READY após proteções
+REVIEW           = não escreve
+DELEGATED        = não escreve
+BLOCKED          = não escreve
+UPDATE PREFLIGHT = não altera automation.apply
+```
+
+## Logs
+
+```bash
+journalctl -u netbox-discovery.service --no-pager -n 200
+```
+
+```bash
+journalctl -u netbox-discovery-update.service --no-pager -n 100
+```
+
+## Arquivos
+
+```text
+/opt/netbox-discovery/config.yml
+/opt/netbox-discovery/config/sites/<SITE>/networks.conf
+/opt/netbox-discovery/reports
+/var/lib/netbox-discovery/update-state.json
+/var/lib/netbox-discovery/update-backups
 ```
