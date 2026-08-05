@@ -1,5 +1,7 @@
 [Unit]
 Description=Schedule netbox-discovery hypervisor inventory pipeline
+Wants=netbox-discovery-update.timer
+After=netbox-discovery-update.timer
 
 [Timer]
 OnCalendar=daily
