@@ -130,8 +130,8 @@ def test_07_current_scheduler_command_can_toggle_migrated_config():
 
 
 def test_08_release_version():
-    assert open(os.path.join(ROOT, "VERSION"), "r").read().strip() == "1.11.13"
-    assert open(os.path.join(BASE, "VERSION"), "r").read().strip() == "1.11.13"
+    assert open(os.path.join(ROOT, "VERSION"), "r").read().strip() == "1.11.14"
+    assert open(os.path.join(BASE, "VERSION"), "r").read().strip() == "1.11.14"
 
 
 def main():

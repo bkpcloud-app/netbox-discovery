@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.2 — Matriz de Homologação
+# netbox-discovery 1.11.14 — Matriz de Homologação
 
 ## Estados
 
@@ -11,9 +11,22 @@ NOT LIVE      = ainda não validado ao vivo
 
 CI PASS não equivale a LIVE PASS.
 
+## Componentes da release
+
+```text
+Discovery V6:   4.6-product
+Classifier V8:  5.6-product
+Reconciler V5:  3.3-product
+Planner V11:    5.3-product
+Importer V12:   6.1-product
+Auditor V11:    6.9-product
+Pipeline:        3.4-product
+Runner:          3.4-product
+```
+
 ## Hypervisor central
 
-**Estado anterior:** LIVE PASS.
+**Estado histórico:** LIVE PASS.
 
 ```text
 Objetos comparados: 282
@@ -24,11 +37,11 @@ AMBIGUOUS: 0
 COMPARE STATUS: OK
 ```
 
-O coletor central continua responsável pelos vCenters. Filiais não executam hypervisor local.
+O coletor central permanece responsável por vCenters. Filiais configuradas como `network_proxy` não executam Hypervisor local.
 
 ## FBA — linha de base
 
-**Ciclo 1.10.18:** LIVE PASS em 29/07/2026.
+**Ciclo 1.10.18 em 29/07/2026:** LIVE PASS.
 
 ```text
 Hosts ativos: 288
@@ -39,132 +52,78 @@ Assets FAIL: 0
 Checks FAIL: 0
 ```
 
-**Dry-run 1.11.0 em 30/07/2026:** LIVE PARTIAL.
+As versões 1.11.x adicionaram proteção de nome, qualidade de serial, Windows Server/Workstation, correções idempotentes de Device Type, recuperação de switches e Planner V11.
+
+## DCM — redes grandes
+
+Redes configuradas:
 
 ```text
-Hosts ativos: 290
-Assets planejados: 285
-READY/CREATE: 5
-READY/UPDATE_SAFE: 10
-DELEGATED_VM: 37
-REVIEW: 64
-BLOCKED: 0
-WRITE GUARD: PASS
+10.1.1.0/24
+10.19.0.0/16
+10.28.1.0/24
+10.225.1.0/24
+```
+
+### Execução 1.11.11
+
+**Estado:** FAIL conhecido.
+
+O discovery V5 atingiu o timeout fixo de 900 segundos ao processar o `/16`. Nenhuma escrita foi executada no NetBox.
+
+### Correção 1.11.12/1.11.13
+
+**Estado:** CI PASS / NOT LIVE no DCM até nova execução completa.
+
+Cobertura automatizada:
+
+- divisão do `/16` em lotes `/24`;
+- eliminação de sobreposição;
+- paralelismo controlado;
+- timeout e retry por lote;
+- portas de infraestrutura, CFTV e OT;
+- entrada direta e Runner apontando para Discovery V6;
+- execução sem escrita quando não existe `--apply`.
+
+## Auto-update e schedulers — 1.11.14
+
+**Estado:** CI PASS / NOT LIVE até validação em cliente.
+
+Contrato validado por regressão:
+
+- instalador habilita `netbox-discovery-update.timer`;
+- update timer é diário, persistente e possui atraso aleatório;
+- scheduler Network inicia o update timer como dependência;
+- scheduler Hypervisor inicia o update timer como dependência;
+- não utiliza `Also=`, evitando que a desativação da coleta desligue atualizações;
+- `automation.apply` continua preservado e não é ativado pela atualização.
+
+## Documentação — 1.11.14
+
+**Estado:** CI PASS.
+
+A release só pode ser publicada quando a versão exata estiver presente em:
+
+```text
+README.md
+docs/MANUAL.md
+docs/COMANDOS-RAPIDOS.md
+docs/HOMOLOGACAO.md
+RELEASE-NOTES.md
+SECURITY.md
+docs/PATCH-1.11.14.md
+```
+
+## Critério para LIVE PASS da 1.11.14
+
+No DCM:
+
+```text
+Discovery LARGE-CIDR concluído
+PLAN gerado
 NetBox write: NÃO
+nenhum lote com falha definitiva
+sem scheduler APPLY habilitado
 ```
 
-Esse dry-run confirmou nomes SNMP repetidos, Printer-MIB, virtualização centralizada e write guard, mas também revelou falsos positivos de CFTV, modelo repetido de Kyocera, serial placeholder Pantum e detalhes parciais de VM. Esses pontos foram corrigidos antes da 1.11.2.
-
-## Estado da 1.11.2
-
-**Estado:** CI/NOT LIVE até novo dry-run no FBA.
-
-### Funções cobertas por regressão
-
-```text
-Windows Server separado de Windows Workstation
-Windows 11 → WORKSTATION-WINDOWS
-Windows Server 2022 → SERVER-WINDOWS
-RDP genérico não decide edição
-conflito de edição não altera role
-Device manual não recebe correção automática
-serial placeholder rejeitado
-serial forte conflitante bloqueado
-Printer-MIB escolhe serial válido
-Hikvision/ONVIF extrai modelo, firmware e serial
-CFTV genérico não classifica Dell/Seagate como câmera
-nome existente permanece protegido
-VM central permanece DELEGATED
-write guard bloqueia impacto anormal
-```
-
-## Atualização obrigatória
-
-A release será distribuída pelo canal `stable`. Não usar instalador manual.
-
-```bash
-netbox-discovery update run
-```
-
-Depois:
-
-```bash
-netbox-discovery version
-netbox-discovery self-test
-netbox-discovery status
-netbox-discovery run
-```
-
-Não usar `--apply` antes de revisar o relatório.
-
-## Versões esperadas
-
-```text
-Versão: 1.11.2
-Discovery: 4.5-product
-Classifier: 5.3-product
-Planner: 5.0-product
-Importer: 5.9-product
-Pipeline: 3.0-product
-WRITE GUARD: PASS
-NetBox write: NÃO
-```
-
-## Critérios do dry-run FBA
-
-1. `SW-BA17-LB43JZ` e `SW-BA17-KPC2C1` continuam distintos.
-2. Nome manual no NetBox não gera PATCH de nome.
-3. Impressoras exibem serial válido, fonte, candidatos e rejeições.
-4. `03000000` não aparece como serial elegível.
-5. Kyocera não apresenta modelo duplicado, como `ECOSYS ... ECOSYS`.
-6. Hikvision recebe fabricante/modelo/firmware/serial quando ISAPI ou ONVIF anônimo responder.
-7. Câmera sem identidade suficiente permanece REVIEW, sem serial inventado.
-8. Dell/iDRAC não aparece como `VIDEO_SURVEILLANCE_DEVICE`.
-9. Windows Server comprovado aponta para `SERVER-WINDOWS`.
-10. Windows 11/10 comprovado aponta para `WORKSTATION-WINDOWS`.
-11. Windows sem edição comprovada permanece REVIEW.
-12. Device manual não recebe troca automática de role.
-13. Os 37 itens de VM continuam DELEGATED e não geram Device físico.
-14. `WRITE GUARD: PASS` e `NetBox write: NÃO`.
-15. Nenhum serial com `serial_confidence: CONFLICT` fica elegível para escrita.
-
-## APPLY controlado
-
-Somente depois do dry-run aprovado:
-
-```bash
-netbox-discovery run --apply
-```
-
-Critérios de LIVE PASS:
-
-```text
-PREFLIGHT GLOBAL FINALIZE: OK
-WRITE GUARD: PASS
-Runtime blocked: 0
-Erros: 0
-MAC RECONCILE: PASS
-Assets FAIL: 0
-Checks FAIL: 0
-preview posterior sem CREATE/UPDATE_SAFE/REPAIR_SAFE inesperado
-```
-
-## Proteções obrigatórias
-
-```text
-PATCH automático de name inexistente
-Device manual preservado
-role Windows só muda com edição comprovada
-serial placeholder/conflitante não é gravado
-VM central nunca vira Device físico duplicado
-REVIEW/BLOCKED/DELEGATED não escrevem
-nenhuma VM é removida
-```
-
-## Schedulers
-
-```text
-Auto-update stable: LIVE PASS
-Network scheduler: DISABLED durante homologação
-Hypervisor local na filial: NÃO REQUERIDO
-```
+Depois disso, o PLAN deve ser revisado antes de qualquer `--apply`.
