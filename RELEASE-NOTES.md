@@ -1,33 +1,33 @@
-## V1.11.15 — Update preflight before every scheduled collection
+## V1.11.16 — Native PLAN reports and run-scoped status
 
-### Sequência automática corrigida
+### Relatório nativo do PLAN
 
-Network e Hypervisor agora executam o updater imediatamente antes de cada coleta agendada:
+A análise do PLAN passa a ser feita por comandos oficiais do produto, sem Python colado no terminal:
 
 ```text
-UPDATE PREFLIGHT
-→ instalar atualização validada quando existir
-→ self-test/check
-→ rollback e quarentena em falha
-→ iniciar coleta
+netbox-discovery plan summary
+netbox-discovery plan blocked
+netbox-discovery plan review
+netbox-discovery plan ready
+netbox-discovery plan delegated
+netbox-discovery plan all
 ```
 
-Os serviços usam `ExecStartPre` com tolerância a falha externa. Se o GitHub estiver indisponível, o problema fica registrado e a coleta continua com a versão instalada válida.
+Os relatórios mostram Run ID, status, escrita no NetBox, decisões, ações, motivos, IP, nome, role e diffs. Todos são somente leitura e aceitam `--json`.
 
-### Segurança
+### Status vinculado ao modo do último RUN
 
-- não altera `automation.apply`;
-- não executa `--apply`;
-- preserva token, redes, exclusões e communities;
-- mantém lock global entre Update, Network e Hypervisor;
-- mantém timer diário de update independente.
+Quando o último RUN é dry-run, `status` não mistura mais IMPORT/AUDIT de execuções antigas. A saída informa explicitamente que essas etapas não foram executadas naquele RUN.
 
-### Documentação e regressão
+### Compatibilidade
 
-- documentos oficiais sincronizados na 1.11.15;
-- regressão valida a ordem `ExecStartPre` antes de `ExecStart`;
-- regressão valida tolerância a falha externa;
-- testes históricos deixam de exigir a versão corrente fixa e passam a validar sua versão mínima, evitando manutenção artificial em cada release.
+`netbox-discovery plan` sem subcomando continua executando o Planner V11 normalmente. Os novos subcomandos apenas leem o último relatório existente.
+
+---
+
+## V1.11.15 — Update preflight before every scheduled collection
+
+Network e Hypervisor executam o updater imediatamente antes de cada coleta agendada. Atualização válida é instalada e testada; falha de candidato executa rollback/quarentena; indisponibilidade temporária do GitHub não cancela a coleta.
 
 ---
 
@@ -36,7 +36,7 @@ Os serviços usam `ExecStartPre` com tolerância a falha externa. Se o GitHub es
 - schedulers Network e Hypervisor garantem que o timer de update esteja habilitado;
 - desabilitar coleta não desabilita update;
 - documentação principal sincronizada;
-- CI passou a exigir versão exata dos documentos.
+- CI exige versão exata dos documentos.
 
 ---
 
@@ -44,7 +44,7 @@ Os serviços usam `ExecStartPre` com tolerância a falha externa. Se o GitHub es
 
 - comando direto `discover` alinhado ao Discovery V6;
 - `check` atualizado para V6;
-- self-test passou a exigir e validar o componente V6.
+- self-test exige o componente V6.
 
 ---
 
