@@ -36,13 +36,13 @@ def test_03_selftest_requires_v6_and_validates_component_version():
 
 def test_04_selftest_passes_with_current_package():
     version, errors = selftest.check(BASE, ROOT)
-    assert version == "1.11.13"
+    assert version == "1.11.14"
     assert errors == [], errors
 
 
 def test_05_release_version():
-    assert open(os.path.join(ROOT, "VERSION"), "r").read().strip() == "1.11.13"
-    assert open(os.path.join(BASE, "VERSION"), "r").read().strip() == "1.11.13"
+    assert open(os.path.join(ROOT, "VERSION"), "r").read().strip() == "1.11.14"
+    assert open(os.path.join(BASE, "VERSION"), "r").read().strip() == "1.11.14"
 
 
 def main():
