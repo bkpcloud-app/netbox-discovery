@@ -41,7 +41,7 @@ def _printer_row():
 def test_01_component_versions():
     assert importer_v12.IMPORTER_VERSION == "6.1-product"
     assert auditor_v11.AUDITOR_VERSION == "6.9-product"
-    assert runner.RUNNER_VERSION == "3.3-product"
+    assert runner.RUNNER_VERSION == "3.4-product"
     assert runner.COMPONENTS["importer"] == "importer_v12.py"
     assert runner.COMPONENTS["auditor"] == "auditor_v11.py"
 
