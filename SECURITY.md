@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.11.17
+**Versão da política:** 1.11.18
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
@@ -13,41 +13,15 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 - relatórios, journals, logs e backups reais;
 - listas privadas de IPs e redes de clientes.
 
-## Atualização automática
+## Atualização e APPLY
 
-A atualização usa o canal `stable`, valida o candidato, cria backup, preserva configuração, executa self-test/check e faz rollback/quarentena quando necessário.
+O updater usa o canal `stable`, valida o candidato, cria backup, preserva configuração, executa self-test/check e faz rollback/quarentena em falha.
 
-Antes da coleta automática:
-
-```text
-ExecStartPre=-/usr/local/bin/netbox-discovery update scheduled
-```
-
-Indisponibilidade temporária do GitHub fica registrada e não cancela a coleta com a versão instalada válida.
-
-## Separação entre update e APPLY
-
-O updater não pode:
-
-- alterar `automation.apply`;
-- habilitar escrita no NetBox;
-- executar `run --apply`;
-- alterar redes, exclusões ou communities;
-- substituir token ou configuração do cliente.
+O updater não pode alterar `automation.apply`, executar `run --apply` ou modificar redes, exclusões, communities e credenciais.
 
 ## Write guard final
 
-O write guard é uma proteção contra impacto anormal e deve avaliar somente mudanças efetivas do PLAN final.
-
-A partir da 1.11.17:
-
-```text
-camadas intermediárias não bloqueiam candidatos
-→ políticas finais classificam cada registro
-→ Planner V11 calcula o guard uma única vez
-```
-
-Entram no cálculo:
+O guard avalia apenas mudanças efetivas do PLAN final:
 
 ```text
 READY/CREATE
@@ -61,14 +35,45 @@ Não entram:
 READY/NOOP
 REVIEW
 DELEGATED
-BLOCKED por política anterior
+BLOCKED por identidade ou política
 ```
 
-Essa correção não aumenta limites nem autoriza escrita. Se as mudanças finais excederem os limites, o guard converte todos os elegíveis para `BLOCKED/NOOP` e remove interfaces, intenções de IP e reparos daquele ciclo.
+## Bootstrap de site pequeno
+
+Na 1.11.18, bases com menos de 50 Devices usam:
+
+```text
+SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY
+```
+
+A política adia somente a regra percentual. Permanecem obrigatórios:
+
+```text
+CREATE <= 25
+UPDATE_SAFE <= 50
+REPAIR_SAFE_VM_DUPLICATE <= 20
+TOTAL <= 75
+```
+
+Ao alcançar 50 Devices, a política muda para:
+
+```text
+ABSOLUTE_AND_PERCENT
+PERCENT <= 20%
+```
+
+A base mínima padrão pode ser alterada com `NETBOX_DISCOVERY_PERCENT_MIN_BASE`, mas qualquer alteração operacional deve ser registrada e homologada.
+
+O bootstrap não libera:
+
+- `DUPLICATE_DESIRED_NAME`;
+- conflitos de serial ou identidade;
+- `REVIEW`;
+- `DELEGATED`;
+- registros já `BLOCKED`;
+- qualquer escrita sem `--apply`.
 
 ## Relatórios nativos do PLAN
-
-Os comandos abaixo são estritamente somente leitura:
 
 ```text
 netbox-discovery plan summary
@@ -76,27 +81,9 @@ netbox-discovery plan blocked
 netbox-discovery plan review
 netbox-discovery plan ready
 netbox-discovery plan delegated
-netbox-discovery plan all
 ```
 
-Eles apenas leem JSON já existente em `/opt/netbox-discovery/reports`. Não chamam Importer, não usam `--apply`, não fazem PATCH/POST/DELETE e não modificam o NetBox.
-
-A saída pode conter informações operacionais do cliente. Não deve ser versionada no repositório público.
-
-## Status vinculado ao último RUN
-
-Quando o último RUN é dry-run, `status` deve declarar IMPORT/AUDIT como não executados naquele RUN. É proibido apresentar relatório histórico de APPLY como se pertencesse ao dry-run atual.
-
-## Decisões Network
-
-```text
-READY/CREATE       → somente com --apply
-READY/UPDATE_SAFE  → somente com --apply
-READY/NOOP         → não altera
-DELEGATED          → não escreve
-REVIEW             → não escreve
-BLOCKED            → não escreve
-```
+São somente leitura e não chamam Importer nem modificam o NetBox.
 
 ## Autoridade dos dados
 
