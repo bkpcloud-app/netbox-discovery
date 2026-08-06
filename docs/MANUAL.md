@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.11.20 — PRODUCT V1  
+**Versão:** 1.11.21 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
 
@@ -78,13 +78,17 @@ A regra não rebaixa Devices já existentes. Atualizações continuam submetidas
 
 ## 5. Propriedade global de MAC
 
-A tabela `dcim/mac-addresses` é global no NetBox. O produto valida os MACs presentes nas interfaces finais do PLAN em duas etapas:
+A tabela `dcim/mac-addresses` é global no NetBox. O produto valida os MACs presentes nas interfaces finais do PLAN:
 
 ```text
 PLAN V11
 → verifica propriedade global de cada MAC
 → conflito vira BLOCKED/NOOP
 → write guard calcula somente os restantes
+
+IMPORT legado corrigido
+→ valida o proprietário real da dcim.interface
+→ não depende apenas de inferir a interface pelo IP do spec
 
 IMPORT V12 --apply
 → repete a consulta global antes da primeira escrita
@@ -101,6 +105,20 @@ MAC em virtualization.vminterface/outro objeto  → bloqueado
 MAC duplicado na tabela global                   → bloqueado
 owner da interface não resolvido                 → bloqueado
 ```
+
+### Recuperação de APPLY parcial
+
+Quando um APPLY anterior criou o Device e a interface antes de falhar, o próximo PLAN pode apresentar:
+
+```text
+READY/NOOP
+existing_device_id preenchido
+MAC já atribuída à interface live desse mesmo Device
+```
+
+Nesse caso, a 1.11.21 consulta a `dcim.interface` e compara seu proprietário real com o Device reconciliado. Se forem iguais, o preflight passa. Se forem diferentes, permanece bloqueado.
+
+Uma mesma MAC repetida em mais de um `spec` do mesmo registro é avaliada apenas uma vez, evitando mensagens duplicadas.
 
 O produto nunca transfere automaticamente uma MAC entre Devices ou entre Device e VM.
 
@@ -169,7 +187,7 @@ Conflitos como `DUPLICATE_DESIRED_NAME`, identidade fraca, MAC já pertencente a
 ## 9. APPLY
 
 ```bash
-netbox-discovery run --apply
+netbox-discovery import --apply
 ```
 
 Somente após confirmar:
@@ -177,7 +195,8 @@ Somente após confirmar:
 ```text
 WRITE GUARD: PASS
 nenhum READY/CREATE com discovery_uid WEAK
-nenhum READY com conflito global de MAC
+nenhum READY com MAC pertencente a outro objeto
+READY/NOOP parcial com owner real confirmado
 BLOCKED analisados
 READY/CREATE e READY/UPDATE_SAFE revisados
 scheduler homologado
@@ -229,6 +248,8 @@ Self-test: PASS
 Check: PASS
 nenhum novo Device com identidade WEAK em READY
 nenhum READY com MAC pertencente a outro objeto
+READY/NOOP parcial permitido somente quando interface owner = Device reconciliado
+MAC repetida no mesmo registro avaliada uma vez
 preflight global de IP e MAC antes da primeira escrita
 WRITE GUARD calculado sobre decisões finais
 limites absolutos preservados no bootstrap
