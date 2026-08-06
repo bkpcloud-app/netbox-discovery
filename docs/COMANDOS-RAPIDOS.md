@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.22 — Comandos rápidos
+# netbox-discovery 1.11.23 — Comandos rápidos
 
 ## Atualizar e validar
 
@@ -20,6 +20,24 @@ netbox-discovery plan delegated
 ```
 
 Todos são somente leitura.
+
+## Colocar a unidade em produção
+
+Depois da aprovação do PLAN:
+
+```bash
+netbox-discovery go-live
+```
+
+O comando executa IMPORT, AUDIT, novo PLAN, valida convergência e habilita o scheduler Network com `APPLY=NÃO`.
+
+Resultado esperado:
+
+```text
+GO-LIVE: PASS
+SCHEDULER NETWORK: ENABLED
+APPLY AUTOMÁTICO: NÃO
+```
 
 ## Identidade para novos Devices
 
@@ -45,13 +63,13 @@ consulta global indisponível             → APPLY bloqueado
 netbox-discovery run
 ```
 
-## APPLY
+## APPLY manual excepcional
 
 ```bash
 netbox-discovery import --apply
 ```
 
-O Importer recalcula o PLAN, executa preflight global e resolve ownership de MAC antes de procurar ou criar interface por nome.
+No fluxo padrão de unidade nova, use `netbox-discovery go-live`.
 
 Se houver erro depois de `PREFLIGHT: OK`, trate como possível escrita parcial e recalcule o PLAN.
 
@@ -67,7 +85,8 @@ netbox-discovery scheduler status
 
 ```text
 run               = sem escrita
-import --apply    = escrita READY após proteções
+go-live           = escrita READY + AUDIT + convergência + scheduler APPLY=NÃO
+import --apply     = escrita manual READY após proteções
 WEAK new Device   = REVIEW/NOOP
 MAC conflict      = BLOCKED/NOOP
 same owner MAC    = reutiliza interface
