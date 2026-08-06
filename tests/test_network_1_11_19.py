@@ -12,11 +12,15 @@ if BASE not in sys.path:
 
 from modules.inventory import planner_v11 as planner
 
-VERSION = "1.11.19"
+MIN_VERSION = (1, 11, 19)
 
 
 def read(relative):
     return open(os.path.join(ROOT, relative), "r").read()
+
+
+def version_key(value):
+    return tuple(int(part) for part in value.strip().split("."))
 
 
 def row(uid, role="WINDOWS_HOST", asset_class="HOST_OR_APPLIANCE", existing=None):
@@ -35,9 +39,11 @@ def row(uid, role="WINDOWS_HOST", asset_class="HOST_OR_APPLIANCE", existing=None
     }
 
 
-def test_01_release_versions_are_1_11_19():
-    assert read("VERSION").strip() == VERSION
-    assert read("netbox-discovery/VERSION").strip() == VERSION
+def test_01_release_versions_include_1_11_19_or_newer():
+    root = read("VERSION").strip()
+    package = read("netbox-discovery/VERSION").strip()
+    assert root == package
+    assert version_key(root) >= MIN_VERSION
 
 
 def test_02_weak_generic_windows_host_is_review():
@@ -110,18 +116,9 @@ def test_08_final_identity_guard_runs_before_write_guard():
     assert identity_call < guard_call
 
 
-def test_09_documentation_is_current():
-    markers = {
-        "README.md": "**Versão atual:** 1.11.19",
-        "docs/MANUAL.md": "**Versão:** 1.11.19",
-        "docs/COMANDOS-RAPIDOS.md": "# netbox-discovery 1.11.19",
-        "docs/HOMOLOGACAO.md": "# netbox-discovery 1.11.19",
-        "RELEASE-NOTES.md": "## V1.11.19",
-        "SECURITY.md": "**Versão da política:** 1.11.19",
-        "docs/PATCH-1.11.19.md": "# netbox-discovery 1.11.19",
-    }
-    for relative, marker in markers.items():
-        assert marker in read(relative), relative
+def test_09_historical_documentation_remains_available():
+    assert "# netbox-discovery 1.11.19" in read("docs/PATCH-1.11.19.md")
+    assert "## V1.11.19" in read("RELEASE-NOTES.md")
 
 
 def main():
