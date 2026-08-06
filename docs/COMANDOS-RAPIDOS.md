@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.19 — Comandos rápidos
+# netbox-discovery 1.11.20 — Comandos rápidos
 
 ## Atualizar e validar
 
@@ -32,13 +32,16 @@ Discovery UID WEAK
 → não cria Device, interface ou IP
 ```
 
-Para conferir os candidatos liberados:
+## Propriedade global de MAC
 
-```bash
-netbox-discovery plan ready --limit 0
+```text
+MAC sem vínculo                           → permitido
+MAC no mesmo Device existente            → preservado
+MAC em outro Device/VM/objeto             → BLOCKED/NOOP
+consulta global de MAC indisponível       → APPLY bloqueado antes da escrita
 ```
 
-Nenhum novo `READY/CREATE` deve apresentar `Discovery UID: WEAK`.
+O produto não transfere MAC automaticamente.
 
 ## Write guard
 
@@ -74,6 +77,16 @@ netbox-discovery run
 
 Não grava no NetBox.
 
+## APPLY
+
+```bash
+netbox-discovery import --apply
+```
+
+O Importer recalcula o PLAN e executa preflight global de IP e MAC antes da primeira escrita.
+
+Se houver erro depois de `PREFLIGHT: OK`, não repita o APPLY sem recalcular e revisar o PLAN.
+
 ## Segundo plano
 
 ```bash
@@ -95,6 +108,7 @@ netbox-discovery scheduler status
 run               = sem escrita
 run --apply       = escrita READY após proteções
 WEAK new Device   = REVIEW/NOOP
+MAC conflict      = BLOCKED/NOOP
 REVIEW            = não escreve
 DELEGATED         = não escreve
 BLOCKED           = não escreve
