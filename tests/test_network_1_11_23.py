@@ -20,9 +20,10 @@ def test_01_versions_are_synced():
 def test_02_public_wrapper_exposes_go_live_and_delegates_legacy_commands():
     source = read("netbox-discovery/bin/netbox-discovery-wrapper")
     assert 'COMMAND="${1:-help}"' in source
-    assert 'if [[ "$COMMAND" == "go-live" ]]' in source
+    assert 'go-live)' in source
     assert 'modules/product/go_live.py' in source
     assert 'exec "$BASE/bin/netbox-discovery" "$@"' in source
+    assert 'netbox-discovery go-live' in source
 
 
 def test_03_installer_activates_wrapper():
