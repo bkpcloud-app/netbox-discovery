@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.11.22
+**Versão da política:** 1.11.23
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
@@ -18,6 +18,34 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 O updater usa o canal `stable`, valida o candidato, cria backup, preserva configuração, executa self-test/check e faz rollback/quarentena em falha.
 
 O updater não pode alterar `automation.apply`, executar `run --apply` ou modificar redes, exclusões, communities e credenciais.
+
+## GO-LIVE seguro
+
+A 1.11.23 adiciona o comando padrão:
+
+```bash
+netbox-discovery go-live
+```
+
+Ele executa IMPORT, AUDIT, novo PLAN e validação de convergência antes de habilitar o scheduler.
+
+Antes da habilitação final, preserva os dados operacionais existentes e força:
+
+```text
+automation.enabled=false
+automation.apply=false
+```
+
+Depois habilita o scheduler e verifica obrigatoriamente:
+
+```text
+automation.enabled=true
+automation.apply=false
+```
+
+Se a verificação falhar, o próprio fluxo desabilita o scheduler e encerra com erro.
+
+O GO-LIVE nunca escreve registros `REVIEW`, `DELEGATED` ou `BLOCKED`.
 
 ## Propriedade global de MAC
 

@@ -17,7 +17,7 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.11.22"
+          test "$(cat VERSION)" = "1.11.23"
 
       - name: Documentation sync
         run: |
@@ -37,6 +37,7 @@ jobs:
           bash -n install.sh
           bash -n install-from-github.sh
           bash -n netbox-discovery/bin/netbox-discovery
+          bash -n netbox-discovery/bin/netbox-discovery-wrapper
 
       - name: Python compile
         run: python3 -m compileall -q netbox-discovery tests
@@ -157,6 +158,9 @@ jobs:
 
       - name: Network 1.11.22 runtime MAC interface reuse
         run: python3 tests/test_network_1_11_22.py
+
+      - name: Network 1.11.23 native go-live
+        run: python3 tests/test_network_1_11_23.py
 
       - name: Secret sanity check
         run: |

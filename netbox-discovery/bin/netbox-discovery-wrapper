@@ -1,0 +1,26 @@
+#!/bin/bash
+set -euo pipefail
+
+BASE="${NETBOX_DISCOVERY_BASE:-/opt/netbox-discovery}"
+COMMAND="${1:-help}"
+
+case "$COMMAND" in
+  go-live)
+    shift || true
+    exec /usr/bin/python3 "$BASE/modules/product/go_live.py" "$@"
+    ;;
+  help|-h|--help)
+    "$BASE/bin/netbox-discovery" "$@"
+    cat <<'EOF'
+
+Comando de produção:
+  netbox-discovery go-live
+
+GO-LIVE:
+  IMPORT --apply -> AUDIT -> PLAN -> convergência -> scheduler com APPLY=NÃO
+EOF
+    ;;
+  *)
+    exec "$BASE/bin/netbox-discovery" "$@"
+    ;;
+esac

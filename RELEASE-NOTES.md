@@ -1,3 +1,30 @@
+## V1.11.23 — Native GO-LIVE
+
+Adicionado o comando operacional padrão:
+
+```bash
+netbox-discovery go-live
+```
+
+O comando executa de forma nativa:
+
+```text
+IMPORT --apply
+→ AUDIT
+→ novo PLAN e summary
+→ validação de convergência
+→ configuração segura com automation.apply=false
+→ habilitação do scheduler Network
+→ verificação final de enabled=true e apply=false
+→ status
+```
+
+A interface pública passa por um wrapper instalado em `/usr/local/bin/netbox-discovery`. Todos os comandos existentes continuam delegados ao core original; somente `go-live` usa o novo orquestrador.
+
+O fluxo falha fechado. Mudanças `READY/CREATE`, `READY/UPDATE_SAFE` ou `READY/REPAIR_SAFE_VM_DUPLICATE` ainda pendentes bloqueiam a habilitação do scheduler. Se o estado final estiver inseguro, o scheduler é desabilitado antes do erro.
+
+---
+
 ## V1.11.22 — Runtime MAC interface reuse
 
 A terceira tentativa de APPLY do DCM, já na 1.11.21, passou pelos dois preflights mas ainda falhou no runtime do primeiro READY:
