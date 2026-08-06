@@ -18,6 +18,7 @@ from lib.netbox import NetBox
 from modules.importers import importer as package_base
 from modules.importers import importer_v2 as v2
 from modules.importers import importer_v11 as v11
+from modules.product import identity
 
 IMPORTER_VERSION = "6.1-product"
 REPORTS = package_base.REPORTS
@@ -38,6 +39,83 @@ def nested_id(value):
     if isinstance(value, int):
         return value
     return None
+
+
+def _assigned_id(row):
+    assigned = row.get("assigned_object") or {}
+    if isinstance(assigned, dict) and assigned.get("id") is not None:
+        return assigned.get("id")
+    return row.get("assigned_object_id")
+
+
+def _interface_owner(interface):
+    device = (interface or {}).get("device") or {}
+    if isinstance(device, dict):
+        return device.get("id"), clean(device.get("name") or device.get("display"))
+    if isinstance(device, int):
+        return device, ""
+    return None, ""
+
+
+def _global_mac_preflight_errors(ready, indexes, macs, interfaces, rematch_fn):
+    """Validate all final interface MAC intents before the first NetBox write."""
+    interface_index = dict(
+        (item.get("id"), item)
+        for item in (interfaces or [])
+        if item.get("id") is not None
+    )
+    mac_index = {}
+    for item in macs or []:
+        mac = identity.norm_mac(item.get("mac_address") or item.get("mac"))
+        if mac:
+            mac_index.setdefault(mac, []).append(item)
+
+    errors = []
+    for row in ready or []:
+        label = clean(row.get("desired_name")) or clean(row.get("asset_id"))
+        current, state, unused_reason = rematch_fn(row, indexes)
+        if state == "CONFLICT":
+            continue
+        target_device_id = current.get("id") if current else row.get("existing_device_id")
+        checked = set()
+
+        for spec in row.get("interfaces") or []:
+            mac = identity.norm_mac(spec.get("mac"))
+            if not mac or mac in checked:
+                continue
+            checked.add(mac)
+            matches = mac_index.get(mac, [])
+            if not matches:
+                continue
+            if len(matches) > 1:
+                errors.append("{0}: MAC global duplicado {1} ({2} objetos)".format(
+                    label, mac, len(matches)))
+                continue
+
+            obj = matches[0]
+            assigned_type = clean(obj.get("assigned_object_type"))
+            assigned_id = _assigned_id(obj)
+            if not assigned_id:
+                continue
+            if assigned_type != "dcim.interface":
+                errors.append("{0}: MAC {1} pertence a {2} ID {3}".format(
+                    label, mac, assigned_type or "objeto desconhecido", assigned_id))
+                continue
+
+            interface = interface_index.get(assigned_id) or {}
+            owner_id, owner_name = _interface_owner(interface)
+            if target_device_id and owner_id == target_device_id:
+                continue
+            if owner_id:
+                suffix = " ({0})".format(owner_name) if owner_name else ""
+                errors.append(
+                    "{0}: MAC {1} pertence ao Device ID {2}{3} via interface ID {4}; alvo={5}".format(
+                        label, mac, owner_id, suffix, assigned_id, target_device_id or "NOVO")
+                )
+            else:
+                errors.append("{0}: MAC {1} pertence à interface ID {2}, owner não resolvido".format(
+                    label, mac, assigned_id))
+    return errors
 
 
 def _load(path):
@@ -278,6 +356,8 @@ def main(argv=None):
     old_version = v11.IMPORTER_VERSION
     old_top_safe = v2.base.safe_patch_for_existing
     old_package_safe = package_base.safe_patch_for_existing
+    old_top_preflight = v2.base.preflight_ready
+    old_package_preflight = package_base.preflight_ready
     old_print = builtins.print
     refresh_modules = (
         v11, v11.v10, v11.v9, v11.v8, v11.v7,
@@ -294,19 +374,36 @@ def main(argv=None):
             args = ("===== IMPORT FINALIZE 1.11.10 =====",) + tuple(args[1:])
         return old_print(*args, **kwargs)
 
+    def global_mac_preflight(ready, indexes, tenant):
+        errors = list(old_top_preflight(ready, indexes, tenant))
+        try:
+            nb = NetBox()
+            macs = package_base.query(nb, "dcim/mac-addresses/", limit=10000)
+            interfaces = package_base.query(nb, "dcim/interfaces/", limit=10000)
+        except Exception as exc:
+            errors.append("GLOBAL_MAC_PREFLIGHT_UNAVAILABLE: {0}".format(exc))
+            return errors
+        errors.extend(_global_mac_preflight_errors(
+            ready, indexes, macs, interfaces, v2.base.rematch_record))
+        return errors
+
     try:
         for module, unused in old_refresh:
             module.refresh_plan = refresh_plan
         v11.IMPORTER_VERSION = IMPORTER_VERSION
         # The legacy chain imports importer.py twice: as
         # modules.importers.importer and as top-level importer. Patch both
-        # module objects so isolated device_type diffs reach the real main loop.
+        # module objects so the real main loop receives the same safety rules.
         package_base.safe_patch_for_existing = v11.safe_patch_for_existing
         v2.base.safe_patch_for_existing = v11.safe_patch_for_existing
+        package_base.preflight_ready = global_mac_preflight
+        v2.base.preflight_ready = global_mac_preflight
         builtins.print = release_print
         rc = v11.main(values)
     finally:
         builtins.print = old_print
+        v2.base.preflight_ready = old_top_preflight
+        package_base.preflight_ready = old_package_preflight
         v2.base.safe_patch_for_existing = old_top_safe
         package_base.safe_patch_for_existing = old_package_safe
         v11.IMPORTER_VERSION = old_version
