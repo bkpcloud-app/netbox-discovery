@@ -56,13 +56,15 @@ if [[ -f "$TARGET/config.yml" ]]; then
     --ensure-network-automation
 fi
 
-chmod +x "$TARGET/bin/netbox-discovery"
+chmod +x "$TARGET/bin/netbox-discovery" "$TARGET/bin/netbox-discovery-wrapper"
 find "$TARGET/modules" -type f -name '*.py' -exec chmod 750 {} \;
-chmod 750 "$TARGET/bin/netbox-discovery"
+chmod 750 "$TARGET/bin/netbox-discovery" "$TARGET/bin/netbox-discovery-wrapper"
 [[ -f "$TARGET/config.yml" ]] && chmod 600 "$TARGET/config.yml"
 find "$TARGET/config/sites" -type f -name 'snmp-communities.conf' -exec chmod 600 {} \; 2>/dev/null || true
 
-ln -sfn "$TARGET/bin/netbox-discovery" /usr/local/bin/netbox-discovery
+# Public command uses the wrapper. All legacy/subcommands are delegated to the
+# original command; go-live is handled natively by the product.
+ln -sfn "$TARGET/bin/netbox-discovery-wrapper" /usr/local/bin/netbox-discovery
 
 for unit in \
   netbox-discovery.service \
@@ -89,7 +91,7 @@ printf 'Auto-update stable: HABILITADO\n'
 printf 'Schedulers network/hypervisor: NÃO HABILITADOS pelo instalador\n'
 
 if [[ -f "$TARGET/config.yml" ]]; then
-  "$TARGET/bin/netbox-discovery" check
+  /usr/local/bin/netbox-discovery check
   echo "CONFIG EXISTENTE: PRESERVADA"
   echo "Próximo comando operacional: netbox-discovery status"
 else
