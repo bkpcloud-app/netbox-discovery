@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, classificação, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.11.20 — PRODUCT V1  
+**Versão atual:** 1.11.21 — PRODUCT V1  
 **Distribuição:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
 
@@ -21,24 +21,38 @@ DISCOVER V6 / 4.6-product
 
 ## Preflight global de MAC
 
-A 1.11.20 verifica todos os MACs finais do PLAN contra a tabela global `dcim/mac-addresses` antes da primeira escrita.
+A 1.11.20 passou a verificar todos os MACs finais do PLAN contra a tabela global `dcim/mac-addresses` antes da primeira escrita.
 
 ```text
 MAC livre ou sem vínculo
 → elegível conforme as demais políticas
 
-MAC já vinculado à interface do mesmo Device existente
-→ preservado
+MAC já vinculada à interface do mesmo Device existente
+→ preservada
 
-MAC vinculado a outro Device, VM ou objeto
+MAC vinculada a outro Device, VM ou objeto
 → BLOCKED/NOOP no PLAN
-→ bloqueado novamente pelo preflight do IMPORT
+→ bloqueada novamente pelo preflight do IMPORT
 ```
 
-A checagem ocorre em duas camadas independentes:
+A 1.11.21 corrige a camada legada do Importer para usar o proprietário real da interface. Em uma recuperação de APPLY parcial, um `READY/NOOP` já reconciliado não é bloqueado apenas porque a interface não pôde ser inferida pelo formato do IP no `spec`.
+
+```text
+interface live pertence ao mesmo Device reconciliado
+→ PASS
+
+interface live pertence a outro Device
+→ BLOQUEADO
+
+mesma MAC repetida em mais de um spec do mesmo registro
+→ avaliada uma única vez
+```
+
+A checagem ocorre em camadas independentes:
 
 1. Planner V11, antes do write guard;
-2. Importer V12, antes de criar catálogo, Device, interface ou IP.
+2. preflight legado corrigido por owner real;
+3. Importer V12, antes de criar catálogo, Device, interface ou IP.
 
 Se a consulta global de MAC estiver indisponível no APPLY, o preflight falha fechado e nenhuma nova escrita é iniciada.
 
@@ -124,7 +138,8 @@ O Discovery V6 divide prefixos grandes, como `/16`, em lotes `/24`, elimina sobr
 - VM confirmada permanece delegada;
 - serial conflitante não é gravado;
 - identidade `WEAK` nunca cria novo Device;
-- MAC vinculado a outro objeto nunca é reassociado automaticamente;
+- MAC vinculada a outro objeto nunca é reassociada automaticamente;
+- MAC já pertencente ao mesmo Device não gera falso bloqueio;
 - `REVIEW`, `DELEGATED` e `BLOCKED` nunca escrevem;
 - `READY/CREATE` e `READY/UPDATE_SAFE` escrevem somente com `--apply`;
 - limites absolutos permanecem ativos durante bootstrap;
@@ -138,4 +153,4 @@ O Discovery V6 divide prefixos grandes, como `/16`, em lotes `/24`, elimina sobr
 - `docs/HOMOLOGACAO.md`;
 - `RELEASE-NOTES.md`;
 - `SECURITY.md`;
-- `docs/PATCH-1.11.20.md`.
+- `docs/PATCH-1.11.21.md`.
