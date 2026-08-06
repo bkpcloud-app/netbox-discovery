@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.11.20
+**Versão da política:** 1.11.21
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
@@ -35,6 +35,23 @@ owner da interface não resolvido         → BLOCKED/NOOP
 ```
 
 O Importer V12 repete a consulta global de MAC antes da primeira escrita. Se houver conflito ou a consulta falhar, o APPLY falha fechado antes de criar catálogo, Device, interface ou IP.
+
+### Validação da camada legada
+
+A camada legada do Importer deve usar o proprietário real da `dcim.interface` como autoridade.
+
+```text
+interface.device.id = Device reconciliado
+→ permitido
+
+interface.device.id diferente do Device reconciliado
+→ bloqueado
+
+interface sem owner resolvido
+→ bloqueado
+```
+
+Não é permitido concluir conflito apenas porque a interface não pôde ser inferida pelo IP presente no `spec`. Uma mesma MAC repetida em vários `specs` do mesmo registro deve ser avaliada uma única vez.
 
 Nenhum limite de bootstrap ou write guard pode suprimir essa proteção.
 
@@ -149,6 +166,7 @@ Nome existente no NetBox → preservado
 PATCH automático de name → proibido
 Serial conflitante       → não gravado
 MAC de outro objeto      → não transferida
+MAC do mesmo Device      → preservada
 VM confirmada            → delegada à virtualização
 Device manual            → protegido
 ```
