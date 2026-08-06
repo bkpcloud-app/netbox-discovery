@@ -1,3 +1,29 @@
+## V1.11.22 — Runtime MAC interface reuse
+
+A terceira tentativa de APPLY do DCM, já na 1.11.21, passou pelos dois preflights mas ainda falhou no runtime do primeiro READY:
+
+```text
+PREFLIGHT GLOBAL FINALIZE: OK
+PREFLIGHT: OK
+ERRO em SW-CORE-AE: MAC E8:B5:D0:72:9D:FC já pertence a dcim.interface ID 543
+```
+
+O runtime do Importer V2 procurava a interface pelo nome do `spec` antes de validar a MAC. Quando o nome live divergia, ele podia criar uma segunda interface e só depois descobrir que a MAC já estava na interface original.
+
+A 1.11.22 altera a ordem:
+
+```text
+resolver MAC global
+→ resolver dcim.interface vinculada
+→ validar interface.device.id
+→ reutilizar a interface live do mesmo Device
+→ somente sem vínculo usar busca/criação por nome
+```
+
+Conflitos reais continuam bloqueados antes da criação. A regressão reproduz a interface ID 543, nome divergente, mesma MAC repetida, owner estrangeiro, vínculo em VM e MAC sem atribuição.
+
+---
+
 ## V1.11.21 — Legacy MAC owner preflight recovery
 
 A segunda tentativa de APPLY do DCM, já na 1.11.20, foi bloqueada antes da escrita por um falso conflito no `SW-CORE-AE`:
@@ -22,106 +48,33 @@ mesma MAC repetida em vários specs do mesmo registro
 → avaliada uma única vez
 ```
 
-A validação agora consulta `dcim/interfaces`, usa `interface.device.id` como autoridade e continua fail-closed quando o owner não pode ser resolvido. Não há transferência automática de MAC.
-
-A regressão reproduz a interface ID 543, o `READY/NOOP` parcial, o spec sem IP inferível e a duplicação da mesma MAC em dois specs.
+A validação consulta `dcim/interfaces`, usa `interface.device.id` como autoridade e continua fail-closed quando o owner não pode ser resolvido.
 
 ---
 
 ## V1.11.20 — Global MAC ownership preflight
 
-O primeiro APPLY do DCM na 1.11.19 parou no primeiro `READY`, `SW-CORE-AE`, porque a MAC de gerenciamento já pertencia à interface ID 543:
+O primeiro APPLY do DCM na 1.11.19 parou no primeiro `READY`, `SW-CORE-AE`, porque a MAC de gerenciamento já pertencia à interface ID 543.
 
-```text
-MAC E8:B5:D0:72:9D:FC já pertence a dcim.interface ID 543
-```
-
-O conflito foi detectado tarde, depois de `PREFLIGHT: OK`, quando o Importer já estava no loop de escrita. A execução deve ser tratada como possível aplicação parcial do primeiro equipamento.
-
-A 1.11.20 adiciona proteção em duas camadas:
-
-```text
-PLAN V11
-→ valida toda MAC presente nas interfaces finais
-→ MAC pertencente a outro objeto vira BLOCKED/NOOP
-→ write guard conta apenas os READY restantes
-
-IMPORT V12
-→ repete a consulta global de MAC antes da primeira escrita
-→ conflito ou falha de consulta bloqueia o lote inteiro sem iniciar novas escritas
-```
-
-A regra aceita somente MAC livre, sem atribuição, ou já vinculada à interface do mesmo `existing_device_id`. Não há transferência automática entre Devices, VMs ou outros objetos.
-
-A regressão reproduz a interface ID 543, valida bloqueio no PLAN, preflight fail-closed e isolamento dos outros 13 candidatos estáveis do DCM.
+A 1.11.20 adicionou proteção no Planner V11 e Importer V12 para validar ownership global antes da primeira escrita.
 
 ---
 
 ## V1.11.19 — Final stable identity guard
 
-A revisão ao vivo do PLAN 1.11.18 no DCM encontrou três novos candidatos indevidamente liberados como `READY/CREATE` apesar de possuírem `Discovery UID: WEAK`:
-
-```text
-10.28.1.22 | SRV-DCAR03 | WINDOWS_HOST
-10.28.1.23 | SRV-DCAR02 | WINDOWS_HOST
-10.225.1.61 | SMS Agente SNMP | SMS_GATEWAY
-```
-
-As proteções anteriores eram específicas para classes físicas e roles Windows conhecidas. A 1.11.19 adiciona uma validação final independente de role e classe:
-
-```text
-novo READY/CREATE + discovery_uid WEAK
-→ REVIEW/NOOP
-→ interfaces e intenções de IP removidas
-```
-
-A regra roda antes do write guard. Assim, candidatos fracos não entram em `eligible_total`, enquanto identidades estáveis por serial ou management MAC continuam elegíveis.
-
-No cenário DCM, o resultado esperado passa de 17 para 14 `READY/CREATE`, mantendo os dois conflitos Kubernetes em `BLOCKED` e o write guard em `PASS`.
+Novo `READY/CREATE` com `discovery_uid WEAK` passa a `REVIEW/NOOP`, independentemente de role ou classe.
 
 ---
 
 ## V1.11.18 — Small-site bootstrap write guard
 
-Sites em fase inicial não usam mais a regra percentual enquanto a base tiver menos de 50 Devices.
-
-```text
-base < 50  → SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY
-base >= 50 → ABSOLUTE_AND_PERCENT
-```
-
-Durante o bootstrap, apenas o percentual é adiado. Os limites absolutos continuam obrigatórios:
-
-```text
-CREATE=25
-UPDATE_SAFE=50
-REPAIR_SAFE_VM_DUPLICATE=20
-TOTAL=75
-```
-
-O relatório nativo do PLAN mostra política, percentual ativo/adiado e base mínima. A regressão cobre o cenário DCM de 17 mudanças sobre 13 Devices, o bloqueio absoluto de 26 criações e o bloqueio percentual em base madura.
-
-Conflitos de identidade, nomes duplicados, REVIEW, DELEGATED e BLOCKED continuam sem escrita.
+Sites com menos de 50 Devices adiam apenas a regra percentual. Limites absolutos permanecem obrigatórios.
 
 ---
 
 ## V1.11.17 — Final write guard ordering
 
-O ciclo DCM revelou um falso bloqueio: uma camada intermediária calculou `CREATE=32` antes de políticas posteriores reclassificarem candidatos fracos para `REVIEW`.
-
-Planner V11 agora executa a sequência:
-
-```text
-políticas finais de identidade e inventário
-→ decisões finais
-→ write guard uma única vez
-```
-
-Somente mudanças finais `READY/CREATE`, `READY/UPDATE_SAFE` e `READY/REPAIR_SAFE_VM_DUPLICATE` entram no cálculo. Os limites existentes continuam inalterados e mudanças finais excessivas continuam bloqueadas.
-
-`netbox-discovery plan summary` passa a mostrar status, elegíveis, base de Devices, percentual e violações do guard efetivo.
-
-A regressão reproduz 32 candidatos intermediários sobre 13 Devices, exigindo guard final PASS depois da conversão para `REVIEW/NOOP`, e valida também que 26 `READY/CREATE` finais continuam bloqueados pelo limite 25.
+O write guard passa a ser calculado uma única vez após todas as políticas finais do Planner.
 
 ---
 
@@ -138,22 +91,19 @@ netbox-discovery plan delegated
 netbox-discovery plan all
 ```
 
-O status deixou de apresentar IMPORT/AUDIT históricos como se pertencessem a um dry-run atual.
-
 ---
 
 ## V1.11.15 — Update preflight before every scheduled collection
 
-Network e Hypervisor executam o updater imediatamente antes de cada coleta agendada. Atualização válida é instalada e testada; falha de candidato executa rollback/quarentena; indisponibilidade temporária do GitHub não cancela a coleta.
+Network e Hypervisor executam o updater imediatamente antes de cada coleta agendada.
 
 ---
 
 ## V1.11.14 — Scheduler guarantees auto-update and documentation parity
 
-- schedulers Network e Hypervisor garantem que o timer de update esteja habilitado;
+- timer de update garantido;
 - desabilitar coleta não desabilita update;
-- documentação principal sincronizada;
-- CI exige versão exata dos documentos.
+- documentação principal sincronizada.
 
 ---
 
@@ -169,14 +119,13 @@ Network e Hypervisor executam o updater imediatamente antes de cada coleta agend
 
 - prefixos grandes divididos em lotes `/24`;
 - paralelismo controlado;
-- progresso e erros por lote;
 - suporte ao cenário DCM com `/16`.
 
 ---
 
 ## V1.11.11 — Scheduler migration
 
-- configurações antigas recebem bloco `automation` seguro;
+- bloco `automation` seguro;
 - scheduler inicia desabilitado;
 - `apply` permanece falso por padrão.
 
@@ -185,8 +134,8 @@ Network e Hypervisor executam o updater imediatamente antes de cada coleta agend
 ## V1.11.10 — Import and audit idempotency
 
 - Device Type aplicado e verificado;
-- aliases de módulos corrigidos;
-- auditoria idempotente por identidade estável;
+- aliases corrigidos;
+- auditoria idempotente;
 - piloto FBA concluído sem FAIL.
 
 ---
@@ -197,5 +146,4 @@ Network e Hypervisor executam o updater imediatamente antes de cada coleta agend
 - virtualização centralizada;
 - Printer-MIB, Windows, industrial e CFTV;
 - proteção de nomes;
-- write guard, preflight e auditoria final;
-- correções sucessivas baseadas no piloto FBA.
+- write guard, preflight e auditoria final.
