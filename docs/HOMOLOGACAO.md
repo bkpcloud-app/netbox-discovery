@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.21 — Matriz de Homologação
+# netbox-discovery 1.11.22 — Matriz de Homologação
 
 ## Estados
 
@@ -15,14 +15,6 @@ CI PASS não substitui LIVE PASS.
 
 **Estado:** LIVE PASS como referência funcional.
 
-```text
-BLOCKED: 0
-Assets FAIL: 0
-Checks FAIL: 0
-Scheduler Network: ENABLED
-APPLY: NÃO
-```
-
 ## DCM
 
 **Estado:** LIVE PARTIAL.
@@ -31,14 +23,14 @@ Validado ao vivo:
 
 - Discovery V6 em seis redes `/24`;
 - 110 hosts ativos e 101 assets reconciliados;
-- 43 VMs delegadas ao inventário central do vCenter;
-- identidade `WEAK` rebaixada corretamente;
-- write guard final em política de bootstrap;
-- scheduler Network desabilitado durante homologação.
+- 43 VMs delegadas ao vCenter;
+- identidade `WEAK` rebaixada;
+- write guard em política de bootstrap;
+- scheduler Network desabilitado.
 
 ## Primeiro APPLY — escrita parcial confirmada
 
-Na 1.11.19, o primeiro APPLY criou parcialmente o `SW-CORE-AE` e parou ao reconciliar a MAC:
+Na 1.11.19, o primeiro APPLY criou parcialmente o `SW-CORE-AE` e parou:
 
 ```text
 MAC E8:B5:D0:72:9D:FC já pertence a dcim.interface ID 543
@@ -49,7 +41,6 @@ O PLAN posterior confirmou:
 ```text
 Devices no site: 14
 SW-CORE-AE: READY/NOOP
-Motivos: SERIAL+MAC+IP+NAME
 READY/CREATE restantes: 13
 READY/NOOP: 14
 REVIEW: 29
@@ -57,71 +48,80 @@ BLOCKED: 2
 WRITE GUARD: PASS
 ```
 
-## Segunda tentativa na 1.11.20 — nenhuma escrita
+## Segunda tentativa — preflight bloqueado
 
-O preflight foi bloqueado antes da escrita:
+Na 1.11.20, nenhuma escrita foi iniciada. O preflight legado não reconheceu que a interface `543` pertencia ao próprio Device.
+
+A 1.11.21 corrigiu esse falso bloqueio e o preflight passou.
+
+## Terceira tentativa — runtime tardio ainda incorreto
+
+Na 1.11.21:
 
 ```text
-PREFLIGHT GLOBAL FINALIZE: BLOQUEADO - nenhuma escrita iniciada
-SW-CORE-AE: MAC E8:B5:D0:72:9D:FC pertence a dcim.interface ID 543,
-esperado interface ainda não existente
+PREFLIGHT GLOBAL FINALIZE: OK
+PREFLIGHT: OK
+ERRO em SW-CORE-AE: MAC E8:B5:D0:72:9D:FC já pertence a dcim.interface ID 543
 ```
-
-A mesma mensagem apareceu duas vezes.
 
 ### Causa confirmada
 
-O Importer V5 legado:
+O runtime do Importer V2 ainda executava:
 
-- inferia a interface esperada apenas pelo IP presente no `spec`;
-- não consultava o Device proprietário real da interface live;
-- tratava a interface não inferida como conflito, mesmo quando ela pertencia ao próprio `existing_device_id`;
-- avaliava a mesma MAC repetida em dois `specs`, gerando erro duplicado.
+```text
+procurar interface pelo nome do spec
+→ criar/preservar interface
+→ somente depois validar a MAC
+```
 
-A proteção global nova estava correta; o falso bloqueio vinha da camada legada executada antes dela.
+Quando o nome do `spec` divergia do nome da interface live `543`, o Importer podia criar uma interface adicional e depois falhar ao descobrir que a MAC já estava vinculada à interface original.
 
-## Estado da 1.11.21
+Essa tentativa não avançou para os outros 13 Devices. Ela deve ser tratada como possível criação de interface parcial no `SW-CORE-AE`.
+
+## Estado da 1.11.22
 
 **Estado inicial:** CI PASS / NOT LIVE até atualização no DCM.
 
 Contrato corrigido:
 
 ```text
-READY/NOOP reconciliado
-+ MAC atribuída a dcim.interface
-+ interface.device.id = Device reconciliado
-→ PASS
-
-interface.device.id diferente do Device reconciliado
-→ BLOQUEADO
-
-mesma MAC repetida no mesmo registro
-→ avaliada uma única vez
+resolver MAC global
+→ resolver dcim.interface vinculada
+→ validar interface.device.id
+→ se for o mesmo Device, reutilizar a interface live
+→ somente sem vínculo usar busca/criação por nome
 ```
 
-A regra consulta todas as `dcim.interfaces` e usa o owner real como autoridade. Ela não transfere MAC e não libera MAC pertencente a outro Device, VM ou objeto.
+Regras:
+
+```text
+interface 543 pertence ao SW-CORE-AE reconciliado → PRESERVED_BY_MAC
+nome live diferente do nome do spec               → não cria nova interface
+interface pertence a outro Device                 → bloqueio antes da criação
+MAC em VM/outro objeto                            → bloqueio antes da criação
+MAC sem vínculo                                   → fluxo normal
+```
 
 ## Regressões obrigatórias
 
 ```text
-interface 543 pertence ao SW-CORE-AE reconciliado → PASS
-spec sem IP utilizável                            → owner real continua válido
-mesma MAC em dois specs                           → zero duplicação de erro
-interface 543 pertence a outro Device             → um bloqueio
-novo Device reutilizando MAC existente            → bloqueio
-MAC em virtualization.vminterface                 → bloqueio
-MAC global duplicada                              → um bloqueio
+interface 543 no mesmo Device + nome diferente    → reutiliza 543
+mesma MAC em dois specs                            → reutiliza 543 nas duas passagens
+interface em outro Device                         → bloqueia antes de ORIG_ENSURE_INTERFACE
+MAC em virtualization.vminterface                 → bloqueia antes da criação
+MAC sem atribuição                                 → segue fluxo normal
+nenhum POST de interface no cenário parcial       → obrigatório
 ```
 
 ## Próxima validação no DCM
 
-- atualizar para 1.11.21;
-- confirmar `netbox-discovery version`;
-- não executar nova descoberta;
-- executar `netbox-discovery import --apply` somente após atualização;
+- atualizar para 1.11.22;
+- executar `netbox-discovery import --apply`;
 - confirmar `PREFLIGHT GLOBAL FINALIZE: OK`;
-- validar criação dos 13 equipamentos restantes;
-- executar auditoria e PLAN convergente depois do IMPORT;
+- confirmar `PREFLIGHT: OK`;
+- confirmar `SW-CORE-AE` preservado por MAC;
+- validar os 13 equipamentos restantes;
+- executar AUDIT e PLAN convergente;
 - manter scheduler desabilitado até o fechamento.
 
 ## Critérios para LIVE PASS
@@ -131,11 +131,9 @@ Self-test: PASS
 Check: PASS
 PREFLIGHT GLOBAL FINALIZE: OK
 PREFLIGHT: OK
+SW-CORE-AE sem nova interface duplicada
 13 READY/CREATE processados sem erro
-SW-CORE-AE preservado como READY/NOOP
-nenhuma transferência de MAC
 IMPORT: PASS
 AUDIT: PASS
 PLAN posterior convergente
-scheduler ainda desabilitado durante homologação
 ```
