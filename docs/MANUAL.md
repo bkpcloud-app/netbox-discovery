@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.11.22 — PRODUCT V1  
+**Versão:** 1.11.23 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
 
@@ -151,24 +151,48 @@ REPAIR_SAFE_VM_DUPLICATE: 20
 TOTAL: 75
 ```
 
-## 8. APPLY
+## 8. GO-LIVE padrão
+
+Depois da revisão e aprovação do PLAN, o comando operacional oficial é:
+
+```bash
+netbox-discovery go-live
+```
+
+Ele executa automaticamente:
+
+```text
+IMPORT --apply
+→ AUDIT
+→ novo PLAN e summary
+→ validação de convergência
+→ automation.enabled=false e automation.apply=false
+→ habilitação do scheduler Network
+→ validação final de enabled=true e apply=false
+→ status
+```
+
+O uso manual de uma cadeia longa de comandos não é necessário.
+
+O fluxo falha fechado. Se IMPORT, AUDIT, PLAN, convergência ou validação final falhar, ele não conclui o GO-LIVE. Se detectar estado inseguro após habilitar o timer, desabilita o scheduler antes de encerrar com erro.
+
+Resultado esperado:
+
+```text
+GO-LIVE: PASS
+SCHEDULER NETWORK: ENABLED
+APPLY AUTOMÁTICO: NÃO
+```
+
+## 9. APPLY manual excepcional
 
 ```bash
 netbox-discovery import --apply
 ```
 
-Somente após confirmar:
+Usar somente para diagnóstico ou operação dirigida. No fluxo normal de unidade nova, usar `netbox-discovery go-live`.
 
-```text
-WRITE GUARD: PASS
-nenhum READY/CREATE com discovery_uid WEAK
-nenhum READY com MAC pertencente a outro objeto
-READY/NOOP parcial com owner real confirmado
-BLOCKED analisados
-scheduler desabilitado durante homologação
-```
-
-## 9. Falha de APPLY
+## 10. Falha de APPLY
 
 Se um APPLY terminar com erro:
 
@@ -181,7 +205,7 @@ revisar se houve Device, interface ou IP parcial
 
 Falha depois de `PREFLIGHT: OK` deve ser tratada como possível escrita parcial.
 
-## 10. Auto-update e scheduler
+## 11. Auto-update e scheduler
 
 ```bash
 netbox-discovery scheduler enable
@@ -189,9 +213,9 @@ netbox-discovery scheduler disable
 netbox-discovery scheduler status
 ```
 
-O updater não altera `automation.apply`.
+O updater não altera `automation.apply`. O GO-LIVE força `automation.apply=false` antes da habilitação final.
 
-## 11. Critérios de homologação
+## 12. Critérios de homologação
 
 ```text
 Self-test: PASS
@@ -205,4 +229,5 @@ preflight global de IP e MAC antes da escrita
 WRITE GUARD calculado sobre decisões finais
 Erros: 0
 PLAN posterior convergente
+scheduler habilitado com APPLY=NÃO
 ```
