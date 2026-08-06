@@ -15,7 +15,7 @@ if BASE not in sys.path:
 
 import importer as base
 
-IMPORTER_VERSION = "5.0-product"
+IMPORTER_VERSION = "5.1-product"
 ORIG_REMATCH = base.rematch_record
 ORIG_ENSURE_INTERFACE = base.ensure_interface
 ORIG_REFRESH_PLAN = base.refresh_plan
@@ -23,6 +23,14 @@ ORIG_REFRESH_PLAN = base.refresh_plan
 
 def clean(v):
     return "" if v is None else str(v).strip()
+
+
+def nested_id(value):
+    if isinstance(value, dict):
+        return value.get("id")
+    if isinstance(value, int):
+        return value
+    return None
 
 
 def norm_mac(value):
@@ -84,6 +92,47 @@ def _assigned_id(row):
     return row.get("assigned_object_id")
 
 
+def _interface_for_owned_mac(nb, device, mac):
+    """Return the live interface when MAC already belongs to this Device.
+
+    Interface names are not identity. A partial APPLY may already have created
+    and populated an interface whose name differs from the current PLAN spec.
+    Resolve the globally unique MAC first so the importer never creates a second
+    interface and only afterwards discovers the existing MAC assignment.
+    """
+    mac = norm_mac(mac)
+    device_id = device.get("id") if isinstance(device, dict) else None
+    if not mac or not isinstance(device_id, int):
+        return None
+
+    matches = [
+        item for item in _mac_cache(nb)
+        if norm_mac(item.get("mac_address") or item.get("mac")) == mac
+    ]
+    if len(matches) > 1:
+        raise RuntimeError("MAC duplicado no NetBox: {0}".format(mac))
+    if not matches:
+        return None
+
+    obj = matches[0]
+    assigned_id = _assigned_id(obj)
+    assigned_type = clean(obj.get("assigned_object_type"))
+    if not assigned_id:
+        return None
+    if assigned_type != "dcim.interface":
+        raise RuntimeError("MAC {0} já pertence a {1} ID {2}".format(
+            mac, assigned_type or "outro objeto", assigned_id))
+
+    interface = nb.get("dcim/interfaces/{0}/".format(assigned_id))
+    if not isinstance(interface, dict) or interface.get("id") != assigned_id:
+        raise RuntimeError("MAC {0} aponta para interface ID {1} não resolvida".format(mac, assigned_id))
+    owner_id = nested_id(interface.get("device"))
+    if owner_id != device_id:
+        raise RuntimeError("MAC {0} pertence à interface ID {1} do Device ID {2}, esperado Device ID {3}".format(
+            mac, assigned_id, owner_id or "NONE", device_id))
+    return interface
+
+
 def ensure_mac(nb, apply_mode, interface, mac, report):
     mac = norm_mac(mac)
     if not mac or not interface.get("id"):
@@ -135,7 +184,17 @@ def ensure_mac(nb, apply_mode, interface, mac, report):
 
 
 def ensure_interface(nb, apply_mode, device, spec, report):
-    interface = ORIG_ENSURE_INTERFACE(nb, apply_mode, device, spec, report)
+    interface = None
+    if spec.get("mac"):
+        interface = _interface_for_owned_mac(nb, device, spec.get("mac"))
+    if interface is not None:
+        report.append({
+            "phase": "INTERFACE", "object_type": "INTERFACE", "action": "PRESERVED_BY_MAC",
+            "name": clean(interface.get("name")), "object_id": interface.get("id"),
+            "detail": clean(device.get("name")),
+        })
+    else:
+        interface = ORIG_ENSURE_INTERFACE(nb, apply_mode, device, spec, report)
     if spec.get("mac"):
         ensure_mac(nb, apply_mode, interface, spec.get("mac"), report)
     return interface
