@@ -17,7 +17,7 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.11.20"
+          test "$(cat VERSION)" = "1.11.21"
 
       - name: Documentation sync
         run: |
@@ -151,6 +151,9 @@ jobs:
 
       - name: Network 1.11.20 global MAC ownership preflight
         run: python3 tests/test_network_1_11_20.py
+
+      - name: Network 1.11.21 legacy MAC owner preflight
+        run: python3 tests/test_network_1_11_21.py
 
       - name: Secret sanity check
         run: |
