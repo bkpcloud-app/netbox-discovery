@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.22 — Matriz de Homologação
+# netbox-discovery 1.11.23 — Matriz de Homologação
 
 ## Estados
 
@@ -17,72 +17,37 @@ CI PASS não substitui LIVE PASS.
 
 ## DCM
 
-**Estado:** LIVE PARTIAL.
+**Estado:** LIVE PASS na 1.11.22.
 
-Validado ao vivo:
-
-- Discovery V6 em seis redes `/24`;
-- 110 hosts ativos e 101 assets reconciliados;
-- 43 VMs delegadas ao vCenter;
-- identidade `WEAK` rebaixada;
-- write guard em política de bootstrap;
-- scheduler Network desabilitado.
-
-## Primeiro APPLY — escrita parcial confirmada
-
-Na 1.11.19, o primeiro APPLY criou parcialmente o `SW-CORE-AE` e parou:
+Evidência final:
 
 ```text
-MAC E8:B5:D0:72:9D:FC já pertence a dcim.interface ID 543
+IMPORT: 27/27 processados
+Runtime blocked: 0
+Erros: 0
+MAC RECONCILE: PASS
+AUDIT: PASS
+Assets PASS: 27
+Assets WARN: 0
+Assets FAIL: 0
+Checks PASS: 321
+Checks WARN: 0
+Checks FAIL: 0
+READY/CREATE posterior: 0
+READY/NOOP posterior: 27
+Network scheduler: ENABLED
+Hypervisor scheduler: DISABLED
 ```
 
-O PLAN posterior confirmou:
+## Histórico da correção de MAC
 
-```text
-Devices no site: 14
-SW-CORE-AE: READY/NOOP
-READY/CREATE restantes: 13
-READY/NOOP: 14
-REVIEW: 29
-BLOCKED: 2
-WRITE GUARD: PASS
-```
+Na 1.11.19, um APPLY parcial do DCM parou porque a MAC já pertencia à `dcim.interface ID 543`.
 
-## Segunda tentativa — preflight bloqueado
+A 1.11.20 adicionou o preflight global, mas o preflight legado não reconheceu corretamente o proprietário real da interface.
 
-Na 1.11.20, nenhuma escrita foi iniciada. O preflight legado não reconheceu que a interface `543` pertencia ao próprio Device.
+A 1.11.21 corrigiu o preflight legado.
 
-A 1.11.21 corrigiu esse falso bloqueio e o preflight passou.
-
-## Terceira tentativa — runtime tardio ainda incorreto
-
-Na 1.11.21:
-
-```text
-PREFLIGHT GLOBAL FINALIZE: OK
-PREFLIGHT: OK
-ERRO em SW-CORE-AE: MAC E8:B5:D0:72:9D:FC já pertence a dcim.interface ID 543
-```
-
-### Causa confirmada
-
-O runtime do Importer V2 ainda executava:
-
-```text
-procurar interface pelo nome do spec
-→ criar/preservar interface
-→ somente depois validar a MAC
-```
-
-Quando o nome do `spec` divergia do nome da interface live `543`, o Importer podia criar uma interface adicional e depois falhar ao descobrir que a MAC já estava vinculada à interface original.
-
-Essa tentativa não avançou para os outros 13 Devices. Ela deve ser tratada como possível criação de interface parcial no `SW-CORE-AE`.
-
-## Estado da 1.11.22
-
-**Estado inicial:** CI PASS / NOT LIVE até atualização no DCM.
-
-Contrato corrigido:
+A 1.11.22 corrigiu o runtime final:
 
 ```text
 resolver MAC global
@@ -92,48 +57,77 @@ resolver MAC global
 → somente sem vínculo usar busca/criação por nome
 ```
 
-Regras:
+O DCM convergiu e foi encerrado como LIVE PASS.
+
+## FPA — preparação
+
+**Estado:** PLAN revisado; GO-LIVE pendente.
+
+Plano observado:
 
 ```text
-interface 543 pertence ao SW-CORE-AE reconciliado → PRESERVED_BY_MAC
-nome live diferente do nome do spec               → não cria nova interface
-interface pertence a outro Device                 → bloqueio antes da criação
-MAC em VM/outro objeto                            → bloqueio antes da criação
-MAC sem vínculo                                   → fluxo normal
+READY: 24
+READY/CREATE: 23
+READY/NOOP: 1
+REVIEW: 111
+BLOCKED: 5
+WRITE GUARD: PASS
+scheduler Network: DISABLED
 ```
 
-## Regressões obrigatórias
+As redes `10.3.1.0`, `10.3.2.0`, `10.3.5.0` e `10.3.100.0` pertencem ao Site FPA/Pacatuba conforme validação operacional. Nome de equipamento não deve ser usado para inferir outro Site.
 
-```text
-interface 543 no mesmo Device + nome diferente    → reutiliza 543
-mesma MAC em dois specs                            → reutiliza 543 nas duas passagens
-interface em outro Device                         → bloqueia antes de ORIG_ENSURE_INTERFACE
-MAC em virtualization.vminterface                 → bloqueia antes da criação
-MAC sem atribuição                                 → segue fluxo normal
-nenhum POST de interface no cenário parcial       → obrigatório
+## Estado da 1.11.23
+
+**Estado inicial:** CI PASS / NOT LIVE até execução no FPA.
+
+A versão adiciona o comando padrão:
+
+```bash
+netbox-discovery go-live
 ```
 
-## Próxima validação no DCM
-
-- atualizar para 1.11.22;
-- executar `netbox-discovery import --apply`;
-- confirmar `PREFLIGHT GLOBAL FINALIZE: OK`;
-- confirmar `PREFLIGHT: OK`;
-- confirmar `SW-CORE-AE` preservado por MAC;
-- validar os 13 equipamentos restantes;
-- executar AUDIT e PLAN convergente;
-- manter scheduler desabilitado até o fechamento.
-
-## Critérios para LIVE PASS
+Contrato:
 
 ```text
-Self-test: PASS
-Check: PASS
-PREFLIGHT GLOBAL FINALIZE: OK
-PREFLIGHT: OK
-SW-CORE-AE sem nova interface duplicada
-13 READY/CREATE processados sem erro
-IMPORT: PASS
+IMPORT --apply
+→ AUDIT
+→ novo PLAN e summary
+→ bloquear se restar READY/CREATE, UPDATE_SAFE ou REPAIR_SAFE_VM_DUPLICATE
+→ preservar Tenant, Site, token, redes, exclusões e comunidades
+→ forçar automation.apply=false
+→ habilitar scheduler Network
+→ verificar enabled=true e apply=false
+→ status
+```
+
+Se qualquer etapa falhar, o GO-LIVE não é concluído. Se a validação final detectar estado inseguro, o scheduler é desabilitado antes do erro.
+
+## Regressões obrigatórias da 1.11.23
+
+```text
+wrapper público reconhece go-live
+comandos legados continuam delegados ao core
+instalador ativa o wrapper público
+go-live executa IMPORT antes do AUDIT
+go-live executa PLAN antes da convergência
+go-live bloqueia mudanças READY pendentes
+go-live força APPLY=NÃO antes do scheduler
+go-live verifica enabled=true e apply=false
+falha final desabilita o scheduler
+```
+
+## Critérios para LIVE PASS no FPA
+
+```text
+netbox-discovery update run → 1.11.23
+netbox-discovery go-live
+IMPORT: erros 0
 AUDIT: PASS
-PLAN posterior convergente
+Assets FAIL: 0
+Checks FAIL: 0
+CONVERGÊNCIA: PASS
+SCHEDULER NETWORK: ENABLED
+APPLY AUTOMÁTICO: NÃO
+GO-LIVE: PASS
 ```
