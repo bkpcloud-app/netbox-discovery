@@ -1,0 +1,12 @@
+#!/bin/bash
+set -euo pipefail
+
+BASE="${NETBOX_DISCOVERY_BASE:-/opt/netbox-discovery}"
+COMMAND="${1:-help}"
+
+if [[ "$COMMAND" == "go-live" ]]; then
+  shift || true
+  exec /usr/bin/python3 "$BASE/modules/product/go_live.py" "$@"
+fi
+
+exec "$BASE/bin/netbox-discovery" "$@"
