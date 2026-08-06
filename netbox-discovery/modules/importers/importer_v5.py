@@ -51,6 +51,10 @@ def _all_macs(nb):
     return v4.base.query(nb, "dcim/mac-addresses/", limit=10000)
 
 
+def _all_interfaces(nb):
+    return v4.base.query(nb, "dcim/interfaces/", limit=10000)
+
+
 def _assigned_id(row):
     assigned = row.get("assigned_object") or {}
     if isinstance(assigned, dict) and assigned.get("id"):
@@ -69,44 +73,99 @@ def _expected_interface_id(indexes, spec):
     return _assigned_id(row)
 
 
-def preflight_ready(ready, indexes, tenant):
-    """Extend the global preflight with MAC ownership validation.
+def _interface_owner(interface):
+    device = (interface or {}).get("device") or {}
+    if isinstance(device, dict):
+        return device.get("id"), clean(device.get("name") or device.get("display"))
+    if isinstance(device, int):
+        return device, ""
+    return None, ""
 
-    Missing MAC objects are safe and will be created after the normal importer.
-    Existing MACs assigned anywhere else block before the first write.
+
+def _mac_preflight_errors(ready, indexes, mac_rows, interfaces, rematch_fn):
+    """Validate MAC ownership by the real Device owner of the live interface.
+
+    The old check inferred the expected interface only from the IP stored in the
+    interface spec. After a partial APPLY, a reconciled READY/NOOP row may already
+    own the live Device and MAC while that particular spec shape does not expose
+    an IP usable by the legacy lookup. The authoritative check is the live
+    interface's Device owner, not whether the legacy IP inference returned an ID.
     """
-    errors = list(ORIG_PREFLIGHT_READY(ready, indexes, tenant))
-    nb = NetBox()
-    mac_rows = _all_macs(nb)
+    interface_index = dict(
+        (item.get("id"), item)
+        for item in (interfaces or [])
+        if item.get("id") is not None
+    )
+    mac_index = {}
+    for item in mac_rows or []:
+        mac = v2.norm_mac(item.get("mac_address") or item.get("mac"))
+        if mac:
+            mac_index.setdefault(mac, []).append(item)
 
-    for row in ready:
+    errors = []
+    for row in ready or []:
         label = clean(row.get("desired_name")) or clean(row.get("asset_id"))
+        current, state, unused_reason = rematch_fn(row, indexes)
+        if state == "CONFLICT":
+            continue
+        target_device_id = current.get("id") if current else row.get("existing_device_id")
+        seen = set()
+
         for spec in row.get("interfaces") or []:
             mac = v2.norm_mac(spec.get("mac"))
-            if not mac:
+            if not mac or mac in seen:
                 continue
-            matches = [
-                item for item in mac_rows
-                if v2.norm_mac(item.get("mac_address") or item.get("mac")) == mac
-            ]
+            seen.add(mac)
+            matches = mac_index.get(mac, [])
             if len(matches) > 1:
                 errors.append("{0}: MAC duplicado no NetBox: {1}".format(label, mac))
                 continue
             if not matches:
                 continue
+
             item = matches[0]
             assigned_type = clean(item.get("assigned_object_type"))
             assigned_id = _assigned_id(item)
             if not assigned_id:
                 continue
-            expected_interface_id = _expected_interface_id(indexes, spec)
-            if assigned_type != "dcim.interface" or not expected_interface_id or assigned_id != expected_interface_id:
+            if assigned_type != "dcim.interface":
                 errors.append(
-                    "{0}: MAC {1} pertence a {2} ID {3}, esperado interface {4}".format(
+                    "{0}: MAC {1} pertence a {2} ID {3}".format(
                         label, mac, assigned_type or "outro objeto", assigned_id,
-                        expected_interface_id or "ainda não existente",
                     )
                 )
+                continue
+
+            interface = interface_index.get(assigned_id) or {}
+            owner_id, owner_name = _interface_owner(interface)
+            if target_device_id and owner_id == target_device_id:
+                continue
+
+            expected_interface_id = _expected_interface_id(indexes, spec)
+            owner_text = "Device ID {0}".format(owner_id) if owner_id else "owner não resolvido"
+            if owner_name:
+                owner_text += " ({0})".format(owner_name)
+            errors.append(
+                "{0}: MAC {1} pertence a dcim.interface ID {2}, {3}; alvo Device ID {4}; interface pelo IP {5}".format(
+                    label, mac, assigned_id, owner_text,
+                    target_device_id or "NOVO",
+                    expected_interface_id or "não inferida",
+                )
+            )
+    return errors
+
+
+def preflight_ready(ready, indexes, tenant):
+    """Extend the global preflight with authoritative MAC ownership validation."""
+    errors = list(ORIG_PREFLIGHT_READY(ready, indexes, tenant))
+    nb = NetBox()
+    errors.extend(_mac_preflight_errors(
+        ready,
+        indexes,
+        _all_macs(nb),
+        _all_interfaces(nb),
+        v4.base.rematch_record,
+    ))
     return errors
 
 
