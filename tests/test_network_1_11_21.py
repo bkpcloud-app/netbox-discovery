@@ -12,12 +12,16 @@ if BASE not in sys.path:
 
 from modules.importers import importer_v5
 
-VERSION = "1.11.21"
+MIN_VERSION = (1, 11, 21)
 MAC = "E8:B5:D0:72:9D:FC"
 
 
 def read(relative):
     return open(os.path.join(ROOT, relative), "r").read()
+
+
+def version_key(value):
+    return tuple(int(part) for part in value.strip().split("."))
 
 
 def row(existing=900, duplicate_specs=False):
@@ -67,9 +71,11 @@ def rematch_new(unused_row, unused_indexes):
     return None, "NEW", "Sem correspondência"
 
 
-def test_01_release_versions_are_synced():
-    assert read("VERSION").strip() == VERSION
-    assert read("netbox-discovery/VERSION").strip() == VERSION
+def test_01_release_versions_include_1_11_21_or_newer():
+    root = read("VERSION").strip()
+    package = read("netbox-discovery/VERSION").strip()
+    assert root == package
+    assert version_key(root) >= MIN_VERSION
 
 
 def test_02_partial_apply_owner_is_allowed_without_ip_inference():
@@ -125,18 +131,9 @@ def test_08_legacy_preflight_uses_live_interface_owner():
     assert "esperado interface ainda não existente" not in source
 
 
-def test_09_documentation_is_current():
-    markers = {
-        "README.md": "**Versão atual:** 1.11.21",
-        "docs/MANUAL.md": "**Versão:** 1.11.21",
-        "docs/COMANDOS-RAPIDOS.md": "# netbox-discovery 1.11.21",
-        "docs/HOMOLOGACAO.md": "# netbox-discovery 1.11.21",
-        "RELEASE-NOTES.md": "## V1.11.21",
-        "SECURITY.md": "**Versão da política:** 1.11.21",
-        "docs/PATCH-1.11.21.md": "# netbox-discovery 1.11.21",
-    }
-    for relative, marker in markers.items():
-        assert marker in read(relative), relative
+def test_09_historical_documentation_remains_available():
+    assert "# netbox-discovery 1.11.21" in read("docs/PATCH-1.11.21.md")
+    assert "## V1.11.21" in read("RELEASE-NOTES.md")
 
 
 def main():
