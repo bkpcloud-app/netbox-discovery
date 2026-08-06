@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, classificação, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.11.22 — PRODUCT V1  
+**Versão atual:** 1.11.23 — PRODUCT V1  
 **Distribuição:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
 
@@ -18,6 +18,28 @@ DISCOVER V6 / 4.6-product
 ```
 
 `netbox-discovery run` é read-only. Escrita no NetBox só ocorre com `netbox-discovery run --apply` e permanece protegida por PLAN, write guard, preflight, identidade e auditoria.
+
+## GO-LIVE nativo
+
+A 1.11.23 adiciona o comando operacional padrão:
+
+```bash
+netbox-discovery go-live
+```
+
+Ele executa, em uma única ação nativa:
+
+```text
+IMPORT --apply
+→ AUDIT
+→ novo PLAN
+→ validação de convergência
+→ força automation.apply=false
+→ habilita o scheduler Network
+→ valida o estado final
+```
+
+Se qualquer etapa falhar, o fluxo para antes da habilitação do scheduler. O resultado aprovado termina com scheduler habilitado e `APPLY=NÃO`.
 
 ## Preflight global de MAC
 
@@ -121,7 +143,7 @@ netbox-discovery scheduler disable
 netbox-discovery scheduler status
 ```
 
-O updater não modifica `automation.apply`.
+O updater não modifica `automation.apply`. O `go-live` força `automation.apply=false` antes de habilitar o scheduler.
 
 ## Segurança
 
@@ -133,13 +155,15 @@ O updater não modifica `automation.apply`.
 - MAC já pertencente ao mesmo Device reutiliza a interface live;
 - interface não é criada antes de resolver ownership de MAC;
 - `REVIEW`, `DELEGATED` e `BLOCKED` nunca escrevem;
-- limites absolutos permanecem ativos durante bootstrap.
+- limites absolutos permanecem ativos durante bootstrap;
+- `go-live` habilita o scheduler somente com `APPLY=NÃO` confirmado.
 
 ## Documentação
 
 - `docs/MANUAL.md`;
 - `docs/COMANDOS-RAPIDOS.md`;
 - `docs/HOMOLOGACAO.md`;
+- `docs/NOVA-UNIDADE-DOIS-PASSOS.md`;
 - `RELEASE-NOTES.md`;
 - `SECURITY.md`;
-- `docs/PATCH-1.11.22.md`.
+- `docs/PATCH-1.11.23.md`.
