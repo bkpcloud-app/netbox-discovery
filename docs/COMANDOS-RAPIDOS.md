@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.20 — Comandos rápidos
+# netbox-discovery 1.11.21 — Comandos rápidos
 
 ## Atualizar e validar
 
@@ -35,10 +35,12 @@ Discovery UID WEAK
 ## Propriedade global de MAC
 
 ```text
-MAC sem vínculo                           → permitido
-MAC no mesmo Device existente            → preservado
-MAC em outro Device/VM/objeto             → BLOCKED/NOOP
-consulta global de MAC indisponível       → APPLY bloqueado antes da escrita
+MAC sem vínculo                            → permitido
+MAC no mesmo Device existente             → preservado
+MAC em outro Device/VM/objeto              → BLOCKED/NOOP
+READY/NOOP após APPLY parcial              → valida owner real da interface
+mesma MAC repetida no mesmo registro       → avaliada uma vez
+consulta global de MAC indisponível        → APPLY bloqueado antes da escrita
 ```
 
 O produto não transfere MAC automaticamente.
@@ -109,6 +111,7 @@ run               = sem escrita
 run --apply       = escrita READY após proteções
 WEAK new Device   = REVIEW/NOOP
 MAC conflict      = BLOCKED/NOOP
+same owner MAC    = permitido
 REVIEW            = não escreve
 DELEGATED         = não escreve
 BLOCKED           = não escreve
