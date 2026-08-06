@@ -15,12 +15,16 @@ if IMPORTERS not in sys.path:
 
 from modules.importers import importer_v2
 
-VERSION = "1.11.22"
+MIN_VERSION = (1, 11, 22)
 MAC = "E8:B5:D0:72:9D:FC"
 
 
 def read(relative):
     return open(os.path.join(ROOT, relative), "r").read()
+
+
+def version_tuple(value):
+    return tuple(int(part) for part in value.strip().split("."))
 
 
 class FakeNetBox(object):
@@ -61,9 +65,11 @@ class FakeNetBox(object):
         return dict(payload, id=int(endpoint.rstrip("/").split("/")[-1]))
 
 
-def test_01_versions_are_synced():
-    assert read("VERSION").strip() == VERSION
-    assert read("netbox-discovery/VERSION").strip() == VERSION
+def test_01_versions_are_synced_and_not_older_than_1_11_22():
+    root_version = read("VERSION").strip()
+    packaged_version = read("netbox-discovery/VERSION").strip()
+    assert root_version == packaged_version
+    assert version_tuple(root_version) >= MIN_VERSION
 
 
 def test_02_partial_apply_reuses_interface_543_before_name_lookup():
@@ -161,14 +167,9 @@ def test_07_runtime_lookup_precedes_original_interface_creation():
     assert lookup < fallback
 
 
-def test_08_documentation_is_current():
+def test_08_historical_release_documentation_remains_present():
     markers = {
-        "README.md": "**Versão atual:** 1.11.22",
-        "docs/MANUAL.md": "**Versão:** 1.11.22",
-        "docs/COMANDOS-RAPIDOS.md": "# netbox-discovery 1.11.22",
-        "docs/HOMOLOGACAO.md": "# netbox-discovery 1.11.22",
         "RELEASE-NOTES.md": "## V1.11.22",
-        "SECURITY.md": "**Versão da política:** 1.11.22",
         "docs/PATCH-1.11.22.md": "# netbox-discovery 1.11.22",
     }
     for relative, marker in markers.items():
