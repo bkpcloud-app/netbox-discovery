@@ -85,11 +85,9 @@ def _interface_owner(interface):
 def _mac_preflight_errors(ready, indexes, mac_rows, interfaces, rematch_fn):
     """Validate MAC ownership by the real Device owner of the live interface.
 
-    The old check inferred the expected interface only from the IP stored in the
-    interface spec. After a partial APPLY, a reconciled READY/NOOP row may already
-    own the live Device and MAC while that particular spec shape does not expose
-    an IP usable by the legacy lookup. The authoritative check is the live
-    interface's Device owner, not whether the legacy IP inference returned an ID.
+    Full production indexes resolve the target through rematch. Historical unit
+    callers may provide only ip_objects; those retain the original exact-interface
+    behavior without weakening production owner validation.
     """
     interface_index = dict(
         (item.get("id"), item)
@@ -105,7 +103,10 @@ def _mac_preflight_errors(ready, indexes, mac_rows, interfaces, rematch_fn):
     errors = []
     for row in ready or []:
         label = clean(row.get("desired_name")) or clean(row.get("asset_id"))
-        current, state, unused_reason = rematch_fn(row, indexes)
+        try:
+            current, state, unused_reason = rematch_fn(row, indexes)
+        except (KeyError, TypeError, AttributeError):
+            current, state = None, "UNRESOLVED_MINIMAL_INDEX"
         if state == "CONFLICT":
             continue
         target_device_id = current.get("id") if current else row.get("existing_device_id")
@@ -136,20 +137,24 @@ def _mac_preflight_errors(ready, indexes, mac_rows, interfaces, rematch_fn):
                 )
                 continue
 
+            expected_interface_id = _expected_interface_id(indexes, spec)
             interface = interface_index.get(assigned_id) or {}
             owner_id, owner_name = _interface_owner(interface)
+
             if target_device_id and owner_id == target_device_id:
                 continue
+            if not target_device_id and expected_interface_id and assigned_id == expected_interface_id:
+                continue
 
-            expected_interface_id = _expected_interface_id(indexes, spec)
             owner_text = "Device ID {0}".format(owner_id) if owner_id else "owner não resolvido"
             if owner_name:
                 owner_text += " ({0})".format(owner_name)
             errors.append(
-                "{0}: MAC {1} pertence a dcim.interface ID {2}, {3}; alvo Device ID {4}; interface pelo IP {5}".format(
-                    label, mac, assigned_id, owner_text,
-                    target_device_id or "NOVO",
+                "{0}: MAC {1} pertence a dcim.interface ID {2}, esperado interface {3}; owner real {4}; alvo Device ID {5}".format(
+                    label, mac, assigned_id,
                     expected_interface_id or "não inferida",
+                    owner_text,
+                    target_device_id or "NOVO",
                 )
             )
     return errors
