@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.11.19 — PRODUCT V1  
+**Versão:** 1.11.20 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
 
@@ -76,9 +76,37 @@ MGMT-MAC:<mac>
 
 A regra não rebaixa Devices já existentes. Atualizações continuam submetidas à reconciliação, autoridade do NetBox e políticas de atualização segura.
 
-## 5. Write guard final
+## 5. Propriedade global de MAC
 
-O write guard é calculado uma única vez depois das políticas finais de identidade, Windows, impressoras, virtualização, OOB, colisões e identidade estável global.
+A tabela `dcim/mac-addresses` é global no NetBox. O produto valida os MACs presentes nas interfaces finais do PLAN em duas etapas:
+
+```text
+PLAN V11
+→ verifica propriedade global de cada MAC
+→ conflito vira BLOCKED/NOOP
+→ write guard calcula somente os restantes
+
+IMPORT V12 --apply
+→ repete a consulta global antes da primeira escrita
+→ qualquer conflito ou falha de consulta bloqueia o lote antes de criar objetos
+```
+
+Regras:
+
+```text
+MAC sem objeto ou sem atribuição                 → permitido
+MAC na interface do mesmo existing_device_id    → preservado
+MAC em interface de outro Device                → bloqueado
+MAC em virtualization.vminterface/outro objeto  → bloqueado
+MAC duplicado na tabela global                   → bloqueado
+owner da interface não resolvido                 → bloqueado
+```
+
+O produto nunca transfere automaticamente uma MAC entre Devices ou entre Device e VM.
+
+## 6. Write guard final
+
+O write guard é calculado uma única vez depois das políticas finais de identidade, Windows, impressoras, virtualização, OOB, colisões, identidade estável e propriedade global de MAC.
 
 Entram no cálculo:
 
@@ -94,10 +122,10 @@ Não entram:
 READY/NOOP
 REVIEW
 DELEGATED
-BLOCKED por política de identidade
+BLOCKED por política de identidade ou MAC
 ```
 
-## 6. Bootstrap de site pequeno
+## 7. Bootstrap de site pequeno
 
 Quando a base possui menos de 50 Devices:
 
@@ -125,20 +153,20 @@ PERCENT: 20%
 
 A base mínima pode ser ajustada por `NETBOX_DISCOVERY_PERCENT_MIN_BASE`. O padrão é 50.
 
-## 7. Interpretação do relatório
+## 8. Interpretação do relatório
 
 Exemplo de site pequeno:
 
 ```text
-WRITE GUARD: PASS | elegíveis=14 | base=13 | mudanças=108%
+WRITE GUARD: PASS | elegíveis=13 | base=14 | mudanças=93%
 WRITE GUARD POLÍTICA: SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY | percentual=ADIADO | base mínima=50
 ```
 
-Isso não significa APPLY automático. Significa apenas que as mudanças finais ficaram abaixo dos limites absolutos e passaram pelas políticas de identidade.
+Isso não significa APPLY automático. Significa apenas que as mudanças finais ficaram abaixo dos limites absolutos e passaram pelas políticas de identidade e propriedade global de MAC.
 
-Conflitos como `DUPLICATE_DESIRED_NAME`, identidade fraca, REVIEW, DELEGATED e outros BLOCKED continuam sem escrita.
+Conflitos como `DUPLICATE_DESIRED_NAME`, identidade fraca, MAC já pertencente a outro objeto, REVIEW, DELEGATED e outros BLOCKED continuam sem escrita.
 
-## 8. APPLY
+## 9. APPLY
 
 ```bash
 netbox-discovery run --apply
@@ -149,13 +177,26 @@ Somente após confirmar:
 ```text
 WRITE GUARD: PASS
 nenhum READY/CREATE com discovery_uid WEAK
+nenhum READY com conflito global de MAC
 BLOCKED analisados
 READY/CREATE e READY/UPDATE_SAFE revisados
-NetBox write anterior: NÃO
 scheduler homologado
 ```
 
-## 9. Auto-update e scheduler
+## 10. Falha de APPLY
+
+Se um APPLY terminar com erro:
+
+```text
+não repetir o mesmo comando imediatamente
+manter scheduler desabilitado
+recalcular o PLAN contra o estado atual do NetBox
+revisar READY/BLOCKED novamente
+```
+
+O relatório de IMPORT deve ser tratado como evidência de possível escrita parcial quando a falha ocorreu depois de `PREFLIGHT: OK`.
+
+## 11. Auto-update e scheduler
 
 Antes de cada execução automática:
 
@@ -171,7 +212,7 @@ netbox-discovery scheduler disable
 netbox-discovery scheduler status
 ```
 
-## 10. Execução fora da sessão SSH
+## 12. Execução fora da sessão SSH
 
 ```bash
 UNIT="netbox-discovery-manual-$(date +%Y%m%d-%H%M%S)"
@@ -181,12 +222,14 @@ journalctl -fu "$UNIT.service"
 
 `CTRL+C` encerra somente a visualização.
 
-## 11. Critérios de homologação
+## 13. Critérios de homologação
 
 ```text
 Self-test: PASS
 Check: PASS
 nenhum novo Device com identidade WEAK em READY
+nenhum READY com MAC pertencente a outro objeto
+preflight global de IP e MAC antes da primeira escrita
 WRITE GUARD calculado sobre decisões finais
 limites absolutos preservados no bootstrap
 percentual ativo em base madura

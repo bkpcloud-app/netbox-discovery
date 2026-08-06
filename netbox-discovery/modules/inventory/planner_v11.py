@@ -14,6 +14,7 @@ if BASE not in sys.path:
 from modules.inventory import planner_v10 as v10
 from modules.inventory import planner_v9 as v9
 from modules.inventory import planner_v9_core as core
+from modules.product import identity
 
 PLANNER_VERSION = "5.3-product"
 ORIG_BUILD_PLAN = v10.build_plan
@@ -108,6 +109,125 @@ def _enforce_stable_identity_for_new_creates(plan):
             reasons.append(marker)
         row["reasons"] = sorted(set(reasons))
         row["identity_policy"] = "FINAL_NEW_CREATE_IDENTITY_NOT_STABLE"
+
+
+def _assigned_id(row):
+    assigned = row.get("assigned_object") or {}
+    if isinstance(assigned, dict) and assigned.get("id") is not None:
+        return assigned.get("id")
+    return row.get("assigned_object_id")
+
+
+def _interface_owner(interface):
+    device = (interface or {}).get("device") or {}
+    if isinstance(device, dict):
+        return device.get("id"), v10.clean(device.get("name") or device.get("display"))
+    if isinstance(device, int):
+        return device, ""
+    return None, ""
+
+
+def _block_for_mac_conflicts(row, conflicts):
+    row["decision"] = "BLOCKED"
+    row["action"] = "NOOP"
+    row["interfaces"] = []
+    row["ip_intents"] = []
+    row["safe_diffs"] = []
+    row.pop("repair", None)
+    reasons = list(row.get("reasons") or [])
+    for item in conflicts:
+        reason = v10.clean(item.get("reason"))
+        if reason and reason not in reasons:
+            reasons.append(reason)
+    row["reasons"] = sorted(set(reasons))
+    row["mac_ownership_conflicts"] = conflicts
+    row["identity_policy"] = "GLOBAL_MAC_OWNERSHIP_CONFLICT"
+
+
+def _enforce_global_mac_ownership(plan, state):
+    """Block a final READY row when its management MAC belongs elsewhere.
+
+    NetBox MAC uniqueness is global. Planner V2 already uses MACs that reached the
+    reconciled asset, but a management MAC may exist only in the final interface
+    intent. Re-check those intents against the global MAC table after every policy,
+    before the write guard, so IMPORT never discovers the conflict after creating
+    a Device or interface.
+    """
+    interfaces = dict(
+        (item.get("id"), item)
+        for item in (state.get("interfaces") or [])
+        if item.get("id") is not None
+    )
+    mac_index = {}
+    for item in state.get("macs") or []:
+        mac = identity.norm_mac(item.get("mac_address") or item.get("mac"))
+        if mac:
+            mac_index.setdefault(mac, []).append(item)
+
+    for row in plan or []:
+        if v10.clean(row.get("decision")) != "READY":
+            continue
+        target_device_id = row.get("existing_device_id")
+        conflicts = []
+        checked = set()
+
+        for spec in row.get("interfaces") or []:
+            mac = identity.norm_mac(spec.get("mac"))
+            if not mac or mac in checked:
+                continue
+            checked.add(mac)
+            matches = mac_index.get(mac, [])
+            if not matches:
+                continue
+            if len(matches) > 1:
+                conflicts.append({
+                    "mac": mac,
+                    "reason": "MAC_GLOBAL_DUPLICATE:{0}:COUNT={1}".format(mac, len(matches)),
+                    "match_count": len(matches),
+                })
+                continue
+
+            obj = matches[0]
+            assigned_type = v10.clean(obj.get("assigned_object_type"))
+            assigned_id = _assigned_id(obj)
+            if not assigned_id:
+                continue
+            if assigned_type != "dcim.interface":
+                conflicts.append({
+                    "mac": mac,
+                    "reason": "MAC_ALREADY_ASSIGNED_TO_OBJECT:{0}:{1}:ID={2}".format(
+                        mac, assigned_type or "UNKNOWN", assigned_id),
+                    "assigned_object_type": assigned_type,
+                    "assigned_object_id": assigned_id,
+                })
+                continue
+
+            interface = interfaces.get(assigned_id) or {}
+            owner_id, owner_name = _interface_owner(interface)
+            if target_device_id and owner_id == target_device_id:
+                continue
+            if owner_id:
+                conflicts.append({
+                    "mac": mac,
+                    "reason": "MAC_ALREADY_ASSIGNED_TO_OTHER_DEVICE:{0}:DEVICE={1}:INTERFACE={2}".format(
+                        mac, owner_id, assigned_id),
+                    "assigned_object_type": assigned_type,
+                    "interface_id": assigned_id,
+                    "device_id": owner_id,
+                    "device_name": owner_name,
+                    "target_device_id": target_device_id,
+                })
+            else:
+                conflicts.append({
+                    "mac": mac,
+                    "reason": "MAC_INTERFACE_OWNER_UNRESOLVED:{0}:INTERFACE={1}".format(mac, assigned_id),
+                    "assigned_object_type": assigned_type,
+                    "interface_id": assigned_id,
+                    "target_device_id": target_device_id,
+                })
+
+        if conflicts:
+            _block_for_mac_conflicts(row, conflicts)
 
 
 def _limit(name, default):
@@ -206,6 +326,7 @@ def build_plan(recon, classification, state):
 
     _recover_existing_collision_devices(plan, state)
     _enforce_stable_identity_for_new_creates(plan)
+    _enforce_global_mac_ownership(plan, state)
     v10._attach_idempotency_identity(plan)
     v9._prune_prerequisites_to_ready_actions(plan, prereq)
     _apply_final_write_guard(plan, state)

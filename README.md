@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, classificação, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.11.19 — PRODUCT V1  
+**Versão atual:** 1.11.20 — PRODUCT V1  
 **Distribuição:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
 
@@ -19,9 +19,32 @@ DISCOVER V6 / 4.6-product
 
 `netbox-discovery run` é read-only. Escrita no NetBox só ocorre com `netbox-discovery run --apply` e permanece protegida por PLAN, write guard, preflight, identidade e auditoria.
 
+## Preflight global de MAC
+
+A 1.11.20 verifica todos os MACs finais do PLAN contra a tabela global `dcim/mac-addresses` antes da primeira escrita.
+
+```text
+MAC livre ou sem vínculo
+→ elegível conforme as demais políticas
+
+MAC já vinculado à interface do mesmo Device existente
+→ preservado
+
+MAC vinculado a outro Device, VM ou objeto
+→ BLOCKED/NOOP no PLAN
+→ bloqueado novamente pelo preflight do IMPORT
+```
+
+A checagem ocorre em duas camadas independentes:
+
+1. Planner V11, antes do write guard;
+2. Importer V12, antes de criar catálogo, Device, interface ou IP.
+
+Se a consulta global de MAC estiver indisponível no APPLY, o preflight falha fechado e nenhuma nova escrita é iniciada.
+
 ## Identidade estável obrigatória para novos Devices
 
-A 1.11.19 adiciona uma proteção final independente de role ou classe:
+A 1.11.19 adicionou uma proteção final independente de role ou classe:
 
 ```text
 novo READY/CREATE + discovery_uid WEAK
@@ -40,7 +63,7 @@ A regra protege inclusive roles genéricas como `WINDOWS_HOST`, `HOST_OR_APPLIAN
 
 ## Write guard final e bootstrap de sites pequenos
 
-O write guard é calculado uma única vez, depois de todas as políticas finais do Planner, incluindo a validação de identidade estável.
+O write guard é calculado uma única vez, depois de todas as políticas finais do Planner, incluindo identidade estável e propriedade global de MAC.
 
 Sites com menos de 50 Devices usam:
 
@@ -54,7 +77,7 @@ Nesse estágio:
 - somente a regra percentual fica adiada;
 - o percentual volta a ser obrigatório quando a base alcançar 50 Devices;
 - o padrão pode ser ajustado com `NETBOX_DISCOVERY_PERCENT_MIN_BASE`;
-- conflitos de identidade, nomes duplicados, REVIEW e DELEGATED continuam protegidos.
+- conflitos de identidade, MAC, nomes duplicados, REVIEW e DELEGATED continuam protegidos.
 
 ## Relatório nativo do PLAN
 
@@ -101,6 +124,7 @@ O Discovery V6 divide prefixos grandes, como `/16`, em lotes `/24`, elimina sobr
 - VM confirmada permanece delegada;
 - serial conflitante não é gravado;
 - identidade `WEAK` nunca cria novo Device;
+- MAC vinculado a outro objeto nunca é reassociado automaticamente;
 - `REVIEW`, `DELEGATED` e `BLOCKED` nunca escrevem;
 - `READY/CREATE` e `READY/UPDATE_SAFE` escrevem somente com `--apply`;
 - limites absolutos permanecem ativos durante bootstrap;
@@ -114,4 +138,4 @@ O Discovery V6 divide prefixos grandes, como `/16`, em lotes `/24`, elimina sobr
 - `docs/HOMOLOGACAO.md`;
 - `RELEASE-NOTES.md`;
 - `SECURITY.md`;
-- `docs/PATCH-1.11.19.md`.
+- `docs/PATCH-1.11.20.md`.

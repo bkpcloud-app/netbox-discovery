@@ -1,3 +1,32 @@
+## V1.11.20 — Global MAC ownership preflight
+
+O primeiro APPLY do DCM na 1.11.19 parou no primeiro `READY`, `SW-CORE-AE`, porque a MAC de gerenciamento já pertencia à interface ID 543:
+
+```text
+MAC E8:B5:D0:72:9D:FC já pertence a dcim.interface ID 543
+```
+
+O conflito foi detectado tarde, depois de `PREFLIGHT: OK`, quando o Importer já estava no loop de escrita. A execução deve ser tratada como possível aplicação parcial do primeiro equipamento.
+
+A 1.11.20 adiciona proteção em duas camadas:
+
+```text
+PLAN V11
+→ valida toda MAC presente nas interfaces finais
+→ MAC pertencente a outro objeto vira BLOCKED/NOOP
+→ write guard conta apenas os READY restantes
+
+IMPORT V12
+→ repete a consulta global de MAC antes da primeira escrita
+→ conflito ou falha de consulta bloqueia o lote inteiro sem iniciar novas escritas
+```
+
+A regra aceita somente MAC livre, sem atribuição, ou já vinculada à interface do mesmo `existing_device_id`. Não há transferência automática entre Devices, VMs ou outros objetos.
+
+A regressão reproduz a interface ID 543, valida bloqueio no PLAN, preflight fail-closed e isolamento dos outros 13 candidatos estáveis do DCM.
+
+---
+
 ## V1.11.19 — Final stable identity guard
 
 A revisão ao vivo do PLAN 1.11.18 no DCM encontrou três novos candidatos indevidamente liberados como `READY/CREATE` apesar de possuírem `Discovery UID: WEAK`:
