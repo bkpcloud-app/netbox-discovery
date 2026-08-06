@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.11.19
+**Versão da política:** 1.11.20
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
@@ -18,6 +18,25 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 O updater usa o canal `stable`, valida o candidato, cria backup, preserva configuração, executa self-test/check e faz rollback/quarentena em falha.
 
 O updater não pode alterar `automation.apply`, executar `run --apply` ou modificar redes, exclusões, communities e credenciais.
+
+## Propriedade global de MAC
+
+MACs no NetBox pertencem à tabela global `dcim/mac-addresses`. O produto não pode reassociar automaticamente uma MAC já vinculada.
+
+O Planner V11 valida todas as MACs presentes nas interfaces finais dos registros `READY`:
+
+```text
+MAC sem vínculo                          → segue as demais políticas
+MAC na interface do mesmo Device         → preservada
+MAC em outro Device                      → BLOCKED/NOOP
+MAC em VM ou outro tipo de objeto        → BLOCKED/NOOP
+MAC duplicada globalmente                → BLOCKED/NOOP
+owner da interface não resolvido         → BLOCKED/NOOP
+```
+
+O Importer V12 repete a consulta global de MAC antes da primeira escrita. Se houver conflito ou a consulta falhar, o APPLY falha fechado antes de criar catálogo, Device, interface ou IP.
+
+Nenhum limite de bootstrap ou write guard pode suprimir essa proteção.
 
 ## Identidade estável para novos Devices
 
@@ -60,7 +79,7 @@ Não entram:
 READY/NOOP
 REVIEW
 DELEGATED
-BLOCKED por identidade ou política
+BLOCKED por identidade, MAC ou política
 ```
 
 ## Bootstrap de site pequeno
@@ -89,6 +108,7 @@ PERCENT <= 20%
 
 O bootstrap não reduz exigências de identidade e não libera:
 
+- MAC pertencente a outro objeto;
 - `discovery_uid WEAK` para novo Device;
 - `DUPLICATE_DESIRED_NAME`;
 - conflitos de serial ou identidade;
@@ -96,6 +116,19 @@ O bootstrap não reduz exigências de identidade e não libera:
 - `DELEGATED`;
 - registros já `BLOCKED`;
 - qualquer escrita sem `--apply`.
+
+## Falha de APPLY
+
+Uma falha depois de `PREFLIGHT: OK` deve ser tratada como possível escrita parcial.
+
+Nessa condição:
+
+```text
+não repetir APPLY imediatamente
+manter scheduler desabilitado
+recalcular PLAN contra o estado atual
+revisar objetos READY e BLOCKED
+```
 
 ## Relatórios nativos do PLAN
 
@@ -115,6 +148,7 @@ São somente leitura e não chamam Importer nem modificam o NetBox.
 Nome existente no NetBox → preservado
 PATCH automático de name → proibido
 Serial conflitante       → não gravado
+MAC de outro objeto      → não transferida
 VM confirmada            → delegada à virtualização
 Device manual            → protegido
 ```
