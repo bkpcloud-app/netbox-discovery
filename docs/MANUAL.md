@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.11.21 — PRODUCT V1  
+**Versão:** 1.11.22 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
 
@@ -43,8 +43,6 @@ Todos os comandos de relatório são somente leitura.
 
 ## 4. Identidade estável obrigatória para novos Devices
 
-A última camada do Planner valida todo registro que terminou como novo `READY/CREATE`.
-
 ```text
 existing_device_id ausente
 + decision=READY
@@ -53,46 +51,29 @@ existing_device_id ausente
 → REVIEW/NOOP
 ```
 
-A proteção é independente de role e classe. Portanto, também cobre roles genéricas que não passam pelos validadores específicos, como:
-
-```text
-WINDOWS_HOST
-HOST_OR_APPLIANCE
-SMS_GATEWAY
-```
-
-Ao rebaixar o candidato, o Planner remove interfaces, intenções de IP, diffs e reparos do ciclo. O motivo registrado é:
-
-```text
-NEW_DEVICE_REQUIRES_STABLE_IDENTITY
-```
-
-Identidades normalmente aceitas para novos Devices:
+Identidades normalmente aceitas:
 
 ```text
 SERIAL:<fabricante>:<serial>
 MGMT-MAC:<mac>
 ```
 
-A regra não rebaixa Devices já existentes. Atualizações continuam submetidas à reconciliação, autoridade do NetBox e políticas de atualização segura.
-
 ## 5. Propriedade global de MAC
 
-A tabela `dcim/mac-addresses` é global no NetBox. O produto valida os MACs presentes nas interfaces finais do PLAN:
+A tabela `dcim/mac-addresses` é global no NetBox. O produto valida MACs em quatro pontos:
 
 ```text
 PLAN V11
-→ verifica propriedade global de cada MAC
-→ conflito vira BLOCKED/NOOP
-→ write guard calcula somente os restantes
+→ conflito vira BLOCKED/NOOP antes do write guard
 
-IMPORT legado corrigido
-→ valida o proprietário real da dcim.interface
-→ não depende apenas de inferir a interface pelo IP do spec
+preflight legado
+→ valida owner real da dcim.interface
 
-IMPORT V12 --apply
+IMPORT V12
 → repete a consulta global antes da primeira escrita
-→ qualquer conflito ou falha de consulta bloqueia o lote antes de criar objetos
+
+runtime Importer V2
+→ resolve MAC antes de procurar/criar interface por nome
 ```
 
 Regras:
@@ -108,7 +89,7 @@ owner da interface não resolvido                 → bloqueado
 
 ### Recuperação de APPLY parcial
 
-Quando um APPLY anterior criou o Device e a interface antes de falhar, o próximo PLAN pode apresentar:
+Um APPLY anterior pode ter criado Device e interface antes de falhar. O próximo PLAN pode apresentar:
 
 ```text
 READY/NOOP
@@ -116,15 +97,24 @@ existing_device_id preenchido
 MAC já atribuída à interface live desse mesmo Device
 ```
 
-Nesse caso, a 1.11.21 consulta a `dcim.interface` e compara seu proprietário real com o Device reconciliado. Se forem iguais, o preflight passa. Se forem diferentes, permanece bloqueado.
+A 1.11.21 corrigiu o preflight para aceitar esse estado quando o owner real é o mesmo Device.
 
-Uma mesma MAC repetida em mais de um `spec` do mesmo registro é avaliada apenas uma vez, evitando mensagens duplicadas.
+A 1.11.22 corrige o runtime final:
+
+```text
+1. normaliza a MAC do spec;
+2. consulta dcim/mac-addresses;
+3. resolve a dcim.interface vinculada;
+4. compara interface.device.id com o Device reconciliado;
+5. reutiliza a interface live, mesmo que o nome seja diferente;
+6. somente se não houver vínculo segue o fluxo por nome.
+```
+
+Assim, o Importer não cria uma segunda interface e só depois descobre que a MAC já estava na interface anterior.
 
 O produto nunca transfere automaticamente uma MAC entre Devices ou entre Device e VM.
 
 ## 6. Write guard final
-
-O write guard é calculado uma única vez depois das políticas finais de identidade, Windows, impressoras, virtualização, OOB, colisões, identidade estável e propriedade global de MAC.
 
 Entram no cálculo:
 
@@ -140,7 +130,7 @@ Não entram:
 READY/NOOP
 REVIEW
 DELEGATED
-BLOCKED por política de identidade ou MAC
+BLOCKED
 ```
 
 ## 7. Bootstrap de site pequeno
@@ -152,7 +142,7 @@ policy = SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY
 percent_enforced = false
 ```
 
-Apenas a regra percentual é adiada. Permanecem obrigatórios:
+Permanecem obrigatórios:
 
 ```text
 CREATE: 25
@@ -161,30 +151,7 @@ REPAIR_SAFE_VM_DUPLICATE: 20
 TOTAL: 75
 ```
 
-Ao alcançar 50 Devices:
-
-```text
-policy = ABSOLUTE_AND_PERCENT
-percent_enforced = true
-PERCENT: 20%
-```
-
-A base mínima pode ser ajustada por `NETBOX_DISCOVERY_PERCENT_MIN_BASE`. O padrão é 50.
-
-## 8. Interpretação do relatório
-
-Exemplo de site pequeno:
-
-```text
-WRITE GUARD: PASS | elegíveis=13 | base=14 | mudanças=93%
-WRITE GUARD POLÍTICA: SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY | percentual=ADIADO | base mínima=50
-```
-
-Isso não significa APPLY automático. Significa apenas que as mudanças finais ficaram abaixo dos limites absolutos e passaram pelas políticas de identidade e propriedade global de MAC.
-
-Conflitos como `DUPLICATE_DESIRED_NAME`, identidade fraca, MAC já pertencente a outro objeto, REVIEW, DELEGATED e outros BLOCKED continuam sem escrita.
-
-## 9. APPLY
+## 8. APPLY
 
 ```bash
 netbox-discovery import --apply
@@ -198,32 +165,23 @@ nenhum READY/CREATE com discovery_uid WEAK
 nenhum READY com MAC pertencente a outro objeto
 READY/NOOP parcial com owner real confirmado
 BLOCKED analisados
-READY/CREATE e READY/UPDATE_SAFE revisados
-scheduler homologado
+scheduler desabilitado durante homologação
 ```
 
-## 10. Falha de APPLY
+## 9. Falha de APPLY
 
 Se um APPLY terminar com erro:
 
 ```text
-não repetir o mesmo comando imediatamente
+não repetir imediatamente
 manter scheduler desabilitado
-recalcular o PLAN contra o estado atual do NetBox
-revisar READY/BLOCKED novamente
+recalcular o PLAN contra o estado atual
+revisar se houve Device, interface ou IP parcial
 ```
 
-O relatório de IMPORT deve ser tratado como evidência de possível escrita parcial quando a falha ocorreu depois de `PREFLIGHT: OK`.
+Falha depois de `PREFLIGHT: OK` deve ser tratada como possível escrita parcial.
 
-## 11. Auto-update e scheduler
-
-Antes de cada execução automática:
-
-```text
-UPDATE PREFLIGHT → COLETA
-```
-
-O updater não altera `automation.apply`.
+## 10. Auto-update e scheduler
 
 ```bash
 netbox-discovery scheduler enable
@@ -231,32 +189,20 @@ netbox-discovery scheduler disable
 netbox-discovery scheduler status
 ```
 
-## 12. Execução fora da sessão SSH
+O updater não altera `automation.apply`.
 
-```bash
-UNIT="netbox-discovery-manual-$(date +%Y%m%d-%H%M%S)"
-systemd-run --unit="$UNIT" --collect /usr/local/bin/netbox-discovery run
-journalctl -fu "$UNIT.service"
-```
-
-`CTRL+C` encerra somente a visualização.
-
-## 13. Critérios de homologação
+## 11. Critérios de homologação
 
 ```text
 Self-test: PASS
 Check: PASS
 nenhum novo Device com identidade WEAK em READY
 nenhum READY com MAC pertencente a outro objeto
-READY/NOOP parcial permitido somente quando interface owner = Device reconciliado
-MAC repetida no mesmo registro avaliada uma vez
-preflight global de IP e MAC antes da primeira escrita
+READY/NOOP parcial reutiliza a interface live por MAC
+nenhuma interface é criada antes da resolução de ownership da MAC
+MAC repetida no mesmo registro não cria interface duplicada
+preflight global de IP e MAC antes da escrita
 WRITE GUARD calculado sobre decisões finais
-limites absolutos preservados no bootstrap
-percentual ativo em base madura
-conflitos reais permanecem BLOCKED
 Erros: 0
-Assets FAIL: 0
-Checks FAIL: 0
 PLAN posterior convergente
 ```

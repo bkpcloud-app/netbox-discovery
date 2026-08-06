@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.21 — Comandos rápidos
+# netbox-discovery 1.11.22 — Comandos rápidos
 
 ## Atualizar e validar
 
@@ -24,51 +24,19 @@ Todos são somente leitura.
 ## Identidade para novos Devices
 
 ```text
-Discovery UID SERIAL ou MGMT-MAC
-→ pode permanecer READY após as demais políticas
-
-Discovery UID WEAK
-→ REVIEW/NOOP
-→ não cria Device, interface ou IP
+Discovery UID SERIAL ou MGMT-MAC → pode permanecer READY
+Discovery UID WEAK               → REVIEW/NOOP
 ```
 
 ## Propriedade global de MAC
 
 ```text
-MAC sem vínculo                            → permitido
-MAC no mesmo Device existente             → preservado
-MAC em outro Device/VM/objeto              → BLOCKED/NOOP
-READY/NOOP após APPLY parcial              → valida owner real da interface
-mesma MAC repetida no mesmo registro       → avaliada uma vez
-consulta global de MAC indisponível        → APPLY bloqueado antes da escrita
-```
-
-O produto não transfere MAC automaticamente.
-
-## Write guard
-
-Site pequeno, base menor que 50 Devices:
-
-```text
-WRITE GUARD POLÍTICA: SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY
-percentual=ADIADO
-```
-
-Continuam valendo:
-
-```text
-CREATE=25
-UPDATE_SAFE=50
-REPAIR=20
-TOTAL=75
-```
-
-Base com 50 Devices ou mais:
-
-```text
-WRITE GUARD POLÍTICA: ABSOLUTE_AND_PERCENT
-percentual=ATIVO
-PERCENT=20%
+MAC sem vínculo                          → permitido
+MAC no mesmo Device existente           → reutiliza a interface live
+MAC em outro Device/VM/objeto            → BLOCKED/NOOP
+nome da interface live diferente        → MAC tem precedência, sem nova interface
+mesma MAC repetida no mesmo registro     → preserva a mesma interface
+consulta global indisponível             → APPLY bloqueado
 ```
 
 ## Dry-run
@@ -77,24 +45,15 @@ PERCENT=20%
 netbox-discovery run
 ```
 
-Não grava no NetBox.
-
 ## APPLY
 
 ```bash
 netbox-discovery import --apply
 ```
 
-O Importer recalcula o PLAN e executa preflight global de IP e MAC antes da primeira escrita.
+O Importer recalcula o PLAN, executa preflight global e resolve ownership de MAC antes de procurar ou criar interface por nome.
 
-Se houver erro depois de `PREFLIGHT: OK`, não repita o APPLY sem recalcular e revisar o PLAN.
-
-## Segundo plano
-
-```bash
-UNIT="netbox-discovery-manual-$(date +%Y%m%d-%H%M%S)"; echo "$UNIT" >/root/netbox-discovery-manual-unit; systemd-run --unit="$UNIT" --collect /usr/local/bin/netbox-discovery run
-journalctl -fu "$(cat /root/netbox-discovery-manual-unit).service"
-```
+Se houver erro depois de `PREFLIGHT: OK`, trate como possível escrita parcial e recalcule o PLAN.
 
 ## Scheduler
 
@@ -108,13 +67,11 @@ netbox-discovery scheduler status
 
 ```text
 run               = sem escrita
-run --apply       = escrita READY após proteções
+import --apply    = escrita READY após proteções
 WEAK new Device   = REVIEW/NOOP
 MAC conflict      = BLOCKED/NOOP
-same owner MAC    = permitido
+same owner MAC    = reutiliza interface
 REVIEW            = não escreve
 DELEGATED         = não escreve
 BLOCKED           = não escreve
-bootstrap         = adia só o percentual
-limites absolutos = sempre ativos
 ```
