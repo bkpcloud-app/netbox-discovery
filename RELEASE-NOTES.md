@@ -1,3 +1,33 @@
+## V1.11.21 — Legacy MAC owner preflight recovery
+
+A segunda tentativa de APPLY do DCM, já na 1.11.20, foi bloqueada antes da escrita por um falso conflito no `SW-CORE-AE`:
+
+```text
+MAC E8:B5:D0:72:9D:FC pertence a dcim.interface ID 543,
+esperado interface ainda não existente
+```
+
+O PLAN já havia reconciliado o equipamento parcial corretamente como `READY/NOOP`, com `SERIAL+MAC+IP+NAME`. A camada global nova reconhecia que a interface pertencia ao próprio Device, mas o preflight V5 legado ainda inferia a interface exclusivamente pelo IP presente no `spec`.
+
+A 1.11.21 corrige essa camada:
+
+```text
+interface live pertence ao mesmo Device reconciliado
+→ PASS
+
+interface live pertence a outro Device
+→ BLOQUEADO
+
+mesma MAC repetida em vários specs do mesmo registro
+→ avaliada uma única vez
+```
+
+A validação agora consulta `dcim/interfaces`, usa `interface.device.id` como autoridade e continua fail-closed quando o owner não pode ser resolvido. Não há transferência automática de MAC.
+
+A regressão reproduz a interface ID 543, o `READY/NOOP` parcial, o spec sem IP inferível e a duplicação da mesma MAC em dois specs.
+
+---
+
 ## V1.11.20 — Global MAC ownership preflight
 
 O primeiro APPLY do DCM na 1.11.19 parou no primeiro `READY`, `SW-CORE-AE`, porque a MAC de gerenciamento já pertencia à interface ID 543:
