@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
@@ -46,7 +47,18 @@ def installed_version():
 
 
 def remote_version():
-    req = urllib.request.Request(REMOTE_VERSION_URL, headers={"User-Agent": "netbox-discovery-updater/1.9"})
+    # raw.githubusercontent.com pode manter VERSION em cache por alguns minutos
+    # logo após um merge. O parâmetro único e os headers no-cache impedem o
+    # updater de concluir incorretamente que a versão instalada ainda é a atual.
+    url = REMOTE_VERSION_URL + "?cache_bust={0}".format(int(time.time() * 1000))
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "netbox-discovery-updater/1.9",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        },
+    )
     with urllib.request.urlopen(req, timeout=20) as response:
         return response.read().decode("utf-8").strip()
 
