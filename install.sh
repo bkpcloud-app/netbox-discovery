@@ -47,6 +47,10 @@ done
 # credentials/site configuration survive upgrades.
 \cp -af "$SRC/." "$TARGET/"
 
+# Remove package artifacts retired from the supported runtime. A normal copy
+# does not remove files left by older releases.
+rm -f "$TARGET/workflow.yml" "$TARGET/docs/PRODUCT-V1.md"
+
 # Migrate legacy preserved configurations before any scheduler command is used.
 # Missing automation fields are added with safe defaults and only the exact
 # legacy public NetBox URL is moved from explicit :8080 to HTTPS/443. Existing
