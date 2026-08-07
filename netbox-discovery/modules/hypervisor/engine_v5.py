@@ -7,7 +7,7 @@ from collections import defaultdict
 from modules.hypervisor import engine_v3 as v3
 from modules.hypervisor import engine_v4 as v4
 
-ENGINE_VERSION = "5.2-product"
+ENGINE_VERSION = "5.1-product"
 base = v4.base
 v2 = v4.v2
 NetBox = v4.NetBox
