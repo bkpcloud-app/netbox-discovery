@@ -7,7 +7,7 @@ from collections import defaultdict
 from modules.hypervisor import engine_v3 as v3
 from modules.hypervisor import engine_v4 as v4
 
-ENGINE_VERSION = "5.0-product"
+ENGINE_VERSION = "5.1-product"
 base = v4.base
 v2 = v4.v2
 NetBox = v4.NetBox
@@ -31,9 +31,13 @@ def _plan_reclassifications_with_parent_site(plan, nb):
     even when the authoritative vCenter host context resolves to another Site.
 
     The apply engine already validates the live parent and patches VM
-    tenant+site atomically. This planner extension only promotes the existing
+    tenant+site atomically. This planner extension promotes the existing
     strongly matched VM to RECLASSIFY_SAFE when its explicit Site differs from
     the target context and it has a Device/Cluster parent.
+
+    Important: an already matched VM normally reaches this layer as READY/NOOP.
+    NOOP therefore must still be inspected for Site inheritance. REVIEW/NOOP is
+    intentionally not promoted by this extension.
     """
     _ORIGINAL_PLAN_RECLASSIFICATIONS(plan, nb)
 
@@ -52,7 +56,12 @@ def _plan_reclassifications_with_parent_site(plan, nb):
     for row in plan.get("records") or []:
         if row.get("object_type") != "VM":
             continue
-        if row.get("action") not in ("CREATE", "UPDATE_SAFE"):
+
+        action = v3.clean(row.get("action"))
+        decision = v3.clean(row.get("decision"))
+        if action not in ("CREATE", "UPDATE_SAFE", "NOOP"):
+            continue
+        if action == "NOOP" and decision != "READY":
             continue
 
         key = (v3.clean(row.get("target_tenant")), v3.clean(row.get("target_site")))
