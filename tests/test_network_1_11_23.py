@@ -40,6 +40,7 @@ def test_03_installer_activates_wrapper():
 
 def test_04_go_live_uses_standard_native_stages_in_order():
     source = read("netbox-discovery/modules/product/go_live.py")
+    main_body = source[source.index("def main():"):]
     markers = [
         'run("import", "--apply")',
         'run("audit")',
@@ -51,7 +52,7 @@ def test_04_go_live_uses_standard_native_stages_in_order():
         'verify_safe_scheduler()',
         'run("status")',
     ]
-    positions = [source.index(marker) for marker in markers]
+    positions = [main_body.index(marker) for marker in markers]
     assert positions == sorted(positions)
 
 
