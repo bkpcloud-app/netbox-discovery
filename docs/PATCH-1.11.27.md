@@ -38,3 +38,7 @@ A decisão é intencional: o reverse proxy em HTTPS/443 está operacional, poré
 ## Hypervisor/vCenter
 
 A versão preserva integralmente o engine 5.1 introduzido na 1.11.26, incluindo a correção de VMs `READY/NOOP` com Site divergente do Host/Cluster parent.
+
+## Validação
+
+A regressão 1.11.27 exige que o endpoint legado seja migrado para 443 e que `verify_ssl` fique `false`, inclusive quando o campo antes estava `true` ou ausente. URLs customizadas permanecem intocadas.
