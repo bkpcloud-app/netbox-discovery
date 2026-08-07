@@ -5,16 +5,22 @@ from __future__ import print_function
 import os
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-VERSION = "1.11.23"
+MIN_VERSION = (1, 11, 23)
 
 
 def read(relative):
     return open(os.path.join(ROOT, relative), "r").read()
 
 
-def test_01_versions_are_synced():
-    assert read("VERSION").strip() == VERSION
-    assert read("netbox-discovery/VERSION").strip() == VERSION
+def version_tuple(value):
+    return tuple(int(part) for part in value.strip().split("."))
+
+
+def test_01_versions_include_1_11_23_or_newer():
+    root_version = read("VERSION").strip()
+    package_version = read("netbox-discovery/VERSION").strip()
+    assert root_version == package_version
+    assert version_tuple(root_version) >= MIN_VERSION
 
 
 def test_02_public_wrapper_exposes_go_live_and_delegates_legacy_commands():
@@ -34,6 +40,7 @@ def test_03_installer_activates_wrapper():
 
 def test_04_go_live_uses_standard_native_stages_in_order():
     source = read("netbox-discovery/modules/product/go_live.py")
+    main_body = source[source.index("def main():"):]
     markers = [
         'run("import", "--apply")',
         'run("audit")',
@@ -45,7 +52,7 @@ def test_04_go_live_uses_standard_native_stages_in_order():
         'verify_safe_scheduler()',
         'run("status")',
     ]
-    positions = [source.index(marker) for marker in markers]
+    positions = [main_body.index(marker) for marker in markers]
     assert positions == sorted(positions)
 
 
@@ -65,14 +72,9 @@ def test_06_go_live_verifies_scheduler_read_only_state():
     assert 'APPLY AUTOMÁTICO: NÃO' in source
 
 
-def test_07_documentation_is_current():
+def test_07_historical_1_11_23_documentation_remains_available():
     markers = {
-        "README.md": "**Versão atual:** 1.11.23",
-        "docs/MANUAL.md": "**Versão:** 1.11.23",
-        "docs/COMANDOS-RAPIDOS.md": "# netbox-discovery 1.11.23",
-        "docs/HOMOLOGACAO.md": "# netbox-discovery 1.11.23",
         "RELEASE-NOTES.md": "## V1.11.23",
-        "SECURITY.md": "**Versão da política:** 1.11.23",
         "docs/PATCH-1.11.23.md": "# netbox-discovery 1.11.23",
         "docs/NOVA-UNIDADE-DOIS-PASSOS.md": "netbox-discovery go-live",
     }

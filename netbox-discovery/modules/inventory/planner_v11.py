@@ -78,14 +78,7 @@ def _recover_existing_collision_devices(plan, state):
 
 
 def _enforce_stable_identity_for_new_creates(plan):
-    """Fail closed for every new Device candidate whose final identity is weak.
-
-    Earlier role-specific guards covered physical Devices and known Windows roles,
-    but a generic WINDOWS_HOST or HOST_OR_APPLIANCE row could still finish as
-    READY/CREATE with a WEAK discovery UID. The final Planner layer is the last
-    authority before the write guard, so it must reject every new weak identity
-    regardless of role or asset class.
-    """
+    """Fail closed for every new Device candidate whose final identity is weak."""
     for row in plan or []:
         if row.get("existing_device_id"):
             continue
@@ -145,14 +138,7 @@ def _block_for_mac_conflicts(row, conflicts):
 
 
 def _enforce_global_mac_ownership(plan, state):
-    """Block a final READY row when its management MAC belongs elsewhere.
-
-    NetBox MAC uniqueness is global. Planner V2 already uses MACs that reached the
-    reconciled asset, but a management MAC may exist only in the final interface
-    intent. Re-check those intents against the global MAC table after every policy,
-    before the write guard, so IMPORT never discovers the conflict after creating
-    a Device or interface.
-    """
+    """Block a final READY row when its management MAC belongs elsewhere."""
     interfaces = dict(
         (item.get("id"), item)
         for item in (state.get("interfaces") or [])
@@ -241,16 +227,21 @@ def _limit(name, default):
 
 
 def _apply_final_write_guard(plan, state):
-    """Apply absolute limits always and percentage only after a stable site baseline.
+    """Apply conservative write limits with a larger cap only for near-empty sites.
 
-    A site with few Devices is commonly being onboarded. Applying a percentage to
-    a base of 13 Devices, for example, makes 17 otherwise eligible additions look
-    like 131% growth and prevents any controlled bootstrap. For bases below the
-    configured minimum, absolute CREATE/UPDATE/REPAIR/TOTAL caps remain mandatory;
-    only the percentage rule is deferred until the site has enough live Devices.
+    Three phases are distinguished:
+      * initial bootstrap (0-9 live Devices): up to 50 CREATE by default;
+      * small site (10-49 live Devices): legacy 25 CREATE cap;
+      * established site (50+): legacy absolute caps plus percentage guard.
+
+    UPDATE, REPAIR and TOTAL caps are unchanged in every phase. This lets a new
+    site such as FVI onboard 27 strongly identified physical Devices without
+    weakening the established-site guard.
     """
     limits = {
         "CREATE": _limit("NETBOX_DISCOVERY_MAX_CREATE", 25),
+        "INITIAL_CREATE": _limit("NETBOX_DISCOVERY_MAX_INITIAL_CREATE", 50),
+        "INITIAL_MAX_BASE": _limit("NETBOX_DISCOVERY_INITIAL_MAX_BASE", 9),
         "UPDATE_SAFE": _limit("NETBOX_DISCOVERY_MAX_UPDATE", 50),
         "REPAIR_SAFE_VM_DUPLICATE": _limit("NETBOX_DISCOVERY_MAX_REPAIR", 20),
         "TOTAL": _limit("NETBOX_DISCOVERY_MAX_TOTAL_CHANGES", 75),
@@ -269,15 +260,26 @@ def _apply_final_write_guard(plan, state):
     percent_denominator = max(1, live_count)
     percent = int(round((100.0 * len(eligible)) / percent_denominator))
     percent_enforced = live_count >= limits["PERCENT_MIN_BASE"]
+    initial_bootstrap = live_count <= limits["INITIAL_MAX_BASE"]
+    effective_create_limit = limits["INITIAL_CREATE"] if initial_bootstrap else limits["CREATE"]
 
     violations = []
-    for action in ("CREATE", "UPDATE_SAFE", "REPAIR_SAFE_VM_DUPLICATE"):
+    if counts.get("CREATE", 0) > effective_create_limit:
+        violations.append("CREATE={0}>{1}".format(counts["CREATE"], effective_create_limit))
+    for action in ("UPDATE_SAFE", "REPAIR_SAFE_VM_DUPLICATE"):
         if counts.get(action, 0) > limits[action]:
             violations.append("{0}={1}>{2}".format(action, counts[action], limits[action]))
     if len(eligible) > limits["TOTAL"]:
         violations.append("TOTAL={0}>{1}".format(len(eligible), limits["TOTAL"]))
     if percent_enforced and percent > limits["PERCENT"] and len(eligible) > 10:
         violations.append("PERCENT={0}%>{1}%".format(percent, limits["PERCENT"]))
+
+    if percent_enforced:
+        policy = "ABSOLUTE_AND_PERCENT"
+    elif initial_bootstrap:
+        policy = "INITIAL_SITE_BOOTSTRAP_ABSOLUTE_ONLY"
+    else:
+        policy = "SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY"
 
     guard = {
         "status": "BLOCK" if violations else "PASS",
@@ -289,7 +291,10 @@ def _apply_final_write_guard(plan, state):
         "violations": violations,
         "percent_enforced": bool(percent_enforced),
         "percent_min_base": limits["PERCENT_MIN_BASE"],
-        "policy": "ABSOLUTE_AND_PERCENT" if percent_enforced else "SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY",
+        "initial_bootstrap": bool(initial_bootstrap),
+        "initial_max_base": limits["INITIAL_MAX_BASE"],
+        "effective_create_limit": effective_create_limit,
+        "policy": policy,
     }
     for row in plan:
         row["write_guard"] = guard
@@ -313,10 +318,6 @@ def _defer_write_guard(plan, state):
 
 
 def build_plan(recon, classification, state):
-    # Planner V9 Core, V9 and V10 all call the same guard while layering policies.
-    # Running it in an intermediate layer can turn candidates into BLOCKED before
-    # later identity policies correctly downgrade them to REVIEW. Defer every
-    # nested invocation and evaluate once, after the complete V11 decision set.
     original_write_guard = core._apply_write_guard
     core._apply_write_guard = _defer_write_guard
     try:

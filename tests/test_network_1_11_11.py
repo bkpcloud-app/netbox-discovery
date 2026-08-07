@@ -106,7 +106,10 @@ def test_05_malformed_automation_fails_closed():
 def test_06_installer_runs_migration_before_product_check():
     source = open(os.path.join(ROOT, "install.sh"), "r").read()
     migration = source.index("config_migrations.py")
-    product_check = source.rindex('"$TARGET/bin/netbox-discovery" check')
+    current_check = source.rfind("/usr/local/bin/netbox-discovery check")
+    legacy_check = source.rfind('"$TARGET/bin/netbox-discovery" check')
+    product_check = max(current_check, legacy_check)
+    assert product_check >= 0
     assert migration < product_check
     assert "--ensure-network-automation" in source
 
