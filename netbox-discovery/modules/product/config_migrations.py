@@ -8,6 +8,8 @@ import sys
 
 DEFAULT_BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 DEFAULT_CONFIG = os.path.join(DEFAULT_BASE, "config.yml")
+LEGACY_NETBOX_URL = "https://inventory.bkpcloud.app.br:8080"
+CURRENT_NETBOX_URL = "https://inventory.bkpcloud.app.br"
 
 
 def _clean(value):
@@ -109,20 +111,81 @@ def ensure_network_automation(path):
     return changed
 
 
+def _yaml_scalar(value):
+    value = _clean(value)
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1], value[0]
+    return value, ""
+
+
+def migrate_netbox_url(path):
+    """Migrate only the product's exact legacy public NetBox URL.
+
+    This is deliberately not a generic port rewrite. Customer-specific URLs,
+    other :8080 endpoints, credentials and all unrelated configuration remain
+    untouched. Existing quote style is preserved.
+    """
+    if not os.path.isfile(path):
+        raise RuntimeError("config.yml não existe: {0}".format(path))
+
+    original = open(path, "r").read()
+    lines = original.splitlines()
+    start, end = _top_level_section(lines, "netbox")
+    if start is None:
+        return False
+
+    for index in range(start + 1, end):
+        row = lines[index]
+        stripped = row.strip()
+        indent = len(row) - len(row.lstrip())
+        if indent <= 0 or not stripped or stripped.startswith("#") or ":" not in row:
+            continue
+
+        key_text, value_text = row.split(":", 1)
+        if _clean(key_text) != "url":
+            continue
+
+        scalar, quote = _yaml_scalar(value_text)
+        if scalar != LEGACY_NETBOX_URL:
+            return False
+
+        spacing = value_text[:len(value_text) - len(value_text.lstrip())]
+        replacement = CURRENT_NETBOX_URL
+        if quote:
+            replacement = quote + replacement + quote
+        lines[index] = key_text + ":" + spacing + replacement
+        _atomic_write(path, "\n".join(lines))
+        return True
+
+    return False
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Migrações seguras do config.yml")
     parser.add_argument("--config", default=DEFAULT_CONFIG)
     parser.add_argument("--ensure-network-automation", action="store_true")
+    parser.add_argument("--migrate-netbox-url", action="store_true")
     args = parser.parse_args(argv)
 
-    if not args.ensure_network_automation:
-        parser.error("informe --ensure-network-automation")
+    if not args.ensure_network_automation and not args.migrate_netbox_url:
+        parser.error("informe ao menos uma migração")
 
-    changed = ensure_network_automation(os.path.abspath(args.config))
-    if changed:
-        print("CONFIG MIGRATION: automation adicionada/completada com segurança")
-    else:
-        print("CONFIG MIGRATION: automation já completa")
+    config_path = os.path.abspath(args.config)
+
+    if args.ensure_network_automation:
+        changed = ensure_network_automation(config_path)
+        if changed:
+            print("CONFIG MIGRATION: automation adicionada/completada com segurança")
+        else:
+            print("CONFIG MIGRATION: automation já completa")
+
+    if args.migrate_netbox_url:
+        changed = migrate_netbox_url(config_path)
+        if changed:
+            print("CONFIG MIGRATION: NetBox URL migrada para HTTPS/443")
+        else:
+            print("CONFIG MIGRATION: NetBox URL sem alteração")
+
     return 0
 
 
