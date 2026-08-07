@@ -10,7 +10,7 @@ import sys
 
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 CONFIG_FILE = os.path.join(BASE, "config.yml")
-LOCKED_NETBOX_URL = "https://inventory.bkpcloud.app.br:8080"
+LOCKED_NETBOX_URL = "https://inventory.bkpcloud.app.br"
 
 
 def clean(v):
