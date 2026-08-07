@@ -17,7 +17,7 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.11.26"
+          test "$(cat VERSION)" = "1.11.27"
 
       - name: Documentation sync
         run: |
@@ -45,6 +45,9 @@ jobs:
 
       - name: Product self-test
         run: python3 netbox-discovery/modules/product/selftest.py --base "$PWD/netbox-discovery" --package-root "$PWD"
+
+      - name: Product 1.11.27 NetBox HTTPS 443 migration
+        run: python3 tests/test_product_1_11_27.py
 
       - name: Legacy regressions
         run: python3 tests/run_regressions_1_10.py
