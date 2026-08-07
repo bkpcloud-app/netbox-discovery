@@ -1,3 +1,32 @@
+## V1.11.34 — Repository hygiene e ponto de retomada
+
+A manutenção do repositório passa a tratar documentação e continuidade operacional como parte obrigatória da release.
+
+Principais mudanças:
+
+```text
+- documentos obrigatórios passam a ser validados pela versão EXATA;
+- Manual ganha seção Ponto de retomada com estado técnico, decisões e próximo passo;
+- main deve ser sincronizado com stable após cada promoção;
+- config.yml.example passa a usar https://inventory.bkpcloud.app.br;
+- removidos artefatos obsoletos sem referência de runtime/CI;
+- adicionada regressão para impedir retorno desses arquivos e novo drift documental.
+```
+
+Artefatos removidos:
+
+```text
+SHA256SUMS
+netbox-discovery/docs/PRODUCT-V1.md
+netbox-discovery/workflow.yml
+```
+
+Os módulos históricos versionados não foram removidos em massa porque as camadas atuais ainda importam componentes anteriores e a suíte de regressão depende dessa arquitetura. Limpeza de código legado exige refatoração explícita, não exclusão visual.
+
+O ponto de retomada registra **NetBox → Zabbix** como próxima etapa funcional, sem versionar credenciais ou dados privados.
+
+---
+
 ## V1.11.33 — Documentação operacional de instalação limpa
 
 A documentação principal foi sincronizada com o procedimento real de instalação de uma unidade nova.
@@ -8,30 +37,7 @@ Comando oficial para instalação do zero, ativação do scheduler Network e pri
 curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/stable/install-from-github.sh -o /tmp/netbox-discovery-install.sh && bash /tmp/netbox-discovery-install.sh && netbox-discovery init && netbox-discovery check && netbox-discovery scheduler enable && netbox-discovery run --apply
 ```
 
-Foram atualizados:
-
-```text
-README.md
-docs/MANUAL.md
-docs/COMANDOS-RAPIDOS.md
-docs/NOVA-UNIDADE-DOIS-PASSOS.md
-RELEASE-NOTES.md
-```
-
-A documentação agora diferencia explicitamente:
-
-```text
-Modo direto:
-  automation.enabled=true
-  automation.apply=true
-  primeira coleta imediata com run --apply
-  próximas execuções agendadas podem escrever READY
-
-Modo controlado:
-  PLAN revisado antes da escrita
-  go-live
-  scheduler habilitado com APPLY=NÃO
-```
+Foram atualizados README, Manual, Comandos Rápidos, guia de nova unidade e Release Notes. A documentação passou a diferenciar ativação direta (`automation.apply=true`) do GO-LIVE controlado (`APPLY=NÃO`).
 
 O endpoint oficial documentado é `https://inventory.bkpcloud.app.br`, sem `:8080`.
 
@@ -81,22 +87,7 @@ Adicionado o comando operacional padrão:
 netbox-discovery go-live
 ```
 
-O comando executa de forma nativa:
-
-```text
-IMPORT --apply
-→ AUDIT
-→ novo PLAN e summary
-→ validação de convergência
-→ configuração segura com automation.apply=false
-→ habilitação do scheduler Network
-→ verificação final de enabled=true e apply=false
-→ status
-```
-
-A interface pública passa por um wrapper instalado em `/usr/local/bin/netbox-discovery`. Todos os comandos existentes continuam delegados ao core original; somente `go-live` usa o novo orquestrador.
-
-O fluxo falha fechado. Mudanças `READY/CREATE`, `READY/UPDATE_SAFE` ou `READY/REPAIR_SAFE_VM_DUPLICATE` ainda pendentes bloqueiam a habilitação do scheduler. Se o estado final estiver inseguro, o scheduler é desabilitado antes do erro.
+O comando executa IMPORT, AUDIT, novo PLAN, validação de convergência, força `automation.apply=false`, habilita o scheduler Network e verifica o estado final.
 
 ---
 
@@ -138,16 +129,7 @@ O write guard passa a ser calculado uma única vez após todas as políticas fin
 
 ## V1.11.16 — Native PLAN reports and run-scoped status
 
-Foram adicionados relatórios nativos somente leitura:
-
-```text
-netbox-discovery plan summary
-netbox-discovery plan blocked
-netbox-discovery plan review
-netbox-discovery plan ready
-netbox-discovery plan delegated
-netbox-discovery plan all
-```
+Foram adicionados relatórios nativos somente leitura: `summary`, `blocked`, `review`, `ready`, `delegated` e `all`.
 
 ---
 

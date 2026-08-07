@@ -1,7 +1,7 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.11.33 — PRODUCT V1  
+**Versão:** 1.11.34 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
 
@@ -100,6 +100,8 @@ netbox-discovery status
 
 O updater consulta `stable`, valida o candidato, cria backup, preserva configurações, instala, testa e executa rollback quando necessário.
 
+O updater **não altera `automation.apply`** e não transforma uma unidade read-only em unidade de escrita.
+
 O endpoint oficial do NetBox é:
 
 ```text
@@ -139,21 +141,7 @@ MGMT-MAC:<mac>
 
 ## 7. Propriedade global de MAC
 
-A tabela `dcim/mac-addresses` é global no NetBox. O produto valida MACs em quatro pontos:
-
-```text
-PLAN V11
-→ conflito vira BLOCKED/NOOP antes do write guard
-
-preflight legado
-→ valida owner real da dcim.interface
-
-IMPORT V12
-→ repete a consulta global antes da primeira escrita
-
-runtime Importer V2
-→ resolve MAC antes de procurar/criar interface por nome
-```
+A tabela `dcim/mac-addresses` é global no NetBox. O produto valida MACs antes da escrita e novamente no runtime.
 
 Regras:
 
@@ -168,30 +156,7 @@ owner da interface não resolvido                 → bloqueado
 
 ### Recuperação de APPLY parcial
 
-Um APPLY anterior pode ter criado Device e interface antes de falhar. O próximo PLAN pode apresentar:
-
-```text
-READY/NOOP
-existing_device_id preenchido
-MAC já atribuída à interface live desse mesmo Device
-```
-
-A 1.11.21 corrigiu o preflight para aceitar esse estado quando o owner real é o mesmo Device.
-
-A 1.11.22 corrige o runtime final:
-
-```text
-1. normaliza a MAC do spec;
-2. consulta dcim/mac-addresses;
-3. resolve a dcim.interface vinculada;
-4. compara interface.device.id com o Device reconciliado;
-5. reutiliza a interface live, mesmo que o nome seja diferente;
-6. somente se não houver vínculo segue o fluxo por nome.
-```
-
-Assim, o Importer não cria uma segunda interface e só depois descobre que a MAC já estava na interface anterior.
-
-O produto nunca transfere automaticamente uma MAC entre Devices ou entre Device e VM.
+Um APPLY anterior pode ter criado Device e interface antes de falhar. O próximo PLAN pode apresentar `READY/NOOP` com a MAC já atribuída à interface live do mesmo Device. O produto aceita esse estado, reutiliza a interface live e não transfere automaticamente uma MAC entre Devices ou entre Device e VM.
 
 ## 8. Write guard final
 
@@ -214,21 +179,9 @@ BLOCKED
 
 ## 9. Bootstrap de site pequeno
 
-Quando a base possui menos de 50 Devices:
+Sites com menos de 50 Devices usam política de bootstrap com limites absolutos. Sites praticamente vazios possuem limite inicial específico para CREATE; sites estabelecidos voltam a aplicar também o percentual.
 
-```text
-policy = SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY
-percent_enforced = false
-```
-
-Permanecem obrigatórios:
-
-```text
-CREATE: 25
-UPDATE_SAFE: 50
-REPAIR_SAFE_VM_DUPLICATE: 20
-TOTAL: 75
-```
+As proteções de identidade, MAC, preflight e TOTAL continuam obrigatórias.
 
 ## 10. GO-LIVE controlado
 
@@ -269,7 +222,7 @@ netbox-discovery run --apply
 
 Executa o pipeline completo com escrita dos registros `READY` e auditoria. É o comando usado na instalação direta da seção 1.
 
-O comando abaixo continua disponível para operação dirigida do estágio de importação:
+O estágio de importação também pode ser executado de forma dirigida com:
 
 ```bash
 netbox-discovery import --apply
@@ -297,7 +250,7 @@ netbox-discovery scheduler status
 
 O serviço agendado executa a atualização `stable` antes da coleta e depois chama o `scheduled-run`.
 
-A escrita noturna depende de `automation.apply`:
+A escrita agendada depende de `automation.apply`:
 
 ```text
 automation.apply=false → coleta/PLAN sem escrita
@@ -314,8 +267,11 @@ Comandos:
 netbox-discovery hypervisor check
 netbox-discovery hypervisor run
 netbox-discovery hypervisor run --apply
+netbox-discovery hypervisor run --compare
 netbox-discovery hypervisor scheduler status
 ```
+
+O Hypervisor usa a origem de virtualização como autoridade de contexto. Site não é inferido pelo nome da VM. Host standalone pode ter Cluster nulo. Não existe DELETE automático.
 
 ## 15. Critérios de homologação
 
@@ -325,12 +281,114 @@ Check: PASS
 endpoint NetBox sem :8080
 nenhum novo Device com identidade WEAK em READY
 nenhum READY com MAC pertencente a outro objeto
-READY/NOOP parcial reutiliza a interface live por MAC
-nenhuma interface é criada antes da resolução de ownership da MAC
-MAC repetida no mesmo registro não cria interface duplicada
-preflight global de IP e MAC antes da escrita
+nenhuma interface criada antes da resolução de ownership da MAC
+preflight global antes da escrita
 WRITE GUARD calculado sobre decisões finais
 Erros: 0
 AUDIT concluído
 scheduler no modo planejado para a unidade
 ```
+
+## 16. Ponto de retomada — estado atual do projeto
+
+Esta seção existe para permitir que uma revisão futura comece somente pelo link do repositório, sem depender do histórico de conversa. Antes de alterar o produto, ler esta seção, `RELEASE-NOTES.md`, `docs/HOMOLOGACAO.md` e a nota de patch da versão atual.
+
+### Estado técnico confirmado
+
+```text
+Versão de referência: 1.11.34
+Canal consumido pelos agentes: stable
+Branch padrão exibido pelo GitHub: main
+Endpoint NetBox: https://inventory.bkpcloud.app.br
+Endpoint legado :8080: proibido para configuração nova
+Network: instalação direta + scheduler + run --apply documentados
+Hypervisor: pipeline multi-contexto validado em produção com 12 contextos e 53 reclassificações seguras
+Hypervisor audit multi-contexto: PASS
+Placement após APPLY validado sem MISMATCH e sem MISSING
+DELETE automático: desabilitado
+```
+
+Na validação Hypervisor de produção anterior à regra específica de réplica, cinco VMs FVI com sufixo `_replica` ficaram protegidas por divergência de UUID. A 1.11.30 adicionou uma exceção estreita para VMware `_replica` com nome único, permitindo refresh do UUID e herança do Site autoritativo sem relaxar conflitos de outras VMs. Não registrar como `LIVE PASS` pós-1.11.30 sem nova evidência de execução.
+
+### Decisões operacionais vigentes
+
+```text
+Site de VM vem do contexto autoritativo do hypervisor/parent, nunca do nome da VM.
+Cluster só é preenchido quando existe Cluster real na origem; host standalone pode ficar sem Cluster.
+Network e Hypervisor são pipelines independentes.
+REVIEW/DELEGATED/BLOCKED não escrevem.
+Não apagar Devices/VMs automaticamente.
+Não pedir novamente diagnóstico de HTTPS/443: o endpoint público já está definido.
+Instalação nova comum usa o comando único da seção 1 e não precisa de go-live depois.
+GO-LIVE fica reservado ao fluxo controlado com revisão prévia.
+```
+
+### Próxima etapa funcional
+
+**NetBox → Zabbix** é o próximo eixo do projeto. Antes de criar código novo, verificar se já existe módulo Zabbix no repositório. A integração deve começar em dry-run/auditoria, usando NetBox como fonte de verdade para inventário e metadados. Não habilitar DELETE automático na primeira versão.
+
+Mapeamentos a validar antes da escrita no Zabbix:
+
+```text
+Tenant
+Site
+Device/VM
+Primary IP
+Role/Platform
+Site → Zabbix Proxy ou Proxy Group
+Tags
+Host Groups
+Templates
+```
+
+Credenciais/API do Zabbix não devem ser versionadas nem expostas em documentação pública.
+
+## 17. Regra obrigatória de documentação e promoção
+
+**Toda release** deve atualizar no mesmo PR:
+
+```text
+VERSION
+netbox-discovery/VERSION
+README.md
+docs/MANUAL.md
+docs/COMANDOS-RAPIDOS.md
+docs/HOMOLOGACAO.md
+RELEASE-NOTES.md
+SECURITY.md
+docs/PATCH-<VERSÃO>.md
+```
+
+O CI deve comparar a **versão exata** desses documentos com `VERSION`. Não basta existir `1.11.` em algum ponto do arquivo.
+
+Fluxo de promoção:
+
+```text
+branch de trabalho
+→ PR para stable
+→ CI PASS
+→ merge stable
+→ sincronizar main com o mesmo commit de stable
+→ confirmar VERSION e README em main
+```
+
+`stable` é o canal técnico de produção. `main` é a página padrão do GitHub. Os dois devem terminar no mesmo conteúdo após cada release para que o manual visto no navegador seja o mesmo manual consumido operacionalmente.
+
+## 18. Higiene do repositório
+
+Não manter arquivo apenas porque ele existia em versão antiga. Um arquivo só permanece quando houver pelo menos uma destas razões:
+
+```text
+é usado pelo runtime atual;
+é importado por um componente atual;
+é exigido por migração/compatibilidade suportada;
+é executado pelo CI/regressões;
+é documentação operacional vigente;
+é evidência histórica ainda verificada por regressão.
+```
+
+Na 1.11.34 foram removidos artefatos comprovadamente obsoletos e não referenciados: `SHA256SUMS`, `netbox-discovery/docs/PRODUCT-V1.md` e `netbox-discovery/workflow.yml`. O exemplo `config.yml.example` foi corrigido para HTTPS/443.
+
+Os módulos versionados antigos não devem ser apagados em massa: o Planner, Importer, Auditor e outras camadas atuais ainda reutilizam módulos anteriores e a suíte de regressão depende dessa cadeia. A remoção deles exige refatoração explícita e CI completo, não limpeza por aparência.
+
+Branches de trabalho devem ser temporárias. A política desejada é manter `main`, `stable` e somente branches realmente ativas; branches já incorporadas não fazem parte do produto em execução.

@@ -37,7 +37,7 @@ mkdir -p "$TARGET"/{reports,logs,cache,backups,config/sites}
 BACKUP="$TARGET/backups/pre-product-v1-$STAMP"
 mkdir -p "$BACKUP"
 
-for item in VERSION workflow.yml config.yml bin lib modules config systemd; do
+for item in VERSION config.yml bin lib modules config systemd; do
   if [[ -e "$TARGET/$item" ]]; then
     cp -a "$TARGET/$item" "$BACKUP/"
   fi
@@ -46,6 +46,10 @@ done
 # Live config.yml and site files are not shipped in the package, therefore
 # credentials/site configuration survive upgrades.
 \cp -af "$SRC/." "$TARGET/"
+
+# Remove package artifacts retired from the supported runtime. A normal copy
+# does not remove files left by older releases.
+rm -f "$TARGET/workflow.yml" "$TARGET/docs/PRODUCT-V1.md"
 
 # Migrate legacy preserved configurations before any scheduler command is used.
 # Missing automation fields are added with safe defaults and only the exact

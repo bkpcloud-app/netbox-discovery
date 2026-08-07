@@ -2,7 +2,7 @@
 
 Produto BKPCLOUD para descoberta, classificação, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.11.33 — PRODUCT V1  
+**Versão atual:** 1.11.34 — PRODUCT V1  
 **Distribuição:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
 
@@ -88,59 +88,29 @@ Nesse modo o resultado aprovado termina com scheduler habilitado e `APPLY=NÃO`.
 
 ## Preflight global de MAC
 
-A 1.11.20 passou a verificar todos os MACs finais do PLAN contra a tabela global `dcim/mac-addresses` antes da primeira escrita.
+Todos os MACs finais do PLAN são verificados contra `dcim/mac-addresses` antes da escrita.
 
 ```text
-MAC livre ou sem vínculo
-→ elegível conforme as demais políticas
-
-MAC já vinculada à interface do mesmo Device existente
-→ preservada
-
-MAC vinculada a outro Device, VM ou objeto
-→ BLOCKED/NOOP no PLAN
-→ bloqueada novamente pelo preflight do IMPORT
-```
-
-A 1.11.21 corrigiu o preflight legado para usar o proprietário real da interface e não bloquear um `READY/NOOP` já reconciliado.
-
-A 1.11.22 corrige também o runtime final. Antes de criar ou localizar interface por nome, o Importer resolve a MAC global:
-
-```text
-MAC já vinculada à interface do mesmo Device
-→ reutiliza a interface existente
-→ não cria interface duplicada
-→ ensure_mac preserva o vínculo
-
-MAC vinculada a outro Device, VM ou objeto
-→ bloqueia antes de qualquer criação
-
-MAC ausente ou sem vínculo
-→ segue o fluxo normal de interface
+MAC livre ou sem vínculo                  → elegível conforme as demais políticas
+MAC no mesmo Device existente            → preservada/reutilizada
+MAC em outro Device, VM ou objeto         → BLOCKED/NOOP
+MAC duplicada ou owner não resolvido      → BLOCKED/NOOP
 ```
 
 ## Identidade estável obrigatória para novos Devices
 
 Novo `READY/CREATE` com `discovery_uid WEAK` vira `REVIEW/NOOP`.
 
-Novos Devices precisam chegar ao PLAN com identidade estável, normalmente:
+Identidades normalmente aceitas:
 
 ```text
 SERIAL:<fabricante>:<serial>
 MGMT-MAC:<mac>
 ```
 
-## Write guard final e bootstrap de sites pequenos
+## Write guard e bootstrap
 
-O write guard é calculado depois das políticas finais do Planner.
-
-Sites com menos de 50 Devices usam:
-
-```text
-SMALL_SITE_BOOTSTRAP_ABSOLUTE_ONLY
-```
-
-Os limites absolutos continuam obrigatórios; apenas o percentual fica adiado até a base mínima.
+Sites novos e pequenos usam limites absolutos de segurança; sites estabelecidos usam também guarda percentual. `REVIEW`, `DELEGATED` e `BLOCKED` nunca são escritos.
 
 ## Relatório nativo do PLAN
 
@@ -184,10 +154,23 @@ O serviço agendado executa o updater `stable` antes da coleta.
 netbox-discovery hypervisor check
 netbox-discovery hypervisor run
 netbox-discovery hypervisor run --apply
+netbox-discovery hypervisor run --compare
 netbox-discovery hypervisor scheduler status
 ```
 
-Network e Hypervisor possuem schedulers independentes.
+Network e Hypervisor possuem schedulers independentes. Não existe exclusão automática de VMs/Devices.
+
+## Continuidade e disciplina de release
+
+O arquivo de referência para retomar o projeto é `docs/MANUAL.md`, especialmente a seção **Ponto de retomada**. Ela deve registrar o estado técnico atual, decisões vigentes, o último resultado comprovado e o próximo passo do projeto.
+
+Toda release deve atualizar, no mesmo PR, `VERSION`, `netbox-discovery/VERSION`, README, Manual, Comandos Rápidos, Homologação, Release Notes, Security e a nota `docs/PATCH-<versão>.md`. O CI exige agora a **versão exata**, não apenas a família `1.11.x`.
+
+`stable` é o canal consumido pelos agentes. `main` é a página padrão do GitHub e deve ser sincronizado com `stable` após a promoção, para nunca exibir documentação antiga.
+
+## Higiene do repositório
+
+Arquivos comprovadamente obsoletos e não utilizados não devem permanecer no repositório. Código histórico só permanece quando ainda é importado pelo runtime, exigido por regressão/compatibilidade ou necessário para uma migração suportada. Histórico de mudanças fica em `RELEASE-NOTES.md` e nas notas de patch que ainda são verificadas pelas regressões.
 
 ## Segurança
 
@@ -197,16 +180,15 @@ Network e Hypervisor possuem schedulers independentes.
 - identidade `WEAK` nunca cria novo Device;
 - MAC vinculada a outro objeto nunca é reassociada automaticamente;
 - MAC já pertencente ao mesmo Device reutiliza a interface live;
-- interface não é criada antes de resolver ownership de MAC;
 - `REVIEW`, `DELEGATED` e `BLOCKED` nunca escrevem;
-- limites absolutos permanecem ativos durante bootstrap.
+- limites de write guard permanecem ativos.
 
 ## Documentação
 
-- `docs/MANUAL.md` — manual operacional completo;
+- `docs/MANUAL.md` — manual operacional completo e ponto de retomada;
 - `docs/COMANDOS-RAPIDOS.md` — referência de comandos;
 - `docs/NOVA-UNIDADE-DOIS-PASSOS.md` — instalação direta e fluxo controlado;
-- `docs/HOMOLOGACAO.md` — homologação;
-- `RELEASE-NOTES.md` — histórico de versões;
+- `docs/HOMOLOGACAO.md` — estado de homologação;
+- `RELEASE-NOTES.md` — histórico consolidado;
 - `SECURITY.md` — políticas de segurança;
-- `docs/PATCH-1.11.33.md` — documentação desta atualização.
+- `docs/PATCH-1.11.34.md` — documentação desta atualização.

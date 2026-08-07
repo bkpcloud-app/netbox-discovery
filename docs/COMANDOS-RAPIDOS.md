@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.33 — Comandos rápidos
+# netbox-discovery 1.11.34 — Comandos rápidos
 
 ## Instalação do zero — unidade nova com ativação imediata
 
@@ -18,7 +18,7 @@ Salvar: SIM
 Testar NetBox: SIM
 ```
 
-O NetBox oficial é:
+NetBox oficial:
 
 ```text
 https://inventory.bkpcloud.app.br
@@ -26,7 +26,7 @@ https://inventory.bkpcloud.app.br
 
 Não usar `:8080`.
 
-Esse fluxo instala, configura, valida, habilita o scheduler e executa a primeira descoberta imediatamente. Não é necessário esperar a madrugada.
+Esse fluxo instala, configura, valida, habilita o scheduler e executa a primeira descoberta imediatamente. Não precisa `go-live` depois quando o `run --apply` termina corretamente.
 
 ## Validar instalação
 
@@ -46,16 +46,11 @@ netbox-discovery check
 netbox-discovery status
 ```
 
-## Primeira coleta sem escrita
+## Coleta Network
 
 ```bash
-netbox-discovery run
-```
-
-## Primeira coleta com escrita
-
-```bash
-netbox-discovery run --apply
+netbox-discovery run          # dry-run
+netbox-discovery run --apply  # pipeline completo + escrita READY + AUDIT
 ```
 
 ## Analisar o último PLAN
@@ -68,9 +63,9 @@ netbox-discovery plan ready
 netbox-discovery plan delegated
 ```
 
-Todos são somente leitura.
+Todos os comandos de relatório são somente leitura.
 
-## Fluxo controlado com revisão antes da escrita
+## Fluxo controlado
 
 Depois da aprovação do PLAN:
 
@@ -79,32 +74,6 @@ netbox-discovery go-live
 ```
 
 O `go-live` executa IMPORT, AUDIT, novo PLAN, valida convergência e habilita o scheduler Network com `APPLY=NÃO`.
-
-Resultado esperado:
-
-```text
-GO-LIVE: PASS
-SCHEDULER NETWORK: ENABLED
-APPLY AUTOMÁTICO: NÃO
-```
-
-## Identidade para novos Devices
-
-```text
-Discovery UID SERIAL ou MGMT-MAC → pode permanecer READY
-Discovery UID WEAK               → REVIEW/NOOP
-```
-
-## Propriedade global de MAC
-
-```text
-MAC sem vínculo                          → permitido
-MAC no mesmo Device existente           → reutiliza a interface live
-MAC em outro Device/VM/objeto            → BLOCKED/NOOP
-nome da interface live diferente        → MAC tem precedência, sem nova interface
-mesma MAC repetida no mesmo registro     → preserva a mesma interface
-consulta global indisponível             → APPLY bloqueado
-```
 
 ## Scheduler Network
 
@@ -125,6 +94,7 @@ automation.apply=true  → execução automática com IMPORT/AUDIT dos READY
 netbox-discovery hypervisor check
 netbox-discovery hypervisor run
 netbox-discovery hypervisor run --apply
+netbox-discovery hypervisor run --compare
 netbox-discovery hypervisor scheduler status
 ```
 
@@ -133,14 +103,15 @@ Network e Hypervisor possuem schedulers independentes.
 ## Segurança
 
 ```text
-run               = sem escrita
-run --apply       = pipeline completo com escrita READY + AUDIT
-go-live           = escrita READY + AUDIT + convergência + scheduler APPLY=NÃO
-import --apply     = estágio de importação manual
 WEAK new Device   = REVIEW/NOOP
 MAC conflict      = BLOCKED/NOOP
 same owner MAC    = reutiliza interface
 REVIEW            = não escreve
 DELEGATED         = não escreve
 BLOCKED           = não escreve
+DELETE automático = não existe
 ```
+
+## Retomar o projeto
+
+Para continuar o trabalho em uma conversa futura, ler primeiro `docs/MANUAL.md`, seção **Ponto de retomada**. O próximo eixo funcional registrado é **NetBox → Zabbix**.
