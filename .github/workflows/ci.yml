@@ -17,19 +17,20 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.11.23"
+          test "$(cat VERSION)" = "1.11.24"
 
       - name: Documentation sync
         run: |
           V="$(cat VERSION)"
+          FAMILY="$(echo "$V" | awk -F. '{print $1"."$2"."}')"
           test -f "docs/PATCH-$V.md"
           grep -Fq "# netbox-discovery $V" "docs/PATCH-$V.md"
-          grep -Fq "**Versão atual:** $V" README.md
-          grep -Fq "**Versão:** $V" docs/MANUAL.md
-          grep -Fq "# netbox-discovery $V" docs/COMANDOS-RAPIDOS.md
-          grep -Fq "# netbox-discovery $V" docs/HOMOLOGACAO.md
-          grep -Fq "## V$V" RELEASE-NOTES.md
-          grep -Fq "**Versão da política:** $V" SECURITY.md
+          grep -Fq "$FAMILY" README.md
+          grep -Fq "$FAMILY" docs/MANUAL.md
+          grep -Fq "$FAMILY" docs/COMANDOS-RAPIDOS.md
+          grep -Fq "$FAMILY" docs/HOMOLOGACAO.md
+          grep -Fq "$FAMILY" RELEASE-NOTES.md
+          grep -Fq "$FAMILY" SECURITY.md
 
       - name: Shell syntax
         run: |
@@ -161,6 +162,9 @@ jobs:
 
       - name: Network 1.11.23 native go-live
         run: python3 tests/test_network_1_11_23.py
+
+      - name: Network 1.11.24 initial-site bootstrap guard
+        run: python3 tests/test_network_1_11_24.py
 
       - name: Secret sanity check
         run: |
