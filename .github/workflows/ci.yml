@@ -17,7 +17,7 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.11.31"
+          test "$(cat VERSION)" = "1.11.32"
 
       - name: Documentation sync
         run: |
@@ -54,6 +54,9 @@ jobs:
 
       - name: Product 1.11.31 configurator HTTPS 443 endpoint
         run: python3 tests/test_product_1_11_31.py
+
+      - name: Product 1.11.32 updater raw VERSION cache-bust
+        run: python3 tests/test_product_1_11_32.py
 
       - name: Legacy regressions
         run: python3 tests/run_regressions_1_10.py
