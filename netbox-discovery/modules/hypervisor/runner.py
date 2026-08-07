@@ -12,14 +12,14 @@ import sys
 BASE = os.environ.get("NETBOX_DISCOVERY_BASE", "/opt/netbox-discovery")
 REPORTS = os.path.join(BASE, "reports")
 LOCK_FILE = "/var/lock/netbox-discovery-global.lock"
-RUNNER_VERSION = "3.4-product"
+RUNNER_VERSION = "3.5-product"
 
 if BASE not in sys.path:
     sys.path.insert(0, BASE)
 
 from lib.netbox import NetBox as RealNetBox
 from modules.hypervisor.config import load_hypervisor_config
-from modules.hypervisor import engine_v4 as engine
+from modules.hypervisor import engine_v5 as engine
 from modules.hypervisor import compare as compare_module
 
 WRITE_JOURNAL = []

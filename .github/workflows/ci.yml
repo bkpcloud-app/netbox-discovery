@@ -17,7 +17,7 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.11.24"
+          test "$(cat VERSION)" = "1.11.25"
 
       - name: Documentation sync
         run: |
@@ -60,6 +60,9 @@ jobs:
 
       - name: Hypervisor 1.10.8 VM site/parent regressions
         run: python3 tests/test_hypervisor_1_10_8.py
+
+      - name: Hypervisor 1.11.25 VM parent-site inheritance
+        run: python3 tests/test_hypervisor_1_11_25.py
 
       - name: Network 1.10.9 PLAN diagnostics
         run: python3 tests/test_network_1_10_9.py
