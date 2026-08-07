@@ -48,9 +48,10 @@ done
 \cp -af "$SRC/." "$TARGET/"
 
 # Migrate legacy preserved configurations before any scheduler command is used.
-# Missing automation fields are added with safe defaults and only the exact
-# legacy public NetBox URL is moved from explicit :8080 to HTTPS/443. Existing
-# customer-specific URLs and all unrelated configuration remain untouched.
+# Missing automation fields are added with safe defaults. The exact official
+# NetBox endpoint is migrated from :8080 to HTTPS/443 and, by product policy,
+# verify_ssl=false is set for that endpoint. Customer-specific URLs are not
+# touched.
 if [[ -f "$TARGET/config.yml" ]]; then
   /usr/bin/python3 "$TARGET/modules/product/config_migrations.py" \
     --config "$TARGET/config.yml" \
