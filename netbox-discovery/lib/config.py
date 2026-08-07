@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 CONFIG_FILE = "/opt/netbox-discovery/config.yml"
-LOCKED_NETBOX_URL = "https://inventory.bkpcloud.app.br:8080"
+LOCKED_NETBOX_URL = "https://inventory.bkpcloud.app.br"
 
 
 def _convert(value):
