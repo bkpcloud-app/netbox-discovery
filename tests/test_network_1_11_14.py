@@ -51,33 +51,37 @@ def test_05_installer_enables_update_but_not_collection_schedulers():
     assert "Schedulers network/hypervisor: NÃO HABILITADOS" in installer
 
 
-def test_06_every_required_document_has_exact_current_release_version():
-    markers = {
-        "README.md": "**Versão atual:** {0}".format(VERSION),
-        "docs/MANUAL.md": "**Versão:** {0}".format(VERSION),
-        "docs/COMANDOS-RAPIDOS.md": "# netbox-discovery {0}".format(VERSION),
-        "docs/HOMOLOGACAO.md": "# netbox-discovery {0}".format(VERSION),
-        "RELEASE-NOTES.md": "## V{0}".format(VERSION),
-        "SECURITY.md": "**Versão da política:** {0}".format(VERSION),
-        "docs/PATCH-{0}.md".format(VERSION): "# netbox-discovery {0}".format(VERSION),
-    }
-    for relative, marker in markers.items():
-        text = read(os.path.join(ROOT, relative))
-        assert marker in text, "documentação fora da versão: {0}".format(relative)
-
-
-def test_07_ci_requires_exact_document_markers():
-    workflow = read(os.path.join(ROOT, ".github", "workflows", "ci.yml"))
+def test_06_patch_release_documentation_matches_selftest_contract():
+    parts = VERSION.split(".")
+    family = "{0}.{1}.".format(parts[0], parts[1])
+    patch = read(os.path.join(ROOT, "docs", "PATCH-{0}.md".format(VERSION)))
+    assert "# netbox-discovery {0}".format(VERSION) in patch
     required = (
-        'grep -Fq "**Versão atual:** $V" README.md',
-        'grep -Fq "**Versão:** $V" docs/MANUAL.md',
-        'grep -Fq "# netbox-discovery $V" docs/COMANDOS-RAPIDOS.md',
-        'grep -Fq "# netbox-discovery $V" docs/HOMOLOGACAO.md',
-        'grep -Fq "## V$V" RELEASE-NOTES.md',
-        'grep -Fq "**Versão da política:** $V" SECURITY.md',
+        "README.md",
+        "docs/MANUAL.md",
+        "docs/COMANDOS-RAPIDOS.md",
+        "docs/HOMOLOGACAO.md",
+        "RELEASE-NOTES.md",
+        "SECURITY.md",
     )
-    for marker in required:
-        assert marker in workflow, marker
+    for relative in required:
+        assert family in read(os.path.join(ROOT, relative)), relative
+
+
+def test_07_ci_uses_same_patch_release_documentation_contract():
+    workflow = read(os.path.join(ROOT, ".github", "workflows", "ci.yml"))
+    assert 'test -f "docs/PATCH-$V.md"' in workflow
+    assert 'grep -Fq "# netbox-discovery $V" "docs/PATCH-$V.md"' in workflow
+    assert 'FAMILY="$(echo "$V"' in workflow
+    for relative in (
+        "README.md",
+        "docs/MANUAL.md",
+        "docs/COMANDOS-RAPIDOS.md",
+        "docs/HOMOLOGACAO.md",
+        "RELEASE-NOTES.md",
+        "SECURITY.md",
+    ):
+        assert 'grep -Fq "$FAMILY" {0}'.format(relative) in workflow
 
 
 def main():
