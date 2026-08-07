@@ -52,36 +52,34 @@ def test_05_installer_enables_update_but_not_collection_schedulers():
 
 
 def test_06_patch_release_documentation_matches_selftest_contract():
-    parts = VERSION.split(".")
-    family = "{0}.{1}.".format(parts[0], parts[1])
     patch = read(os.path.join(ROOT, "docs", "PATCH-{0}.md".format(VERSION)))
     assert "# netbox-discovery {0}".format(VERSION) in patch
-    required = (
-        "README.md",
-        "docs/MANUAL.md",
-        "docs/COMANDOS-RAPIDOS.md",
-        "docs/HOMOLOGACAO.md",
-        "RELEASE-NOTES.md",
-        "SECURITY.md",
-    )
-    for relative in required:
-        assert family in read(os.path.join(ROOT, relative)), relative
+    exact = {
+        "README.md": "**Versão atual:** {0}".format(VERSION),
+        "docs/MANUAL.md": "**Versão:** {0}".format(VERSION),
+        "docs/COMANDOS-RAPIDOS.md": "# netbox-discovery {0}".format(VERSION),
+        "docs/HOMOLOGACAO.md": "# netbox-discovery {0}".format(VERSION),
+        "RELEASE-NOTES.md": "## V{0}".format(VERSION),
+        "SECURITY.md": "**Versão da política:** {0}".format(VERSION),
+    }
+    for relative, marker in exact.items():
+        assert marker in read(os.path.join(ROOT, relative)), relative
 
 
 def test_07_ci_uses_same_patch_release_documentation_contract():
     workflow = read(os.path.join(ROOT, ".github", "workflows", "ci.yml"))
     assert 'test -f "docs/PATCH-$V.md"' in workflow
     assert 'grep -Fq "# netbox-discovery $V" "docs/PATCH-$V.md"' in workflow
-    assert 'FAMILY="$(echo "$V"' in workflow
-    for relative in (
-        "README.md",
-        "docs/MANUAL.md",
-        "docs/COMANDOS-RAPIDOS.md",
-        "docs/HOMOLOGACAO.md",
-        "RELEASE-NOTES.md",
-        "SECURITY.md",
-    ):
-        assert 'grep -Fq "$FAMILY" {0}'.format(relative) in workflow
+    required_lines = (
+        'grep -Fq "**Versão atual:** $V" README.md',
+        'grep -Fq "**Versão:** $V" docs/MANUAL.md',
+        'grep -Fq "# netbox-discovery $V" docs/COMANDOS-RAPIDOS.md',
+        'grep -Fq "# netbox-discovery $V" docs/HOMOLOGACAO.md',
+        'grep -Fq "## V$V" RELEASE-NOTES.md',
+        'grep -Fq "**Versão da política:** $V" SECURITY.md',
+    )
+    for line in required_lines:
+        assert line in workflow, line
 
 
 def main():
