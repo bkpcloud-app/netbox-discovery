@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.11.33
+**Versão da política:** 1.11.34
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
@@ -8,7 +8,7 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 
 - configuração real de cliente;
 - tokens, communities e senhas;
-- credenciais NetBox, VMware, Proxmox, Hyper-V, ONVIF ou iDRAC;
+- credenciais NetBox, VMware, Proxmox, Hyper-V, ONVIF, Zabbix ou iDRAC;
 - chaves privadas;
 - relatórios, journals, logs e backups reais;
 - listas privadas de IPs e redes de clientes.
@@ -23,14 +23,14 @@ A escrita automática de inventário só ocorre quando a configuração da unida
 
 ## Instalação direta de unidade nova
 
-A instalação direta documentada em 1.11.33 pode habilitar escrita automática, mas isso é uma decisão explícita durante o `init`:
+A instalação direta pode habilitar escrita automática, mas isso é uma decisão explícita durante o `init`:
 
 ```text
 Habilitar execução automática: SIM
 Permitir IMPORT automático: SIM
 ```
 
-O comando oficial termina com uma primeira execução explícita:
+O comando oficial termina com:
 
 ```bash
 netbox-discovery run --apply
@@ -46,23 +46,7 @@ O modo controlado continua disponível:
 netbox-discovery go-live
 ```
 
-Ele executa IMPORT, AUDIT, novo PLAN e validação de convergência antes de habilitar o scheduler.
-
-Antes da habilitação final, preserva os dados operacionais existentes e força:
-
-```text
-automation.enabled=false
-automation.apply=false
-```
-
-Depois habilita o scheduler e verifica obrigatoriamente:
-
-```text
-automation.enabled=true
-automation.apply=false
-```
-
-Se a verificação falhar, o próprio fluxo desabilita o scheduler e encerra com erro.
+Ele executa IMPORT, AUDIT, novo PLAN e validação de convergência antes de habilitar o scheduler e termina com `automation.apply=false`.
 
 O GO-LIVE nunca escreve registros `REVIEW`, `DELEGATED` ou `BLOCKED`.
 
@@ -79,31 +63,7 @@ MAC duplicada globalmente                → BLOCKED/NOOP
 owner da interface não resolvido         → BLOCKED/NOOP
 ```
 
-O Planner e os preflights validam ownership antes da escrita.
-
-### Runtime de interface
-
-O Importer resolve a MAC antes de procurar ou criar uma interface por nome.
-
-```text
-MAC → dcim.interface → interface.device.id
-```
-
-Se o owner for o mesmo Device reconciliado:
-
-```text
-reutilizar a interface live
-não criar outra interface
-preservar o vínculo da MAC
-```
-
-Se o owner for diferente, não resolvido ou de outro tipo:
-
-```text
-bloquear antes de qualquer POST/PATCH de interface
-```
-
-Nome de interface não é identidade e não pode prevalecer sobre uma MAC global já vinculada ao mesmo Device.
+O Planner e os preflights validam ownership antes da escrita. Nome de interface não é identidade e não pode prevalecer sobre uma MAC global já vinculada ao mesmo Device.
 
 ## Identidade estável para novos Devices
 
@@ -133,13 +93,9 @@ DELEGATED
 BLOCKED
 ```
 
-## Bootstrap de site pequeno
-
-Bases com menos de 50 Devices adiam somente a regra percentual. Limites absolutos permanecem obrigatórios.
-
 ## Falha de APPLY
 
-Uma falha depois de `PREFLIGHT: OK` deve ser tratada como possível escrita parcial, inclusive possível criação de interface.
+Uma falha depois de `PREFLIGHT: OK` deve ser tratada como possível escrita parcial.
 
 ```text
 não repetir imediatamente
@@ -167,4 +123,12 @@ Device manual            → protegido
 
 ## Documentação obrigatória
 
-O CI exige versão sincronizada em README, Manual, Comandos Rápidos, Homologação, Release Notes, Security e nota de patch. A 1.11.33 também testa o contrato documental da instalação limpa para impedir regressão futura.
+Toda release precisa atualizar a versão exata em README, Manual, Comandos Rápidos, Homologação, Release Notes, Security e nota de patch. O CI não aceita mais apenas a família `1.11.x` como evidência de sincronismo.
+
+O `docs/MANUAL.md` mantém o **Ponto de retomada** do projeto. Não registrar tokens, IPs privados de clientes ou outras credenciais nessa seção.
+
+## Higiene
+
+Artefatos obsoletos não devem permanecer no pacote. Arquivos históricos só ficam quando ainda são usados/importados, exigidos por compatibilidade/migração, executados pelo CI ou necessários para regressão documentada.
+
+`main` e `stable` devem terminar sincronizados após cada promoção. `stable` continua sendo o canal consumido pelos agentes.
