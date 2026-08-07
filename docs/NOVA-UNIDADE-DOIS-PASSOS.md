@@ -1,5 +1,7 @@
 # Nova unidade — instalação direta e fluxo controlado
 
+**Versão de referência:** 1.11.34
+
 Este documento reúne os dois modos suportados para iniciar um cliente/site novo no `netbox-discovery`.
 
 ## MODO A — instalação do zero com ativação imediata
@@ -52,7 +54,7 @@ instalação
 → AUDIT
 ```
 
-A primeira varredura ocorre imediatamente. Não é necessário aguardar o timer da madrugada.
+A primeira varredura ocorre imediatamente. Não é necessário aguardar o timer da madrugada e não é necessário executar `go-live` depois se o `run --apply` concluiu corretamente.
 
 Com `automation.apply=true`, as execuções agendadas seguintes também podem aplicar automaticamente os registros `READY`. `REVIEW`, `DELEGATED` e `BLOCKED` permanecem sem escrita.
 
