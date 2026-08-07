@@ -1,13 +1,84 @@
 # Manual Operacional — netbox-discovery
 
 **Produto:** netbox-discovery  
-**Versão:** 1.11.23 — PRODUCT V1  
+**Versão:** 1.11.33 — PRODUCT V1  
 **Distribuição oficial:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
 
-> `CI PASS` não equivale a `LIVE PASS`. Não libere APPLY antes da revisão do PLAN.
+> `CI PASS` não equivale a `LIVE PASS`. Use escrita automática somente em unidades em que esse modo operacional foi aprovado.
 
-## 1. Componentes
+## 1. Instalação do zero — unidade nova com ativação imediata
+
+Para uma unidade nova, em servidor limpo, quando a intenção é instalar, configurar, habilitar o scheduler e executar a primeira descoberta imediatamente, o comando operacional oficial é:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/stable/install-from-github.sh -o /tmp/netbox-discovery-install.sh && bash /tmp/netbox-discovery-install.sh && netbox-discovery init && netbox-discovery check && netbox-discovery scheduler enable && netbox-discovery run --apply
+```
+
+Executar como `root`.
+
+Durante `netbox-discovery init`, informar:
+
+```text
+Cliente/Tenant: cliente da unidade, por exemplo MIZU
+Tenant Group: grupo do cliente, quando aplicável, por exemplo POLIMIX
+Site: código da unidade, por exemplo FVI
+NetBox: fixo em https://inventory.bkpcloud.app.br
+Token: token válido do NetBox
+SSL: conforme a política do ambiente
+Redes CIDR: todas as redes que devem ser descobertas nessa unidade
+Exclusões: IPs/CIDRs que não devem ser varridos
+SNMP: habilitar quando usado
+Communities: communities SNMP da unidade
+Habilitar execução automática: SIM
+Agenda systemd OnCalendar: daily, salvo necessidade diferente
+Permitir IMPORT automático: SIM, quando a unidade deve escrever automaticamente no NetBox
+Salvar configuração: SIM
+Testar conexão com NetBox: SIM
+```
+
+O `init` apenas grava a configuração. Depois dele, a mesma linha continua automaticamente com:
+
+```text
+CHECK
+→ habilitação do scheduler Network
+→ DISCOVER imediato
+→ CLASSIFY
+→ RECONCILE
+→ PLAN
+→ IMPORT --apply dos registros READY
+→ AUDIT
+```
+
+Portanto, nesse modo não é necessário esperar a execução da madrugada para a primeira coleta.
+
+Com `automation.enabled=true` e `automation.apply=true`, as execuções agendadas seguintes voltam a descobrir a unidade e podem gravar registros `READY` no NetBox. `REVIEW`, `DELEGATED` e `BLOCKED` continuam sem escrita.
+
+### Validação após a instalação
+
+```bash
+netbox-discovery version
+netbox-discovery check
+netbox-discovery status
+netbox-discovery scheduler status
+```
+
+Resultado operacional esperado:
+
+```text
+CONFIG: OK
+TENANT: <cliente>
+SITE: <site>
+NETBOX URL: https://inventory.bkpcloud.app.br
+Scheduler Network: habilitado
+Primeiro RUN: concluído sem erro
+```
+
+## 2. Instalação controlada com revisão antes da escrita
+
+Quando a unidade exigir revisão humana do PLAN antes da primeira escrita, usar o procedimento documentado em `docs/NOVA-UNIDADE-DOIS-PASSOS.md`. Nesse fluxo, o primeiro `run` é dry-run e o GO-LIVE ocorre somente depois da aprovação.
+
+## 3. Componentes
 
 ```text
 Discovery V6:   4.6-product
@@ -18,7 +89,7 @@ Importer V12:   6.1-product
 Auditor V11:    6.9-product
 ```
 
-## 2. Atualização e validação
+## 4. Atualização e validação
 
 ```bash
 netbox-discovery update run
@@ -29,7 +100,15 @@ netbox-discovery status
 
 O updater consulta `stable`, valida o candidato, cria backup, preserva configurações, instala, testa e executa rollback quando necessário.
 
-## 3. Dry-run e relatório
+O endpoint oficial do NetBox é:
+
+```text
+https://inventory.bkpcloud.app.br
+```
+
+Não usar `:8080`.
+
+## 5. Dry-run e relatório
 
 ```bash
 netbox-discovery run
@@ -41,7 +120,7 @@ netbox-discovery plan ready
 
 Todos os comandos de relatório são somente leitura.
 
-## 4. Identidade estável obrigatória para novos Devices
+## 6. Identidade estável obrigatória para novos Devices
 
 ```text
 existing_device_id ausente
@@ -58,7 +137,7 @@ SERIAL:<fabricante>:<serial>
 MGMT-MAC:<mac>
 ```
 
-## 5. Propriedade global de MAC
+## 7. Propriedade global de MAC
 
 A tabela `dcim/mac-addresses` é global no NetBox. O produto valida MACs em quatro pontos:
 
@@ -114,7 +193,7 @@ Assim, o Importer não cria uma segunda interface e só depois descobre que a MA
 
 O produto nunca transfere automaticamente uma MAC entre Devices ou entre Device e VM.
 
-## 6. Write guard final
+## 8. Write guard final
 
 Entram no cálculo:
 
@@ -133,7 +212,7 @@ DELEGATED
 BLOCKED
 ```
 
-## 7. Bootstrap de site pequeno
+## 9. Bootstrap de site pequeno
 
 Quando a base possui menos de 50 Devices:
 
@@ -151,9 +230,9 @@ REPAIR_SAFE_VM_DUPLICATE: 20
 TOTAL: 75
 ```
 
-## 8. GO-LIVE padrão
+## 10. GO-LIVE controlado
 
-Depois da revisão e aprovação do PLAN, o comando operacional oficial é:
+Depois da revisão e aprovação do PLAN, o comando operacional é:
 
 ```bash
 netbox-discovery go-live
@@ -172,9 +251,7 @@ IMPORT --apply
 → status
 ```
 
-O uso manual de uma cadeia longa de comandos não é necessário.
-
-O fluxo falha fechado. Se IMPORT, AUDIT, PLAN, convergência ou validação final falhar, ele não conclui o GO-LIVE. Se detectar estado inseguro após habilitar o timer, desabilita o scheduler antes de encerrar com erro.
+Esse é o modo controlado. Ele termina com scheduler habilitado e `APPLY=NÃO`.
 
 Resultado esperado:
 
@@ -184,28 +261,33 @@ SCHEDULER NETWORK: ENABLED
 APPLY AUTOMÁTICO: NÃO
 ```
 
-## 9. APPLY manual excepcional
+## 11. APPLY manual
+
+```bash
+netbox-discovery run --apply
+```
+
+Executa o pipeline completo com escrita dos registros `READY` e auditoria. É o comando usado na instalação direta da seção 1.
+
+O comando abaixo continua disponível para operação dirigida do estágio de importação:
 
 ```bash
 netbox-discovery import --apply
 ```
 
-Usar somente para diagnóstico ou operação dirigida. No fluxo normal de unidade nova, usar `netbox-discovery go-live`.
-
-## 10. Falha de APPLY
+## 12. Falha de APPLY
 
 Se um APPLY terminar com erro:
 
 ```text
 não repetir imediatamente
-manter scheduler desabilitado
 recalcular o PLAN contra o estado atual
 revisar se houve Device, interface ou IP parcial
 ```
 
 Falha depois de `PREFLIGHT: OK` deve ser tratada como possível escrita parcial.
 
-## 11. Auto-update e scheduler
+## 13. Auto-update e scheduler
 
 ```bash
 netbox-discovery scheduler enable
@@ -213,13 +295,34 @@ netbox-discovery scheduler disable
 netbox-discovery scheduler status
 ```
 
-O updater não altera `automation.apply`. O GO-LIVE força `automation.apply=false` antes da habilitação final.
+O serviço agendado executa a atualização `stable` antes da coleta e depois chama o `scheduled-run`.
 
-## 12. Critérios de homologação
+A escrita noturna depende de `automation.apply`:
+
+```text
+automation.apply=false → coleta/PLAN sem escrita
+automation.apply=true  → coleta/PLAN/IMPORT/AUDIT conforme proteções do produto
+```
+
+## 14. Hypervisor
+
+O scheduler Network e o scheduler Hypervisor são independentes. Instalar uma unidade de rede não habilita automaticamente coleta de hypervisor.
+
+Comandos:
+
+```bash
+netbox-discovery hypervisor check
+netbox-discovery hypervisor run
+netbox-discovery hypervisor run --apply
+netbox-discovery hypervisor scheduler status
+```
+
+## 15. Critérios de homologação
 
 ```text
 Self-test: PASS
 Check: PASS
+endpoint NetBox sem :8080
 nenhum novo Device com identidade WEAK em READY
 nenhum READY com MAC pertencente a outro objeto
 READY/NOOP parcial reutiliza a interface live por MAC
@@ -228,6 +331,6 @@ MAC repetida no mesmo registro não cria interface duplicada
 preflight global de IP e MAC antes da escrita
 WRITE GUARD calculado sobre decisões finais
 Erros: 0
-PLAN posterior convergente
-scheduler habilitado com APPLY=NÃO
+AUDIT concluído
+scheduler no modo planejado para a unidade
 ```
