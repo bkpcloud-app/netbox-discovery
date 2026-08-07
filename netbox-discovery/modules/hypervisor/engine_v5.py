@@ -13,6 +13,10 @@ v2 = v4.v2
 NetBox = v4.NetBox
 REPORTS = v4.REPORTS
 _ORIGINAL_PLAN_RECLASSIFICATIONS = v3._plan_reclassifications
+_ORIGINAL_VM_PLAN_ROW = base.vm_plan_row
+_ORIGINAL_VM_SAFE_PATCH_PREVIEW = base.vm_safe_patch_preview
+_ORIGINAL_VM_SAFE_PATCH = base.vm_safe_patch
+_ORIGINAL_STRONG_GLOBAL_MATCH = v3._strong_global_match
 
 
 def utc_now():
@@ -21,6 +25,88 @@ def utc_now():
 
 def collect_all():
     return v4.collect_all()
+
+
+def _is_vmware_replica(row):
+    name = base.clean(row.get("desired_name"))
+    provider = base.clean(row.get("provider")).lower()
+    return provider == "vmware" and name.lower().endswith("_replica")
+
+
+def _replica_identity_refresh_allowed(row, current, indexes):
+    """Allow UUID refresh only for one exact, globally unique VMware _replica VM."""
+    if not current or not _is_vmware_replica(row):
+        return False
+    desired_name = base.norm(row.get("desired_name"))
+    if not desired_name or base.norm(current.get("name")) != desired_name:
+        return False
+    names = indexes.get("by_name", {}).get(desired_name, [])
+    if len(names) != 1 or names[0].get("id") != current.get("id"):
+        return False
+    desired_serial = base.norm_serial(row.get("serial"))
+    current_serial = base.norm_serial(current.get("serial"))
+    return bool(desired_serial and current_serial and desired_serial != current_serial)
+
+
+def _vm_plan_row_with_replica_identity(vm, indexes, state):
+    row = _ORIGINAL_VM_PLAN_ROW(vm, indexes, state)
+    if row.get("decision") != "REVIEW" or row.get("action") != "UPDATE_SAFE":
+        return row
+    if base.clean(row.get("reason")) != "serial/UUID da VM diverge do objeto existente":
+        return row
+    current = indexes.get("by_id", {}).get(row.get("existing_id"))
+    if not _replica_identity_refresh_allowed(row, current, indexes):
+        return row
+
+    row["replica_uuid_refresh"] = True
+    row["replica_identity_match"] = "nome exato único (_replica)"
+    row["decision"] = "READY"
+    row["action"] = "UPDATE_SAFE"
+    row["reason"] = "VMware _replica com nome exato único; UUID atual da origem é autoritativo"
+    row["pending_fields"] = ["serial"]
+    row["pending_reason"] = "campos pendentes: serial"
+    return row
+
+
+def _vm_safe_patch_preview_with_replica(row, current):
+    patch = _ORIGINAL_VM_SAFE_PATCH_PREVIEW(row, current)
+    if row.get("replica_uuid_refresh"):
+        desired_serial = base.clean(row.get("serial"))
+        current_serial = base.clean(current.get("serial"))
+        if desired_serial and base.norm_serial(desired_serial) != base.norm_serial(current_serial):
+            patch["serial"] = desired_serial
+    return patch
+
+
+def _vm_safe_patch_with_replica(row, current, catalog, cluster_obj, host_obj):
+    payload = _ORIGINAL_VM_SAFE_PATCH(row, current, catalog, cluster_obj, host_obj)
+    if row.get("replica_uuid_refresh"):
+        desired_serial = base.clean(row.get("serial"))
+        current_serial = base.clean(current.get("serial"))
+        if desired_serial and base.norm_serial(desired_serial) != base.norm_serial(current_serial):
+            payload["serial"] = desired_serial
+    return payload
+
+
+def _strong_global_match_with_replica(row, objects_by_id, serial_index, ips, macs):
+    obj, reason = _ORIGINAL_STRONG_GLOBAL_MATCH(row, objects_by_id, serial_index, ips, macs)
+    if obj or reason != "sem identidade global forte" or not row.get("replica_uuid_refresh"):
+        return obj, reason
+
+    desired_name = base.norm(row.get("desired_name"))
+    matches = [
+        candidate for candidate in objects_by_id.values()
+        if base.norm(candidate.get("name")) == desired_name
+    ]
+    if len(matches) == 1:
+        candidate = matches[0]
+        expected_id = row.get("existing_id")
+        if expected_id and candidate.get("id") != expected_id:
+            return None, "nome _replica aponta para objeto global diferente do existing_id"
+        return candidate, "nome exato único (_replica)"
+    if len(matches) > 1:
+        return None, "nome _replica global ambíguo"
+    return None, reason
 
 
 def _review_signature(plan):
@@ -159,13 +245,25 @@ def _plan_reclassifications_with_parent_site(plan, nb):
 def _with_fixed_planner(func, *args, **kwargs):
     previous = v3._plan_reclassifications
     previous_preflight = v4._global_preflight
+    previous_vm_plan_row = base.vm_plan_row
+    previous_vm_safe_patch_preview = base.vm_safe_patch_preview
+    previous_vm_safe_patch = base.vm_safe_patch
+    previous_strong_global_match = v3._strong_global_match
     v3._plan_reclassifications = _plan_reclassifications_with_parent_site
     v4._global_preflight = _global_preflight_with_stable_review
+    base.vm_plan_row = _vm_plan_row_with_replica_identity
+    base.vm_safe_patch_preview = _vm_safe_patch_preview_with_replica
+    base.vm_safe_patch = _vm_safe_patch_with_replica
+    v3._strong_global_match = _strong_global_match_with_replica
     try:
         return func(*args, **kwargs)
     finally:
         v3._plan_reclassifications = previous
         v4._global_preflight = previous_preflight
+        base.vm_plan_row = previous_vm_plan_row
+        base.vm_safe_patch_preview = previous_vm_safe_patch_preview
+        base.vm_safe_patch = previous_vm_safe_patch
+        v3._strong_global_match = previous_strong_global_match
 
 
 def build_plan(discovery, nb=None):
