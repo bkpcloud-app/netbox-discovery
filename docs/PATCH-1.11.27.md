@@ -1,8 +1,8 @@
 # netbox-discovery 1.11.27
 
-## NetBox público em HTTPS/443
+## Mudança do endpoint público do NetBox
 
-Esta versão migra com segurança instalações existentes que ainda usam exatamente:
+O endpoint oficial do produto passa de:
 
 ```text
 https://inventory.bkpcloud.app.br:8080
@@ -14,23 +14,27 @@ para:
 https://inventory.bkpcloud.app.br
 ```
 
-A migração é executada durante a instalação/atualização do produto e altera somente `netbox.url` quando o valor é exatamente o endpoint legado acima.
+A migração ocorre automaticamente durante o update somente quando `netbox.url` corresponde exatamente ao endpoint legado oficial.
 
-Não há remoção genérica de `:8080`. URLs de outros clientes ou endpoints customizados permanecem inalterados. Tenant, Site, redes, exclusões, comunidades, credenciais, opções de SSL, automação e fontes de virtualização são preservados.
+## Política TLS definida para o endpoint oficial
+
+Para essa migração, o produto grava:
+
+```yaml
+verify_ssl: false
+```
+
+A decisão é intencional: o reverse proxy em HTTPS/443 está operacional, porém alguns proxies Linux não confiam na cadeia apresentada. A coleta deve continuar usando TLS sem bloquear por validação da CA.
+
+## Segurança da migração
+
+- não remove `:8080` genericamente;
+- não altera URLs customizadas de clientes;
+- URLs customizadas também mantêm sua política SSL existente;
+- Tenant, Site, redes, exclusões, comunidades, credenciais, automação e fontes Hypervisor permanecem preservados;
+- a migração é idempotente;
+- nenhum `--apply` é executado pelo update.
 
 ## Hypervisor/vCenter
 
-A versão mantém o engine Hypervisor 5.1 introduzido na 1.11.26, incluindo a correção de herança de Site para VMs existentes que chegam ao planner como `READY/NOOP` e possuem Host/Cluster parent autoritativo.
-
-A escrita de Hypervisor continua explícita: `netbox-discovery hypervisor run` é dry-run e `--apply` não é acionado pela atualização.
-
-## Validação
-
-A regressão 1.11.27 cobre:
-
-- migração do endpoint legado sem porta para HTTPS/443;
-- preservação do restante do `config.yml`;
-- suporte a URL sem aspas, com aspas simples ou duplas;
-- idempotência da migração;
-- proteção de URLs customizadas;
-- proteção contra substituição fora da seção `netbox`.
+A versão preserva integralmente o engine 5.1 introduzido na 1.11.26, incluindo a correção de VMs `READY/NOOP` com Site divergente do Host/Cluster parent.
