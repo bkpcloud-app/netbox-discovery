@@ -15,6 +15,7 @@ DOCS = [
     "docs/MANUAL.md",
     "docs/COMANDOS-RAPIDOS.md",
     "docs/NOVA-UNIDADE-DOIS-PASSOS.md",
+    "docs/HOMOLOGACAO.md",
 ]
 
 
@@ -28,8 +29,9 @@ def main():
         text = read(path)
         assert COMMAND in text, "%s não contém o comando oficial de instalação limpa" % path
         assert ENDPOINT in text, "%s não contém o endpoint oficial" % path
-        zero_section = text.lower()
-        assert "instala" in zero_section and "scheduler" in zero_section, path
+        lower = text.lower()
+        assert "instala" in lower and "scheduler" in lower, path
+        assert "https://inventory.bkpcloud.app.br:8080" not in text, "%s reintroduziu endpoint legado" % path
 
     manual = read("docs/MANUAL.md")
     quick = read("docs/COMANDOS-RAPIDOS.md")
@@ -37,11 +39,7 @@ def main():
 
     for text, path in ((manual, "MANUAL"), (quick, "COMANDOS-RAPIDOS"), (new_site, "NOVA-UNIDADE")):
         assert "Permitir IMPORT automático" in text, "%s sem orientação de auto-apply" % path
-        assert "Não" in text or "não" in text
-
-    assert "https://inventory.bkpcloud.app.br:8080" not in manual
-    assert "https://inventory.bkpcloud.app.br:8080" not in quick
-    assert "https://inventory.bkpcloud.app.br:8080" not in new_site
+        assert "run --apply" in text, "%s sem primeira execução imediata" % path
 
     print("ALL 1.11.33 ZERO-INSTALL DOCUMENTATION TESTS PASSED")
 
