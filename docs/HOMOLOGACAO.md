@@ -1,4 +1,4 @@
-# netbox-discovery 1.11.23 — Matriz de Homologação
+# netbox-discovery 1.11.33 — Matriz de Homologação
 
 ## Estados
 
@@ -17,9 +17,9 @@ CI PASS não substitui LIVE PASS.
 
 ## DCM
 
-**Estado:** LIVE PASS na 1.11.22.
+**Estado:** LIVE PASS para o pipeline Network histórico e LIVE PASS para o pipeline Hypervisor multi-contexto validado nas versões 1.11.29+.
 
-Evidência final:
+Evidência histórica do Network:
 
 ```text
 IMPORT: 27/27 processados
@@ -36,18 +36,24 @@ Checks FAIL: 0
 READY/CREATE posterior: 0
 READY/NOOP posterior: 27
 Network scheduler: ENABLED
-Hypervisor scheduler: DISABLED
+```
+
+Evidência do Hypervisor multi-contexto:
+
+```text
+PREFLIGHT GLOBAL: OK
+Contextos escritos: 12
+Reclassificações seguras: 53
+Audit multi-contexto: PASS
+MISMATCH: 0
+MISSING: 0
 ```
 
 ## Histórico da correção de MAC
 
-Na 1.11.19, um APPLY parcial do DCM parou porque a MAC já pertencia à `dcim.interface ID 543`.
+Na 1.11.19, um APPLY parcial do DCM parou porque uma MAC já pertencia a uma `dcim.interface` existente.
 
-A 1.11.20 adicionou o preflight global, mas o preflight legado não reconheceu corretamente o proprietário real da interface.
-
-A 1.11.21 corrigiu o preflight legado.
-
-A 1.11.22 corrigiu o runtime final:
+A 1.11.20 adicionou o preflight global, a 1.11.21 corrigiu o owner no preflight legado e a 1.11.22 corrigiu o runtime final:
 
 ```text
 resolver MAC global
@@ -57,31 +63,9 @@ resolver MAC global
 → somente sem vínculo usar busca/criação por nome
 ```
 
-O DCM convergiu e foi encerrado como LIVE PASS.
+## GO-LIVE controlado
 
-## FPA — preparação
-
-**Estado:** PLAN revisado; GO-LIVE pendente.
-
-Plano observado:
-
-```text
-READY: 24
-READY/CREATE: 23
-READY/NOOP: 1
-REVIEW: 111
-BLOCKED: 5
-WRITE GUARD: PASS
-scheduler Network: DISABLED
-```
-
-As redes `10.3.1.0`, `10.3.2.0`, `10.3.5.0` e `10.3.100.0` pertencem ao Site FPA/Pacatuba conforme validação operacional. Nome de equipamento não deve ser usado para inferir outro Site.
-
-## Estado da 1.11.23
-
-**Estado inicial:** CI PASS / NOT LIVE até execução no FPA.
-
-A versão adiciona o comando padrão:
+O fluxo controlado continua disponível:
 
 ```bash
 netbox-discovery go-live
@@ -93,41 +77,67 @@ Contrato:
 IMPORT --apply
 → AUDIT
 → novo PLAN e summary
-→ bloquear se restar READY/CREATE, UPDATE_SAFE ou REPAIR_SAFE_VM_DUPLICATE
-→ preservar Tenant, Site, token, redes, exclusões e comunidades
+→ bloquear mudanças READY pendentes que impeçam convergência
+→ preservar Tenant, Site, token, redes, exclusões e communities
 → forçar automation.apply=false
 → habilitar scheduler Network
 → verificar enabled=true e apply=false
 → status
 ```
 
-Se qualquer etapa falhar, o GO-LIVE não é concluído. Se a validação final detectar estado inseguro, o scheduler é desabilitado antes do erro.
+## Instalação direta de unidade nova — contrato 1.11.33
 
-## Regressões obrigatórias da 1.11.23
+Para unidades autorizadas a operar com escrita automática desde a primeira coleta, o procedimento oficial documentado é:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/stable/install-from-github.sh -o /tmp/netbox-discovery-install.sh && bash /tmp/netbox-discovery-install.sh && netbox-discovery init && netbox-discovery check && netbox-discovery scheduler enable && netbox-discovery run --apply
+```
+
+Requisitos do `init` para esse modo:
 
 ```text
+NetBox: https://inventory.bkpcloud.app.br
+Habilitar execução automática: SIM
+Permitir IMPORT automático: SIM
+Salvar: SIM
+Testar NetBox: SIM
+```
+
+Resultado esperado:
+
+```text
+CONFIG: OK
+scheduler Network: ENABLED
+primeiro RUN executado imediatamente
+IMPORT/AUDIT conforme registros READY e proteções
+próximas execuções agendadas usam automation.apply=true
+```
+
+## Regressões obrigatórias atuais
+
+```text
+configurador usa HTTPS/443 sem :8080
+updater não aceita VERSION antigo por cache como evidência de up-to-date
+documentação principal contém o comando oficial de instalação limpa
+documentação principal contém o endpoint oficial sem :8080
 wrapper público reconhece go-live
 comandos legados continuam delegados ao core
 instalador ativa o wrapper público
-go-live executa IMPORT antes do AUDIT
-go-live executa PLAN antes da convergência
-go-live bloqueia mudanças READY pendentes
-go-live força APPLY=NÃO antes do scheduler
-go-live verifica enabled=true e apply=false
-falha final desabilita o scheduler
+Network run --apply executa IMPORT e AUDIT
+scheduler Network e Hypervisor permanecem independentes
+REVIEW/DELEGATED/BLOCKED não escrevem
 ```
 
-## Critérios para LIVE PASS no FPA
+## Critérios gerais para LIVE PASS de unidade nova
 
 ```text
-netbox-discovery update run → 1.11.23
-netbox-discovery go-live
-IMPORT: erros 0
-AUDIT: PASS
-Assets FAIL: 0
-Checks FAIL: 0
-CONVERGÊNCIA: PASS
-SCHEDULER NETWORK: ENABLED
-APPLY AUTOMÁTICO: NÃO
-GO-LIVE: PASS
+netbox-discovery version → versão stable atual
+netbox-discovery check → PASS
+CONFIG: OK
+Tenant/Site corretos
+NetBox URL sem :8080
+primeiro RUN sem erro fatal
+AUDIT sem FAIL crítico
+scheduler no estado planejado
+modo de APPLY coerente com a política da unidade
 ```

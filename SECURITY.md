@@ -1,6 +1,6 @@
 # Segurança do repositório
 
-**Versão da política:** 1.11.23
+**Versão da política:** 1.11.33
 
 O `netbox-discovery` é distribuído em repositório público. Código e documentação podem ser públicos; dados operacionais e credenciais de clientes não podem.
 
@@ -17,11 +17,30 @@ O `netbox-discovery` é distribuído em repositório público. Código e documen
 
 O updater usa o canal `stable`, valida o candidato, cria backup, preserva configuração, executa self-test/check e faz rollback/quarentena em falha.
 
-O updater não pode alterar `automation.apply`, executar `run --apply` ou modificar redes, exclusões, communities e credenciais.
+O updater **não altera `automation.apply`**. Também não pode executar `run --apply` por conta própria nem modificar redes, exclusões, communities e credenciais.
+
+A escrita automática de inventário só ocorre quando a configuração da unidade já contém `automation.apply=true` e o `scheduled-run` é disparado pelo scheduler Network.
+
+## Instalação direta de unidade nova
+
+A instalação direta documentada em 1.11.33 pode habilitar escrita automática, mas isso é uma decisão explícita durante o `init`:
+
+```text
+Habilitar execução automática: SIM
+Permitir IMPORT automático: SIM
+```
+
+O comando oficial termina com uma primeira execução explícita:
+
+```bash
+netbox-discovery run --apply
+```
+
+Esse modo não remove as proteções de PLAN, identidade, ownership global de MAC, write guard, preflight e auditoria.
 
 ## GO-LIVE seguro
 
-A 1.11.23 adiciona o comando padrão:
+O modo controlado continua disponível:
 
 ```bash
 netbox-discovery go-live
@@ -64,7 +83,7 @@ O Planner e os preflights validam ownership antes da escrita.
 
 ### Runtime de interface
 
-A 1.11.22 exige que o Importer resolva a MAC antes de procurar ou criar uma interface por nome.
+O Importer resolve a MAC antes de procurar ou criar uma interface por nome.
 
 ```text
 MAC → dcim.interface → interface.device.id
@@ -124,7 +143,6 @@ Uma falha depois de `PREFLIGHT: OK` deve ser tratada como possível escrita parc
 
 ```text
 não repetir imediatamente
-manter scheduler desabilitado
 recalcular PLAN
 revisar Device, interfaces, MACs e IPs do primeiro READY
 ```
@@ -149,4 +167,4 @@ Device manual            → protegido
 
 ## Documentação obrigatória
 
-O CI exige versão sincronizada em README, Manual, Comandos Rápidos, Homologação, Release Notes, Security e nota de patch.
+O CI exige versão sincronizada em README, Manual, Comandos Rápidos, Homologação, Release Notes, Security e nota de patch. A 1.11.33 também testa o contrato documental da instalação limpa para impedir regressão futura.

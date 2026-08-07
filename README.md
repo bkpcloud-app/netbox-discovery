@@ -2,9 +2,41 @@
 
 Produto BKPCLOUD para descoberta, classificação, reconciliação e inventário seguro de infraestrutura no NetBox.
 
-**Versão atual:** 1.11.23 — PRODUCT V1  
+**Versão atual:** 1.11.33 — PRODUCT V1  
 **Distribuição:** `bkpcloud-app/netbox-discovery`  
 **Canal de produção:** `stable`
+
+## Instalação do zero — unidade nova
+
+Para uma unidade nova, com ativação imediata e primeira descoberta no mesmo procedimento, executar como `root`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/stable/install-from-github.sh -o /tmp/netbox-discovery-install.sh && bash /tmp/netbox-discovery-install.sh && netbox-discovery init && netbox-discovery check && netbox-discovery scheduler enable && netbox-discovery run --apply
+```
+
+Durante `netbox-discovery init`, informar Tenant, Tenant Group quando aplicável, Site, token, redes, exclusões e communities.
+
+Para a unidade trabalhar automaticamente depois da instalação:
+
+```text
+Habilitar execução automática: SIM
+Agenda systemd OnCalendar: daily
+Permitir IMPORT automático: SIM
+Salvar configuração: SIM
+Testar conexão com o NetBox: SIM
+```
+
+Endpoint oficial:
+
+```text
+https://inventory.bkpcloud.app.br
+```
+
+Não usar `:8080`.
+
+O comando instala o produto, executa o assistente, valida a configuração, habilita o scheduler Network e executa imediatamente o pipeline com `--apply`. A primeira coleta não depende da madrugada.
+
+Para ambientes que exigem revisão humana antes da primeira escrita, usar `docs/NOVA-UNIDADE-DOIS-PASSOS.md`.
 
 ## Pipeline atual
 
@@ -17,17 +49,30 @@ DISCOVER V6 / 4.6-product
 → AUDIT V11 / 6.9-product
 ```
 
-`netbox-discovery run` é read-only. Escrita no NetBox só ocorre com `netbox-discovery run --apply` e permanece protegida por PLAN, write guard, preflight, identidade e auditoria.
+`netbox-discovery run` é read-only. `netbox-discovery run --apply` executa o pipeline completo com escrita dos registros `READY` e auditoria, protegido por PLAN, write guard, preflight, identidade e auditoria.
 
-## GO-LIVE nativo
+## Modos operacionais
 
-A 1.11.23 adiciona o comando operacional padrão:
+### Ativação direta
+
+Usada quando a unidade já pode operar com escrita automática:
+
+```text
+init com automation.enabled=true e automation.apply=true
+→ scheduler enable
+→ run --apply
+→ próximas execuções agendadas podem aplicar READY automaticamente
+```
+
+### GO-LIVE controlado
+
+Para ambientes em que o PLAN precisa ser revisado antes da primeira escrita:
 
 ```bash
 netbox-discovery go-live
 ```
 
-Ele executa, em uma única ação nativa:
+Ele executa:
 
 ```text
 IMPORT --apply
@@ -39,7 +84,7 @@ IMPORT --apply
 → valida o estado final
 ```
 
-Se qualquer etapa falhar, o fluxo para antes da habilitação do scheduler. O resultado aprovado termina com scheduler habilitado e `APPLY=NÃO`.
+Nesse modo o resultado aprovado termina com scheduler habilitado e `APPLY=NÃO`.
 
 ## Preflight global de MAC
 
@@ -74,26 +119,9 @@ MAC ausente ou sem vínculo
 → segue o fluxo normal de interface
 ```
 
-Isso cobre recuperação de APPLY parcial mesmo quando o nome da interface live diverge do nome atual do `spec`.
-
-A checagem ocorre em camadas independentes:
-
-1. Planner V11, antes do write guard;
-2. preflight legado por owner real;
-3. Importer V12, antes da primeira escrita;
-4. runtime do Importer V2, antes da criação de interface por nome.
-
-Se a consulta global de MAC estiver indisponível no APPLY, o processo falha fechado.
-
 ## Identidade estável obrigatória para novos Devices
 
-A 1.11.19 adicionou uma proteção final independente de role ou classe:
-
-```text
-novo READY/CREATE + discovery_uid WEAK
-→ REVIEW/NOOP
-→ nenhuma interface ou intenção de IP é escrita
-```
+Novo `READY/CREATE` com `discovery_uid WEAK` vira `REVIEW/NOOP`.
 
 Novos Devices precisam chegar ao PLAN com identidade estável, normalmente:
 
@@ -104,7 +132,7 @@ MGMT-MAC:<mac>
 
 ## Write guard final e bootstrap de sites pequenos
 
-O write guard é calculado uma única vez, depois de todas as políticas finais do Planner.
+O write guard é calculado depois das políticas finais do Planner.
 
 Sites com menos de 50 Devices usam:
 
@@ -135,7 +163,7 @@ netbox-discovery check
 netbox-discovery status
 ```
 
-## Auto-update e schedulers
+## Auto-update e scheduler Network
 
 ```bash
 netbox-discovery scheduler enable
@@ -143,7 +171,23 @@ netbox-discovery scheduler disable
 netbox-discovery scheduler status
 ```
 
-O updater não modifica `automation.apply`. O `go-live` força `automation.apply=false` antes de habilitar o scheduler.
+```text
+automation.apply=false → execução automática sem escrita
+automation.apply=true  → execução automática com IMPORT/AUDIT dos READY
+```
+
+O serviço agendado executa o updater `stable` antes da coleta.
+
+## Hypervisor
+
+```bash
+netbox-discovery hypervisor check
+netbox-discovery hypervisor run
+netbox-discovery hypervisor run --apply
+netbox-discovery hypervisor scheduler status
+```
+
+Network e Hypervisor possuem schedulers independentes.
 
 ## Segurança
 
@@ -155,15 +199,14 @@ O updater não modifica `automation.apply`. O `go-live` força `automation.apply
 - MAC já pertencente ao mesmo Device reutiliza a interface live;
 - interface não é criada antes de resolver ownership de MAC;
 - `REVIEW`, `DELEGATED` e `BLOCKED` nunca escrevem;
-- limites absolutos permanecem ativos durante bootstrap;
-- `go-live` habilita o scheduler somente com `APPLY=NÃO` confirmado.
+- limites absolutos permanecem ativos durante bootstrap.
 
 ## Documentação
 
-- `docs/MANUAL.md`;
-- `docs/COMANDOS-RAPIDOS.md`;
-- `docs/HOMOLOGACAO.md`;
-- `docs/NOVA-UNIDADE-DOIS-PASSOS.md`;
-- `RELEASE-NOTES.md`;
-- `SECURITY.md`;
-- `docs/PATCH-1.11.23.md`.
+- `docs/MANUAL.md` — manual operacional completo;
+- `docs/COMANDOS-RAPIDOS.md` — referência de comandos;
+- `docs/NOVA-UNIDADE-DOIS-PASSOS.md` — instalação direta e fluxo controlado;
+- `docs/HOMOLOGACAO.md` — homologação;
+- `RELEASE-NOTES.md` — histórico de versões;
+- `SECURITY.md` — políticas de segurança;
+- `docs/PATCH-1.11.33.md` — documentação desta atualização.

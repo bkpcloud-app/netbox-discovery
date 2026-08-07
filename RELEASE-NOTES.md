@@ -1,3 +1,78 @@
+## V1.11.33 — Documentação operacional de instalação limpa
+
+A documentação principal foi sincronizada com o procedimento real de instalação de uma unidade nova.
+
+Comando oficial para instalação do zero, ativação do scheduler Network e primeira descoberta imediata:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bkpcloud-app/netbox-discovery/stable/install-from-github.sh -o /tmp/netbox-discovery-install.sh && bash /tmp/netbox-discovery-install.sh && netbox-discovery init && netbox-discovery check && netbox-discovery scheduler enable && netbox-discovery run --apply
+```
+
+Foram atualizados:
+
+```text
+README.md
+docs/MANUAL.md
+docs/COMANDOS-RAPIDOS.md
+docs/NOVA-UNIDADE-DOIS-PASSOS.md
+RELEASE-NOTES.md
+```
+
+A documentação agora diferencia explicitamente:
+
+```text
+Modo direto:
+  automation.enabled=true
+  automation.apply=true
+  primeira coleta imediata com run --apply
+  próximas execuções agendadas podem escrever READY
+
+Modo controlado:
+  PLAN revisado antes da escrita
+  go-live
+  scheduler habilitado com APPLY=NÃO
+```
+
+O endpoint oficial documentado é `https://inventory.bkpcloud.app.br`, sem `:8080`.
+
+---
+
+## V1.11.32 — Updater sem falso ATUALIZADO por cache
+
+O updater passou a evitar resposta antiga de `stable/VERSION` via cache do GitHub Raw usando cache-bust e headers no-cache.
+
+---
+
+## V1.11.31 — Configurador alinhado ao HTTPS/443
+
+O assistente `netbox-discovery configure/init` deixou de regravar o endpoint legado com `:8080` e passou a usar `https://inventory.bkpcloud.app.br`.
+
+---
+
+## V1.11.30 — VMware replica identity refresh
+
+VMs VMware cujo nome termina exatamente em `_replica`, com nome único no NetBox, podem atualizar a identidade UUID e herdar o contexto autoritativo do vCenter sem relaxar conflitos de outros objetos.
+
+---
+
+## V1.11.29 — Stable REVIEW global preflight
+
+REVIEWs estáveis já conhecidos deixam de bloquear alterações READY seguras no Hypervisor. REVIEW novo/alterado e BLOCKED continuam fail-closed.
+
+---
+
+## V1.11.28 — NetBox HTTPS/443 endpoint lock
+
+O lock central do endpoint foi alinhado para `https://inventory.bkpcloud.app.br`.
+
+---
+
+## V1.11.27 — Migração NetBox HTTPS/443
+
+Configurações legadas com `https://inventory.bkpcloud.app.br:8080` passam por migração para o endpoint oficial sem porta explícita.
+
+---
+
 ## V1.11.23 — Native GO-LIVE
 
 Adicionado o comando operacional padrão:
@@ -27,63 +102,19 @@ O fluxo falha fechado. Mudanças `READY/CREATE`, `READY/UPDATE_SAFE` ou `READY/R
 
 ## V1.11.22 — Runtime MAC interface reuse
 
-A terceira tentativa de APPLY do DCM, já na 1.11.21, passou pelos dois preflights mas ainda falhou no runtime do primeiro READY:
-
-```text
-PREFLIGHT GLOBAL FINALIZE: OK
-PREFLIGHT: OK
-ERRO em SW-CORE-AE: MAC E8:B5:D0:72:9D:FC já pertence a dcim.interface ID 543
-```
-
-O runtime do Importer V2 procurava a interface pelo nome do `spec` antes de validar a MAC. Quando o nome live divergia, ele podia criar uma segunda interface e só depois descobrir que a MAC já estava na interface original.
-
-A 1.11.22 altera a ordem:
-
-```text
-resolver MAC global
-→ resolver dcim.interface vinculada
-→ validar interface.device.id
-→ reutilizar a interface live do mesmo Device
-→ somente sem vínculo usar busca/criação por nome
-```
-
-Conflitos reais continuam bloqueados antes da criação. A regressão reproduz a interface ID 543, nome divergente, mesma MAC repetida, owner estrangeiro, vínculo em VM e MAC sem atribuição.
+Antes de criar ou localizar interface por nome, o Importer resolve a MAC global, valida ownership e reutiliza a interface live quando ela pertence ao mesmo Device.
 
 ---
 
 ## V1.11.21 — Legacy MAC owner preflight recovery
 
-A segunda tentativa de APPLY do DCM, já na 1.11.20, foi bloqueada antes da escrita por um falso conflito no `SW-CORE-AE`:
-
-```text
-MAC E8:B5:D0:72:9D:FC pertence a dcim.interface ID 543,
-esperado interface ainda não existente
-```
-
-O PLAN já havia reconciliado o equipamento parcial corretamente como `READY/NOOP`, com `SERIAL+MAC+IP+NAME`. A camada global nova reconhecia que a interface pertencia ao próprio Device, mas o preflight V5 legado ainda inferia a interface exclusivamente pelo IP presente no `spec`.
-
-A 1.11.21 corrige essa camada:
-
-```text
-interface live pertence ao mesmo Device reconciliado
-→ PASS
-
-interface live pertence a outro Device
-→ BLOQUEADO
-
-mesma MAC repetida em vários specs do mesmo registro
-→ avaliada uma única vez
-```
-
-A validação consulta `dcim/interfaces`, usa `interface.device.id` como autoridade e continua fail-closed quando o owner não pode ser resolvido.
+O preflight legado passou a usar o proprietário real da interface e aceitar recuperação de APPLY parcial quando a MAC já pertence ao mesmo Device reconciliado.
 
 ---
 
 ## V1.11.20 — Global MAC ownership preflight
 
-O primeiro APPLY do DCM na 1.11.19 parou no primeiro `READY`, `SW-CORE-AE`, porque a MAC de gerenciamento já pertencia à interface ID 543.
-
-A 1.11.20 adicionou proteção no Planner V11 e Importer V12 para validar ownership global antes da primeira escrita.
+O Planner V11 e Importer V12 passaram a validar ownership global de MAC antes da primeira escrita.
 
 ---
 
