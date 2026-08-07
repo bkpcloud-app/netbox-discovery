@@ -56,13 +56,7 @@ def _top_level_section(lines, name):
 
 
 def ensure_network_automation(path):
-    """Add missing Network automation defaults without changing existing values.
-
-    Existing customer configuration, credentials and comments are preserved.
-    A legacy configuration without the automation section is migrated to the
-    safest product default: disabled scheduler, no automatic APPLY and daily
-    schedule.
-    """
+    """Add missing Network automation defaults without changing existing values."""
     if not os.path.isfile(path):
         raise RuntimeError("config.yml não existe: {0}".format(path))
 
@@ -119,11 +113,12 @@ def _yaml_scalar(value):
 
 
 def migrate_netbox_url(path):
-    """Migrate only the product's exact legacy public NetBox URL.
+    """Move only the official legacy NetBox endpoint to HTTPS/443.
 
-    This is deliberately not a generic port rewrite. Customer-specific URLs,
-    other :8080 endpoints, credentials and all unrelated configuration remain
-    untouched. Existing quote style is preserved.
+    Product policy for this endpoint is verify_ssl=false. This is intentional:
+    the public reverse proxy is reachable on 443 but some deployed proxy hosts
+    do not trust the presented issuer chain. Customer-specific URLs are never
+    rewritten and their SSL policy is never changed.
     """
     if not os.path.isfile(path):
         raise RuntimeError("config.yml não existe: {0}".format(path))
@@ -134,6 +129,12 @@ def migrate_netbox_url(path):
     if start is None:
         return False
 
+    url_index = None
+    url_quote = ""
+    url_key_text = ""
+    url_spacing = ""
+    verify_index = None
+
     for index in range(start + 1, end):
         row = lines[index]
         stripped = row.strip()
@@ -142,22 +143,36 @@ def migrate_netbox_url(path):
             continue
 
         key_text, value_text = row.split(":", 1)
-        if _clean(key_text) != "url":
-            continue
+        key = _clean(key_text)
+        if key == "url":
+            scalar, quote = _yaml_scalar(value_text)
+            if scalar != LEGACY_NETBOX_URL:
+                return False
+            url_index = index
+            url_quote = quote
+            url_key_text = key_text
+            url_spacing = value_text[:len(value_text) - len(value_text.lstrip())]
+        elif key == "verify_ssl":
+            verify_index = index
 
-        scalar, quote = _yaml_scalar(value_text)
-        if scalar != LEGACY_NETBOX_URL:
-            return False
+    if url_index is None:
+        return False
 
-        spacing = value_text[:len(value_text) - len(value_text.lstrip())]
-        replacement = CURRENT_NETBOX_URL
-        if quote:
-            replacement = quote + replacement + quote
-        lines[index] = key_text + ":" + spacing + replacement
-        _atomic_write(path, "\n".join(lines))
-        return True
+    replacement = CURRENT_NETBOX_URL
+    if url_quote:
+        replacement = url_quote + replacement + url_quote
+    lines[url_index] = url_key_text + ":" + url_spacing + replacement
 
-    return False
+    if verify_index is not None:
+        verify_row = lines[verify_index]
+        verify_key_text, verify_value_text = verify_row.split(":", 1)
+        verify_spacing = verify_value_text[:len(verify_value_text) - len(verify_value_text.lstrip())]
+        lines[verify_index] = verify_key_text + ":" + verify_spacing + "false"
+    else:
+        lines.insert(url_index + 1, "  verify_ssl: false")
+
+    _atomic_write(path, "\n".join(lines))
+    return True
 
 
 def main(argv=None):
@@ -182,7 +197,7 @@ def main(argv=None):
     if args.migrate_netbox_url:
         changed = migrate_netbox_url(config_path)
         if changed:
-            print("CONFIG MIGRATION: NetBox URL migrada para HTTPS/443")
+            print("CONFIG MIGRATION: NetBox URL migrada para HTTPS/443 com SSL verify desabilitado")
         else:
             print("CONFIG MIGRATION: NetBox URL sem alteração")
 
