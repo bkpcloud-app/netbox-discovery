@@ -17,7 +17,7 @@ jobs:
       - name: Version sync
         run: |
           test "$(cat VERSION)" = "$(cat netbox-discovery/VERSION)"
-          test "$(cat VERSION)" = "1.11.29"
+          test "$(cat VERSION)" = "1.11.30"
 
       - name: Documentation sync
         run: |
@@ -75,6 +75,9 @@ jobs:
 
       - name: Hypervisor 1.11.29 stable REVIEW global preflight
         run: python3 tests/test_hypervisor_1_11_29.py
+
+      - name: Hypervisor 1.11.30 VMware replica identity refresh
+        run: python3 tests/test_hypervisor_1_11_30.py
 
       - name: Network 1.10.9 PLAN diagnostics
         run: python3 tests/test_network_1_10_9.py
